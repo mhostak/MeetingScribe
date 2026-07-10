@@ -1,0 +1,441 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000000000000000000000101 /* MeetingScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000201 /* MeetingScribeApp.swift */; };
+		000000000000000000000102 /* AppStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000202 /* AppStatus.swift */; };
+		000000000000000000000103 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000203 /* AppState.swift */; };
+		000000000000000000000104 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000204 /* MenuBarView.swift */; };
+		000000000000000000000105 /* RecordingSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000205 /* RecordingSession.swift */; };
+		000000000000000000000106 /* SessionMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000206 /* SessionMetadata.swift */; };
+		000000000000000000000107 /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000207 /* SessionManager.swift */; };
+		000000000000000000000108 /* AppStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000208 /* AppStateMachineTests.swift */; };
+		000000000000000000000109 /* SessionManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000209 /* SessionManagerTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000301 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000401;
+			remoteInfo = MeetingScribe;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		000000000000000000000201 /* MeetingScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingScribeApp.swift; sourceTree = "<group>"; };
+		000000000000000000000202 /* AppStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStatus.swift; sourceTree = "<group>"; };
+		000000000000000000000203 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		000000000000000000000204 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		000000000000000000000205 /* RecordingSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSession.swift; sourceTree = "<group>"; };
+		000000000000000000000206 /* SessionMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMetadata.swift; sourceTree = "<group>"; };
+		000000000000000000000207 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
+		000000000000000000000208 /* AppStateMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateMachineTests.swift; sourceTree = "<group>"; };
+		000000000000000000000209 /* SessionManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManagerTests.swift; sourceTree = "<group>"; };
+		000000000000000000000210 /* MeetingScribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingScribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000211 /* MeetingScribeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetingScribeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000212 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000501 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000502 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000601 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000602 /* MeetingScribe */,
+				000000000000000000000605 /* MeetingScribeTests */,
+				000000000000000000000606 /* Products */,
+				000000000000000000000212 /* README.md */,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000602 /* MeetingScribe */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000603 /* App */,
+				000000000000000000000604 /* Sessions */,
+			);
+			path = MeetingScribe;
+			sourceTree = "<group>";
+		};
+		000000000000000000000603 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000201 /* MeetingScribeApp.swift */,
+				000000000000000000000202 /* AppStatus.swift */,
+				000000000000000000000203 /* AppState.swift */,
+				000000000000000000000204 /* MenuBarView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		000000000000000000000604 /* Sessions */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000205 /* RecordingSession.swift */,
+				000000000000000000000206 /* SessionMetadata.swift */,
+				000000000000000000000207 /* SessionManager.swift */,
+			);
+			path = Sessions;
+			sourceTree = "<group>";
+		};
+		000000000000000000000605 /* MeetingScribeTests */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000208 /* AppStateMachineTests.swift */,
+				000000000000000000000209 /* SessionManagerTests.swift */,
+			);
+			path = MeetingScribeTests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000606 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000210 /* MeetingScribe.app */,
+				000000000000000000000211 /* MeetingScribeTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000401 /* MeetingScribe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000701 /* Build configuration list for PBXNativeTarget "MeetingScribe" */;
+			buildPhases = (
+				000000000000000000000801 /* Sources */,
+				000000000000000000000501 /* Frameworks */,
+				000000000000000000000803 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MeetingScribe;
+			productName = MeetingScribe;
+			productReference = 000000000000000000000210 /* MeetingScribe.app */;
+			productType = "com.apple.product-type.application";
+		};
+		000000000000000000000402 /* MeetingScribeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000702 /* Build configuration list for PBXNativeTarget "MeetingScribeTests" */;
+			buildPhases = (
+				000000000000000000000802 /* Sources */,
+				000000000000000000000502 /* Frameworks */,
+				000000000000000000000804 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000901 /* PBXTargetDependency */,
+			);
+			name = MeetingScribeTests;
+			productName = MeetingScribeTests;
+			productReference = 000000000000000000000211 /* MeetingScribeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					000000000000000000000401 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					000000000000000000000402 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 000000000000000000000401;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000700 /* Build configuration list for PBXProject "MeetingScribe" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 000000000000000000000601;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 000000000000000000000606 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000401 /* MeetingScribe */,
+				000000000000000000000402 /* MeetingScribeTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000803 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000804 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000801 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000101 /* MeetingScribeApp.swift in Sources */,
+				000000000000000000000102 /* AppStatus.swift in Sources */,
+				000000000000000000000103 /* AppState.swift in Sources */,
+				000000000000000000000104 /* MenuBarView.swift in Sources */,
+				000000000000000000000105 /* RecordingSession.swift in Sources */,
+				000000000000000000000106 /* SessionMetadata.swift in Sources */,
+				000000000000000000000107 /* SessionManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000802 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000108 /* AppStateMachineTests.swift in Sources */,
+				000000000000000000000109 /* SessionManagerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000901 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000401 /* MeetingScribe */;
+			targetProxy = 000000000000000000000301 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000001001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		000000000000000000001002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		000000000000000000001003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		000000000000000000001004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_LSUIElement = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		000000000000000000001005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MeetingScribe.app/Contents/MacOS/MeetingScribe";
+			};
+			name = Debug;
+		};
+		000000000000000000001006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MeetingScribe.app/Contents/MacOS/MeetingScribe";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000700 /* Build configuration list for PBXProject "MeetingScribe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000001001 /* Debug */,
+				000000000000000000001002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000701 /* Build configuration list for PBXNativeTarget "MeetingScribe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000001003 /* Debug */,
+				000000000000000000001004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000702 /* Build configuration list for PBXNativeTarget "MeetingScribeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000001005 /* Debug */,
+				000000000000000000001006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 000000000000000000000001 /* Project object */;
+}
