@@ -15,6 +15,8 @@ enum TranscriptionLanguage: String, Codable, Sendable {
 struct SessionAudioFiles: Codable, Equatable, Sendable {
     var system = "system.caf"
     var microphone = "microphone.caf"
+    var systemWorking: String? = "system-16k.wav"
+    var microphoneWorking: String? = "microphone-16k.wav"
     var mixed = "mixed.wav"
 }
 
@@ -30,6 +32,23 @@ struct AudioTrackMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+struct FinalizedAudioTrackMetadata: Codable, Equatable, Sendable {
+    var fileName: String
+    var sampleRate: Double
+    var channelCount: Int
+    var totalFrames: Int64
+    var durationSeconds: Double
+    var timelineOffsetSeconds: Double
+}
+
+struct AudioFinalizationMetadata: Codable, Equatable, Sendable {
+    var completedAt: Date
+    var timelineOrigin: Double
+    var system: FinalizedAudioTrackMetadata
+    var microphone: FinalizedAudioTrackMetadata?
+    var warnings: [String]
+}
+
 struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -42,10 +61,11 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var audioFiles: SessionAudioFiles
     var systemAudio: AudioTrackMetadata?
     var microphoneAudio: AudioTrackMetadata?
+    var audioFinalization: AudioFinalizationMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -56,6 +76,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         systemAudio: AudioTrackMetadata? = nil,
         microphoneAudio: AudioTrackMetadata? = nil,
+        audioFinalization: AudioFinalizationMetadata? = nil,
         failureReason: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -69,6 +90,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.audioFiles = audioFiles
         self.systemAudio = systemAudio
         self.microphoneAudio = microphoneAudio
+        self.audioFinalization = audioFinalization
         self.failureReason = failureReason
     }
 }

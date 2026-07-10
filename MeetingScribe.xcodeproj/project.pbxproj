@@ -26,6 +26,9 @@
 		000000000000000000000117 /* AudioClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000220 /* AudioClock.swift */; };
 		000000000000000000000118 /* MicrophoneCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000221 /* MicrophoneCapture.swift */; };
 		000000000000000000000119 /* CaptureCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000222 /* CaptureCoordinatorTests.swift */; };
+		000000000000000000000120 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000223 /* AudioConverter.swift */; };
+		000000000000000000000121 /* AudioFinalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000224 /* AudioFinalizer.swift */; };
+		000000000000000000000122 /* AudioFinalizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000225 /* AudioFinalizerTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +64,9 @@
 		000000000000000000000220 /* AudioClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioClock.swift; sourceTree = "<group>"; };
 		000000000000000000000221 /* MicrophoneCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCapture.swift; sourceTree = "<group>"; };
 		000000000000000000000222 /* CaptureCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCoordinatorTests.swift; sourceTree = "<group>"; };
+		000000000000000000000223 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
+		000000000000000000000224 /* AudioFinalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizer.swift; sourceTree = "<group>"; };
+		000000000000000000000225 /* AudioFinalizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -125,6 +131,7 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000225 /* AudioFinalizerTests.swift */,
 				000000000000000000000218 /* AudioCaptureDiagnosticsTests.swift */,
 				000000000000000000000219 /* AudioFileWriterTests.swift */,
 				000000000000000000000222 /* CaptureCoordinatorTests.swift */,
@@ -137,6 +144,8 @@
 		000000000000000000000607 /* Capture */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000223 /* AudioConverter.swift */,
+				000000000000000000000224 /* AudioFinalizer.swift */,
 				000000000000000000000220 /* AudioClock.swift */,
 				000000000000000000000213 /* AudioCaptureDiagnostics.swift */,
 				000000000000000000000214 /* AudioCaptureService.swift */,
@@ -256,6 +265,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000120 /* AudioConverter.swift in Sources */,
+				000000000000000000000121 /* AudioFinalizer.swift in Sources */,
 				000000000000000000000117 /* AudioClock.swift in Sources */,
 				000000000000000000000110 /* AudioCaptureDiagnostics.swift in Sources */,
 				000000000000000000000111 /* AudioCaptureService.swift in Sources */,
@@ -277,6 +288,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000122 /* AudioFinalizerTests.swift in Sources */,
 				000000000000000000000115 /* AudioCaptureDiagnosticsTests.swift in Sources */,
 				000000000000000000000116 /* AudioFileWriterTests.swift in Sources */,
 				000000000000000000000119 /* CaptureCoordinatorTests.swift in Sources */,

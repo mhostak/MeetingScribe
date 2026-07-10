@@ -15,4 +15,18 @@ struct RecordingSession: Equatable, Sendable {
     var microphoneAudioURL: URL {
         directoryURL.appendingPathComponent(metadata.audioFiles.microphone, isDirectory: false)
     }
+
+    var systemWorkingAudioURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.audioFiles.systemWorking ?? "system-16k.wav",
+            isDirectory: false
+        )
+    }
+
+    var microphoneWorkingAudioURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.audioFiles.microphoneWorking ?? "microphone-16k.wav",
+            isDirectory: false
+        )
+    }
 }

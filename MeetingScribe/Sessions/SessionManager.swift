@@ -57,7 +57,8 @@ actor SessionManager {
     func stopSession(
         now: Date = Date(),
         systemAudio: AudioTrackMetadata? = nil,
-        microphoneAudio: AudioTrackMetadata? = nil
+        microphoneAudio: AudioTrackMetadata? = nil,
+        audioFinalization: AudioFinalizationMetadata? = nil
     ) throws -> RecordingSession {
         guard var session = activeSession else {
             throw SessionManagerError.noActiveSession
@@ -67,6 +68,7 @@ actor SessionManager {
         session.metadata.endedAt = max(now, session.metadata.startedAt ?? now)
         session.metadata.systemAudio = systemAudio
         session.metadata.microphoneAudio = microphoneAudio
+        session.metadata.audioFinalization = audioFinalization
         try persist(session)
         activeSession = nil
         return session

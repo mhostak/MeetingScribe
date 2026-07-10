@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. Transcription is not implemented yet.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`) ready for Whisper. The original CAF recordings are always preserved. Transcription is not implemented yet.
 
 ## Requirements
 

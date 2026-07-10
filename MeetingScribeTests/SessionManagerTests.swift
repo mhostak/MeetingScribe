@@ -31,8 +31,11 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
+        XCTAssertEqual(metadata.schemaVersion, 2)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
+        XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
+        XCTAssertEqual(metadata.audioFiles.microphoneWorking, "microphone-16k.wav")
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {
@@ -61,12 +64,34 @@ final class SessionManagerTests: XCTestCase {
             capturedDurationSeconds: 90,
             failureReason: nil
         )
+        let audioFinalization = AudioFinalizationMetadata(
+            completedAt: endedAt,
+            timelineOrigin: 100,
+            system: FinalizedAudioTrackMetadata(
+                fileName: "system-16k.wav",
+                sampleRate: 16_000,
+                channelCount: 1,
+                totalFrames: 1_440_000,
+                durationSeconds: 90,
+                timelineOffsetSeconds: 0
+            ),
+            microphone: FinalizedAudioTrackMetadata(
+                fileName: "microphone-16k.wav",
+                sampleRate: 16_000,
+                channelCount: 1,
+                totalFrames: 1_440_000,
+                durationSeconds: 90,
+                timelineOffsetSeconds: 0.02
+            ),
+            warnings: []
+        )
 
         let started = try await manager.startSession(title: "", now: startedAt)
         let stopped = try await manager.stopSession(
             now: endedAt,
             systemAudio: systemAudio,
-            microphoneAudio: microphoneAudio
+            microphoneAudio: microphoneAudio,
+            audioFinalization: audioFinalization
         )
         let activeSession = await manager.currentSession()
 
@@ -81,6 +106,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertTrue(metadata.title.hasPrefix("Meeting "))
         XCTAssertEqual(metadata.systemAudio, systemAudio)
         XCTAssertEqual(metadata.microphoneAudio, microphoneAudio)
+        XCTAssertEqual(metadata.audioFinalization, audioFinalization)
     }
 
     func testCaptureFailureIsPersistedWithoutDeletingSession() async throws {
@@ -107,6 +133,23 @@ final class SessionManagerTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? SessionManagerError, .sessionAlreadyActive)
         }
+    }
+
+    func testAudioFileListDecodesLegacyManifestWithoutWorkingTracks() throws {
+        let data = Data(#"""
+        {
+            "system": "system.caf",
+            "microphone": "microphone.caf",
+            "mixed": "mixed.wav"
+        }
+        """#.utf8)
+
+        let files = try JSONDecoder().decode(SessionAudioFiles.self, from: data)
+
+        XCTAssertEqual(files.system, "system.caf")
+        XCTAssertEqual(files.microphone, "microphone.caf")
+        XCTAssertNil(files.systemWorking)
+        XCTAssertNil(files.microphoneWorking)
     }
 
     private func decodeMetadata(at url: URL) throws -> SessionMetadata {

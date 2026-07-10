@@ -13,14 +13,17 @@ final class AppState: ObservableObject {
     private var stateMachine = AppStateMachine()
     private let sessionManager: SessionManager
     private let captureCoordinator: CaptureCoordinator
+    private let audioFinalizer: any AudioFinalizing
     private var captureMonitorTask: Task<Void, Never>?
 
     init(
         sessionManager: SessionManager = SessionManager(),
-        captureCoordinator: CaptureCoordinator = CaptureCoordinator()
+        captureCoordinator: CaptureCoordinator = CaptureCoordinator(),
+        audioFinalizer: any AudioFinalizing = AudioFinalizer()
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
+        self.audioFinalizer = audioFinalizer
     }
 
     func prepareStorage() async {
@@ -69,42 +72,34 @@ final class AppState: ObservableObject {
             let diagnostics = await captureCoordinator.stop()
             captureDiagnostics = diagnostics
 
-            if let failureReason = diagnostics.systemAudio.failureReason {
-                let failedSession = try await sessionManager.failSession(
-                    reason: failureReason,
-                    systemAudio: diagnostics.systemAudio.sessionMetadata,
-                    microphoneAudio: diagnostics.microphone.sessionMetadata
-                )
-                currentSession = nil
-                lastCompletedSession = failedSession
-                setFailure(NSError(
-                    domain: "MeetingScribe.SystemAudioCapture",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: failureReason]
-                ))
-                return
+            guard let session = currentSession else {
+                throw SessionManagerError.noActiveSession
             }
 
-            guard diagnostics.systemAudio.bufferCount > 0 else {
-                let reason = "No system audio buffers were received. The audio file was not created."
+            try transition(to: .exporting)
+
+            let finalization: AudioFinalizationMetadata
+            do {
+                finalization = try await audioFinalizer.finalize(
+                    session: session,
+                    diagnostics: diagnostics
+                )
+            } catch {
                 let failedSession = try await sessionManager.failSession(
-                    reason: reason,
+                    reason: error.localizedDescription,
                     systemAudio: diagnostics.systemAudio.sessionMetadata,
                     microphoneAudio: diagnostics.microphone.sessionMetadata
                 )
                 currentSession = nil
                 lastCompletedSession = failedSession
-                setFailure(NSError(
-                    domain: "MeetingScribe.SystemAudioCapture",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: reason]
-                ))
+                setFailure(error)
                 return
             }
 
             let completedSession = try await sessionManager.stopSession(
                 systemAudio: diagnostics.systemAudio.sessionMetadata,
-                microphoneAudio: diagnostics.microphone.sessionMetadata
+                microphoneAudio: diagnostics.microphone.sessionMetadata,
+                audioFinalization: finalization
             )
             currentSession = nil
             lastCompletedSession = completedSession
