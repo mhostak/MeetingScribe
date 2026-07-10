@@ -16,6 +16,16 @@
 		000000000000000000000107 /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000207 /* SessionManager.swift */; };
 		000000000000000000000108 /* AppStateMachineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000208 /* AppStateMachineTests.swift */; };
 		000000000000000000000109 /* SessionManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000209 /* SessionManagerTests.swift */; };
+		000000000000000000000110 /* AudioCaptureDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000213 /* AudioCaptureDiagnostics.swift */; };
+		000000000000000000000111 /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000214 /* AudioCaptureService.swift */; };
+		000000000000000000000112 /* AudioFileWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000215 /* AudioFileWriter.swift */; };
+		000000000000000000000113 /* SystemAudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000216 /* SystemAudioCapture.swift */; };
+		000000000000000000000114 /* CaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000217 /* CaptureCoordinator.swift */; };
+		000000000000000000000115 /* AudioCaptureDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000218 /* AudioCaptureDiagnosticsTests.swift */; };
+		000000000000000000000116 /* AudioFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000219 /* AudioFileWriterTests.swift */; };
+		000000000000000000000117 /* AudioClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000220 /* AudioClock.swift */; };
+		000000000000000000000118 /* MicrophoneCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000221 /* MicrophoneCapture.swift */; };
+		000000000000000000000119 /* CaptureCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000222 /* CaptureCoordinatorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +51,16 @@
 		000000000000000000000210 /* MeetingScribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetingScribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000211 /* MeetingScribeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetingScribeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000212 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		000000000000000000000213 /* AudioCaptureDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureDiagnostics.swift; sourceTree = "<group>"; };
+		000000000000000000000214 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
+		000000000000000000000215 /* AudioFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileWriter.swift; sourceTree = "<group>"; };
+		000000000000000000000216 /* SystemAudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioCapture.swift; sourceTree = "<group>"; };
+		000000000000000000000217 /* CaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCoordinator.swift; sourceTree = "<group>"; };
+		000000000000000000000218 /* AudioCaptureDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureDiagnosticsTests.swift; sourceTree = "<group>"; };
+		000000000000000000000219 /* AudioFileWriterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFileWriterTests.swift; sourceTree = "<group>"; };
+		000000000000000000000220 /* AudioClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioClock.swift; sourceTree = "<group>"; };
+		000000000000000000000221 /* MicrophoneCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCapture.swift; sourceTree = "<group>"; };
+		000000000000000000000222 /* CaptureCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCoordinatorTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000603 /* App */,
+				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
 			);
 			path = MeetingScribe;
@@ -104,10 +125,27 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000218 /* AudioCaptureDiagnosticsTests.swift */,
+				000000000000000000000219 /* AudioFileWriterTests.swift */,
+				000000000000000000000222 /* CaptureCoordinatorTests.swift */,
 				000000000000000000000208 /* AppStateMachineTests.swift */,
 				000000000000000000000209 /* SessionManagerTests.swift */,
 			);
 			path = MeetingScribeTests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000607 /* Capture */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000220 /* AudioClock.swift */,
+				000000000000000000000213 /* AudioCaptureDiagnostics.swift */,
+				000000000000000000000214 /* AudioCaptureService.swift */,
+				000000000000000000000215 /* AudioFileWriter.swift */,
+				000000000000000000000216 /* SystemAudioCapture.swift */,
+				000000000000000000000217 /* CaptureCoordinator.swift */,
+				000000000000000000000221 /* MicrophoneCapture.swift */,
+			);
+			path = Capture;
 			sourceTree = "<group>";
 		};
 		000000000000000000000606 /* Products */ = {
@@ -218,6 +256,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000117 /* AudioClock.swift in Sources */,
+				000000000000000000000110 /* AudioCaptureDiagnostics.swift in Sources */,
+				000000000000000000000111 /* AudioCaptureService.swift in Sources */,
+				000000000000000000000112 /* AudioFileWriter.swift in Sources */,
+				000000000000000000000113 /* SystemAudioCapture.swift in Sources */,
+				000000000000000000000114 /* CaptureCoordinator.swift in Sources */,
+				000000000000000000000118 /* MicrophoneCapture.swift in Sources */,
 				000000000000000000000101 /* MeetingScribeApp.swift in Sources */,
 				000000000000000000000102 /* AppStatus.swift in Sources */,
 				000000000000000000000103 /* AppState.swift in Sources */,
@@ -232,6 +277,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000115 /* AudioCaptureDiagnosticsTests.swift in Sources */,
+				000000000000000000000116 /* AudioFileWriterTests.swift in Sources */,
+				000000000000000000000119 /* CaptureCoordinatorTests.swift in Sources */,
 				000000000000000000000108 /* AppStateMachineTests.swift in Sources */,
 				000000000000000000000109 /* SessionManagerTests.swift in Sources */,
 			);
@@ -350,6 +398,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -369,6 +418,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";

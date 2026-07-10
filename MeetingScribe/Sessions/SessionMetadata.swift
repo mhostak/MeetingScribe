@@ -18,6 +18,18 @@ struct SessionAudioFiles: Codable, Equatable, Sendable {
     var mixed = "mixed.wav"
 }
 
+struct AudioTrackMetadata: Codable, Equatable, Sendable {
+    var fileName: String
+    var sampleRate: Double?
+    var channelCount: Int?
+    var bufferCount: Int
+    var totalFrames: Int64
+    var firstPresentationTimestamp: Double?
+    var lastPresentationTimestamp: Double?
+    var capturedDurationSeconds: Double?
+    var failureReason: String?
+}
+
 struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -28,6 +40,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var endedAt: Date?
     var language: TranscriptionLanguage
     var audioFiles: SessionAudioFiles
+    var systemAudio: AudioTrackMetadata?
+    var microphoneAudio: AudioTrackMetadata?
     var failureReason: String?
 
     init(
@@ -40,6 +54,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         endedAt: Date? = nil,
         language: TranscriptionLanguage = .automatic,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
+        systemAudio: AudioTrackMetadata? = nil,
+        microphoneAudio: AudioTrackMetadata? = nil,
         failureReason: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -51,6 +67,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.endedAt = endedAt
         self.language = language
         self.audioFiles = audioFiles
+        self.systemAudio = systemAudio
+        self.microphoneAudio = microphoneAudio
         self.failureReason = failureReason
     }
 }

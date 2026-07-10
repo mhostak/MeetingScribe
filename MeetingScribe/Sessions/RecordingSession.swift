@@ -7,4 +7,12 @@ struct RecordingSession: Equatable, Sendable {
     var manifestURL: URL {
         directoryURL.appendingPathComponent("session.json", isDirectory: false)
     }
+
+    var systemAudioURL: URL {
+        directoryURL.appendingPathComponent(metadata.audioFiles.system, isDirectory: false)
+    }
+
+    var microphoneAudioURL: URL {
+        directoryURL.appendingPathComponent(metadata.audioFiles.microphone, isDirectory: false)
+    }
 }

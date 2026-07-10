@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-Phase 1 provides the application shell, validated application state transitions, and durable recording-session metadata. Audio capture and transcription are intentionally not part of this phase.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. Transcription is not implemented yet.
 
 ## Requirements
 
@@ -33,3 +33,16 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ```
 
 Recording sessions are stored under `~/Library/Application Support/MeetingScribe/Recordings/`.
+
+## Recording permissions during development
+
+macOS binds Screen & System Audio Recording and Microphone approvals to the application's code-signing identity. Configure an Apple Development or Personal Team signing identity in Xcode for stable permissions across builds.
+
+With an ad-hoc `Sign to Run Locally` build, each rebuild changes the app's designated code requirement. Reset the stale permission before testing the newly built binary, grant it again, and relaunch the same binary without rebuilding:
+
+```sh
+tccutil reset ScreenCapture com.martinhostak.MeetingScribe
+tccutil reset Microphone com.martinhostak.MeetingScribe
+```
+
+System audio is required to start a session. Microphone capture is optional: if its permission is denied or no usable input is available, MeetingScribe keeps recording the system-audio track and records the microphone failure in the session manifest.

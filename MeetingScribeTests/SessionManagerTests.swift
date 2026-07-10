@@ -39,9 +39,35 @@ final class SessionManagerTests: XCTestCase {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         let startedAt = Date(timeIntervalSince1970: 1_725_876_600)
         let endedAt = startedAt.addingTimeInterval(90)
+        let systemAudio = AudioTrackMetadata(
+            fileName: "system.caf",
+            sampleRate: 48_000,
+            channelCount: 2,
+            bufferCount: 90,
+            totalFrames: 4_320_000,
+            firstPresentationTimestamp: 100,
+            lastPresentationTimestamp: 190,
+            capturedDurationSeconds: 90,
+            failureReason: nil
+        )
+        let microphoneAudio = AudioTrackMetadata(
+            fileName: "microphone.caf",
+            sampleRate: 48_000,
+            channelCount: 1,
+            bufferCount: 90,
+            totalFrames: 4_320_000,
+            firstPresentationTimestamp: 100.02,
+            lastPresentationTimestamp: 190.02,
+            capturedDurationSeconds: 90,
+            failureReason: nil
+        )
 
         let started = try await manager.startSession(title: "", now: startedAt)
-        let stopped = try await manager.stopSession(now: endedAt)
+        let stopped = try await manager.stopSession(
+            now: endedAt,
+            systemAudio: systemAudio,
+            microphoneAudio: microphoneAudio
+        )
         let activeSession = await manager.currentSession()
 
         XCTAssertEqual(stopped.metadata.status, .recorded)
@@ -53,6 +79,22 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recorded)
         XCTAssertEqual(metadata.endedAt, endedAt)
         XCTAssertTrue(metadata.title.hasPrefix("Meeting "))
+        XCTAssertEqual(metadata.systemAudio, systemAudio)
+        XCTAssertEqual(metadata.microphoneAudio, microphoneAudio)
+    }
+
+    func testCaptureFailureIsPersistedWithoutDeletingSession() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Failed capture")
+        let failed = try await manager.failSession(reason: "Permission denied")
+
+        XCTAssertEqual(failed.metadata.status, .failed)
+        XCTAssertEqual(failed.metadata.failureReason, "Permission denied")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: started.directoryURL.path))
+
+        let metadata = try decodeMetadata(at: failed.manifestURL)
+        XCTAssertEqual(metadata.status, .failed)
+        XCTAssertEqual(metadata.failureReason, "Permission denied")
     }
 
     func testCannotStartSecondSession() async throws {

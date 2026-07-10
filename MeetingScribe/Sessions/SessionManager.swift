@@ -54,13 +54,39 @@ actor SessionManager {
         return session
     }
 
-    func stopSession(now: Date = Date()) throws -> RecordingSession {
+    func stopSession(
+        now: Date = Date(),
+        systemAudio: AudioTrackMetadata? = nil,
+        microphoneAudio: AudioTrackMetadata? = nil
+    ) throws -> RecordingSession {
         guard var session = activeSession else {
             throw SessionManagerError.noActiveSession
         }
 
         session.metadata.status = .recorded
         session.metadata.endedAt = max(now, session.metadata.startedAt ?? now)
+        session.metadata.systemAudio = systemAudio
+        session.metadata.microphoneAudio = microphoneAudio
+        try persist(session)
+        activeSession = nil
+        return session
+    }
+
+    func failSession(
+        reason: String,
+        now: Date = Date(),
+        systemAudio: AudioTrackMetadata? = nil,
+        microphoneAudio: AudioTrackMetadata? = nil
+    ) throws -> RecordingSession {
+        guard var session = activeSession else {
+            throw SessionManagerError.noActiveSession
+        }
+
+        session.metadata.status = .failed
+        session.metadata.endedAt = max(now, session.metadata.startedAt ?? now)
+        session.metadata.systemAudio = systemAudio
+        session.metadata.microphoneAudio = microphoneAudio
+        session.metadata.failureReason = reason
         try persist(session)
         activeSession = nil
         return session
