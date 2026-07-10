@@ -29,4 +29,18 @@ struct RecordingSession: Equatable, Sendable {
             isDirectory: false
         )
     }
+
+    var systemTrackTranscriptURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.systemTrack ?? "system-transcript.json",
+            isDirectory: false
+        )
+    }
+
+    var microphoneTrackTranscriptURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.microphoneTrack ?? "microphone-transcript.json",
+            isDirectory: false
+        )
+    }
 }

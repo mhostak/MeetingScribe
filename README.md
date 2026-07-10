@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`) ready for Whisper. The original CAF recordings are always preserved. Transcription is not implemented yet.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. The original CAF recordings are always preserved, including when the model is missing or transcription fails.
 
 ## Requirements
 
@@ -33,6 +33,19 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ```
 
 Recording sessions are stored under `~/Library/Application Support/MeetingScribe/Recordings/`.
+
+## Whisper models
+
+Models are not embedded in the app or committed to Git. MeetingScribe stores checksum-validated models under `~/Library/Application Support/MeetingScribe/Models/`. The menu-bar UI supports the multilingual `large-v3-turbo`, quantized `large-v3-turbo-q5_0`, `medium`, and a small `tiny` prototype model. The production default is `large-v3-turbo`.
+
+The real inference test is optional and skips when no local model or sample is supplied:
+
+```sh
+MEETINGSCRIBE_WHISPER_MODEL=/path/to/ggml-model.bin \
+MEETINGSCRIBE_WHISPER_AUDIO=/path/to/16-kHz-mono.wav \
+MEETINGSCRIBE_WHISPER_LANGUAGE=sk \
+swift test --filter WhisperCppIntegrationTests
+```
 
 ## Recording permissions during development
 

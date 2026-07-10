@@ -31,11 +31,13 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
-        XCTAssertEqual(metadata.schemaVersion, 2)
+        XCTAssertEqual(metadata.schemaVersion, 3)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
         XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphoneWorking, "microphone-16k.wav")
+        XCTAssertEqual(metadata.transcriptFiles?.systemTrack, "system-transcript.json")
+        XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {
@@ -85,13 +87,24 @@ final class SessionManagerTests: XCTestCase {
             ),
             warnings: []
         )
+        let transcription = SessionTranscriptionMetadata(
+            status: .completed,
+            model: "ggml-test.bin",
+            startedAt: endedAt,
+            completedAt: endedAt,
+            systemSegmentCount: 2,
+            microphoneSegmentCount: 1,
+            warnings: [],
+            failureReason: nil
+        )
 
         let started = try await manager.startSession(title: "", now: startedAt)
         let stopped = try await manager.stopSession(
             now: endedAt,
             systemAudio: systemAudio,
             microphoneAudio: microphoneAudio,
-            audioFinalization: audioFinalization
+            audioFinalization: audioFinalization,
+            transcription: transcription
         )
         let activeSession = await manager.currentSession()
 
@@ -107,6 +120,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.systemAudio, systemAudio)
         XCTAssertEqual(metadata.microphoneAudio, microphoneAudio)
         XCTAssertEqual(metadata.audioFinalization, audioFinalization)
+        XCTAssertEqual(metadata.transcription, transcription)
     }
 
     func testCaptureFailureIsPersistedWithoutDeletingSession() async throws {

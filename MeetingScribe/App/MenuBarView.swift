@@ -73,6 +73,35 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Meeting title (optional)", text: $appState.meetingTitle)
 
+            Picker("Whisper model", selection: $appState.selectedWhisperModelID) {
+                ForEach(WhisperModelDescriptor.supported) { model in
+                    Text(model.displayName).tag(model.id)
+                }
+            }
+            .onChange(of: appState.selectedWhisperModelID) {
+                Task {
+                    await appState.refreshWhisperModelStatus()
+                }
+            }
+
+            Label(
+                "Whisper: \(appState.whisperModelStatusText)",
+                systemImage: whisperModelIcon
+            )
+            .font(.caption)
+            .foregroundStyle(whisperModelColor)
+
+            if case .ready = appState.whisperModelStatus {
+                EmptyView()
+            } else {
+                Button(downloadModelButtonTitle) {
+                    Task {
+                        await appState.downloadSelectedWhisperModel()
+                    }
+                }
+                .disabled(appState.isDownloadingWhisperModel)
+            }
+
             Button("Start recording…") {
                 Task {
                     await appState.startRecording()
@@ -86,6 +115,31 @@ struct MenuBarView: View {
                 }
             }
         }
+    }
+
+    private var downloadModelButtonTitle: String {
+        if appState.isDownloadingWhisperModel {
+            return "Downloading Whisper model…"
+        }
+        let size = ByteCountFormatter.string(
+            fromByteCount: appState.selectedWhisperModel.approximateSizeBytes,
+            countStyle: .file
+        )
+        return "Download \(appState.selectedWhisperModel.displayName) (\(size))"
+    }
+
+    private var whisperModelIcon: String {
+        if case .ready = appState.whisperModelStatus {
+            return "checkmark.circle.fill"
+        }
+        return "arrow.down.circle"
+    }
+
+    private var whisperModelColor: Color {
+        if case .ready = appState.whisperModelStatus {
+            return .green
+        }
+        return .secondary
     }
 
     private var recordingControls: some View {

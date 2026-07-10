@@ -29,6 +29,18 @@
 		000000000000000000000120 /* AudioConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000223 /* AudioConverter.swift */; };
 		000000000000000000000121 /* AudioFinalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000224 /* AudioFinalizer.swift */; };
 		000000000000000000000122 /* AudioFinalizerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000225 /* AudioFinalizerTests.swift */; };
+		000000000000000000000123 /* whisper in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000001202 /* whisper */; };
+		000000000000000000000124 /* TranscriptModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000226 /* TranscriptModels.swift */; };
+		000000000000000000000125 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000227 /* TranscriptionService.swift */; };
+		000000000000000000000126 /* WhisperAudioReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000228 /* WhisperAudioReader.swift */; };
+		000000000000000000000127 /* WhisperModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000229 /* WhisperModelManager.swift */; };
+		000000000000000000000128 /* WhisperCppService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000230 /* WhisperCppService.swift */; };
+		000000000000000000000129 /* TranscriptModelsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000231 /* TranscriptModelsTests.swift */; };
+		000000000000000000000130 /* WhisperAudioReaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000232 /* WhisperAudioReaderTests.swift */; };
+		000000000000000000000131 /* WhisperModelManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000233 /* WhisperModelManagerTests.swift */; };
+		000000000000000000000132 /* SessionTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000234 /* SessionTranscriber.swift */; };
+		000000000000000000000133 /* SessionTranscriberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000235 /* SessionTranscriberTests.swift */; };
+		000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000236 /* WhisperCppIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -67,6 +79,17 @@
 		000000000000000000000223 /* AudioConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioConverter.swift; sourceTree = "<group>"; };
 		000000000000000000000224 /* AudioFinalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizer.swift; sourceTree = "<group>"; };
 		000000000000000000000225 /* AudioFinalizerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioFinalizerTests.swift; sourceTree = "<group>"; };
+		000000000000000000000226 /* TranscriptModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptModels.swift; sourceTree = "<group>"; };
+		000000000000000000000227 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
+		000000000000000000000228 /* WhisperAudioReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperAudioReader.swift; sourceTree = "<group>"; };
+		000000000000000000000229 /* WhisperModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelManager.swift; sourceTree = "<group>"; };
+		000000000000000000000230 /* WhisperCppService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCppService.swift; sourceTree = "<group>"; };
+		000000000000000000000231 /* TranscriptModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptModelsTests.swift; sourceTree = "<group>"; };
+		000000000000000000000232 /* WhisperAudioReaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperAudioReaderTests.swift; sourceTree = "<group>"; };
+		000000000000000000000233 /* WhisperModelManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelManagerTests.swift; sourceTree = "<group>"; };
+		000000000000000000000234 /* SessionTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTranscriber.swift; sourceTree = "<group>"; };
+		000000000000000000000235 /* SessionTranscriberTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTranscriberTests.swift; sourceTree = "<group>"; };
+		000000000000000000000236 /* WhisperCppIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCppIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +97,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000123 /* whisper in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -103,6 +127,7 @@
 				000000000000000000000603 /* App */,
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
+				000000000000000000000608 /* Transcription */,
 			);
 			path = MeetingScribe;
 			sourceTree = "<group>";
@@ -131,6 +156,11 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000236 /* WhisperCppIntegrationTests.swift */,
+				000000000000000000000235 /* SessionTranscriberTests.swift */,
+				000000000000000000000231 /* TranscriptModelsTests.swift */,
+				000000000000000000000232 /* WhisperAudioReaderTests.swift */,
+				000000000000000000000233 /* WhisperModelManagerTests.swift */,
 				000000000000000000000225 /* AudioFinalizerTests.swift */,
 				000000000000000000000218 /* AudioCaptureDiagnosticsTests.swift */,
 				000000000000000000000219 /* AudioFileWriterTests.swift */,
@@ -155,6 +185,19 @@
 				000000000000000000000221 /* MicrophoneCapture.swift */,
 			);
 			path = Capture;
+			sourceTree = "<group>";
+		};
+		000000000000000000000608 /* Transcription */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000234 /* SessionTranscriber.swift */,
+				000000000000000000000226 /* TranscriptModels.swift */,
+				000000000000000000000227 /* TranscriptionService.swift */,
+				000000000000000000000228 /* WhisperAudioReader.swift */,
+				000000000000000000000229 /* WhisperModelManager.swift */,
+				000000000000000000000230 /* WhisperCppService.swift */,
+			);
+			path = Transcription;
 			sourceTree = "<group>";
 		};
 		000000000000000000000606 /* Products */ = {
@@ -182,6 +225,9 @@
 			dependencies = (
 			);
 			name = MeetingScribe;
+			packageProductDependencies = (
+				000000000000000000001202 /* whisper */,
+			);
 			productName = MeetingScribe;
 			productReference = 000000000000000000000210 /* MeetingScribe.app */;
 			productType = "com.apple.product-type.application";
@@ -232,6 +278,9 @@
 			);
 			mainGroup = 000000000000000000000601;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				000000000000000000001201 /* XCLocalSwiftPackageReference "Packages/WhisperBinary" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 000000000000000000000606 /* Products */;
 			projectDirPath = "";
@@ -265,6 +314,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000132 /* SessionTranscriber.swift in Sources */,
+				000000000000000000000124 /* TranscriptModels.swift in Sources */,
+				000000000000000000000125 /* TranscriptionService.swift in Sources */,
+				000000000000000000000126 /* WhisperAudioReader.swift in Sources */,
+				000000000000000000000127 /* WhisperModelManager.swift in Sources */,
+				000000000000000000000128 /* WhisperCppService.swift in Sources */,
 				000000000000000000000120 /* AudioConverter.swift in Sources */,
 				000000000000000000000121 /* AudioFinalizer.swift in Sources */,
 				000000000000000000000117 /* AudioClock.swift in Sources */,
@@ -288,6 +343,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */,
+				000000000000000000000133 /* SessionTranscriberTests.swift in Sources */,
+				000000000000000000000129 /* TranscriptModelsTests.swift in Sources */,
+				000000000000000000000130 /* WhisperAudioReaderTests.swift in Sources */,
+				000000000000000000000131 /* WhisperModelManagerTests.swift in Sources */,
 				000000000000000000000122 /* AudioFinalizerTests.swift in Sources */,
 				000000000000000000000115 /* AudioCaptureDiagnosticsTests.swift in Sources */,
 				000000000000000000000116 /* AudioFileWriterTests.swift in Sources */,
@@ -306,6 +366,21 @@
 			targetProxy = 000000000000000000000301 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		000000000000000000001201 /* XCLocalSwiftPackageReference "Packages/WhisperBinary" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/WhisperBinary;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		000000000000000000001202 /* whisper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 000000000000000000001201 /* XCLocalSwiftPackageReference "Packages/WhisperBinary" */;
+			productName = whisper;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000000001001 /* Debug */ = {
@@ -411,6 +486,11 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -431,6 +511,11 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
 				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
