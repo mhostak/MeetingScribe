@@ -50,4 +50,11 @@ struct RecordingSession: Equatable, Sendable {
             isDirectory: false
         )
     }
+
+    var analysisURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.analysis ?? "analysis.json",
+            isDirectory: false
+        )
+    }
 }

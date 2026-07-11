@@ -31,7 +31,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
-        XCTAssertEqual(metadata.schemaVersion, 5)
+        XCTAssertEqual(metadata.schemaVersion, 6)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
         XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
@@ -39,6 +39,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.transcriptFiles?.systemTrack, "system-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.merged, "transcript.json")
+        XCTAssertEqual(metadata.transcriptFiles?.analysis, "analysis.json")
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {
@@ -106,6 +107,16 @@ final class SessionManagerTests: XCTestCase {
             exportedAt: endedAt,
             failureReason: nil
         )
+        let analysis = SessionAnalysisMetadata(
+            status: .completed,
+            provider: "openai",
+            model: "gpt-5.6-luna",
+            startedAt: endedAt,
+            completedAt: endedAt,
+            transcriptChunkCount: 1,
+            requestCount: 1,
+            failureReason: nil
+        )
 
         let started = try await manager.startSession(title: "", now: startedAt)
         let stopped = try await manager.stopSession(
@@ -114,6 +125,7 @@ final class SessionManagerTests: XCTestCase {
             microphoneAudio: microphoneAudio,
             audioFinalization: audioFinalization,
             transcription: transcription,
+            analysis: analysis,
             output: output
         )
         let activeSession = await manager.currentSession()
@@ -131,6 +143,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.microphoneAudio, microphoneAudio)
         XCTAssertEqual(metadata.audioFinalization, audioFinalization)
         XCTAssertEqual(metadata.transcription, transcription)
+        XCTAssertEqual(metadata.analysis, analysis)
         XCTAssertEqual(metadata.output, output)
     }
 

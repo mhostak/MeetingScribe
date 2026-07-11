@@ -60,6 +60,7 @@ actor SessionManager {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
+        analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil
     ) throws -> RecordingSession {
         guard var session = activeSession else {
@@ -72,6 +73,7 @@ actor SessionManager {
         session.metadata.microphoneAudio = microphoneAudio
         session.metadata.audioFinalization = audioFinalization
         session.metadata.transcription = transcription
+        session.metadata.analysis = analysis
         session.metadata.output = output
         try persist(session)
         activeSession = nil
