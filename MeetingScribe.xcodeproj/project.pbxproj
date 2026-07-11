@@ -43,6 +43,14 @@
 		000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000236 /* WhisperCppIntegrationTests.swift */; };
 		000000000000000000000135 /* TranscriptMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000237 /* TranscriptMerger.swift */; };
 		000000000000000000000136 /* TranscriptMergerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000238 /* TranscriptMergerTests.swift */; };
+		000000000000000000000137 /* FilenameSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000239 /* FilenameSanitizer.swift */; };
+		000000000000000000000138 /* MarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000240 /* MarkdownRenderer.swift */; };
+		000000000000000000000139 /* OutputExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000241 /* OutputExporter.swift */; };
+		000000000000000000000140 /* OutputFolderStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000242 /* OutputFolderStore.swift */; };
+		000000000000000000000141 /* ObsidianService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000243 /* ObsidianService.swift */; };
+		000000000000000000000142 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000244 /* MarkdownRendererTests.swift */; };
+		000000000000000000000143 /* OutputExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000245 /* OutputExporterTests.swift */; };
+		000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000246 /* OutputFolderAndObsidianTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -94,6 +102,14 @@
 		000000000000000000000236 /* WhisperCppIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCppIntegrationTests.swift; sourceTree = "<group>"; };
 		000000000000000000000237 /* TranscriptMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptMerger.swift; sourceTree = "<group>"; };
 		000000000000000000000238 /* TranscriptMergerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptMergerTests.swift; sourceTree = "<group>"; };
+		000000000000000000000239 /* FilenameSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilenameSanitizer.swift; sourceTree = "<group>"; };
+		000000000000000000000240 /* MarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRenderer.swift; sourceTree = "<group>"; };
+		000000000000000000000241 /* OutputExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputExporter.swift; sourceTree = "<group>"; };
+		000000000000000000000242 /* OutputFolderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputFolderStore.swift; sourceTree = "<group>"; };
+		000000000000000000000243 /* ObsidianService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ObsidianService.swift; sourceTree = "<group>"; };
+		000000000000000000000244 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
+		000000000000000000000245 /* OutputExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputExporterTests.swift; sourceTree = "<group>"; };
+		000000000000000000000246 /* OutputFolderAndObsidianTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputFolderAndObsidianTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -132,6 +148,7 @@
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
 				000000000000000000000608 /* Transcription */,
+				000000000000000000000609 /* Output */,
 			);
 			path = MeetingScribe;
 			sourceTree = "<group>";
@@ -160,6 +177,9 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000246 /* OutputFolderAndObsidianTests.swift */,
+				000000000000000000000245 /* OutputExporterTests.swift */,
+				000000000000000000000244 /* MarkdownRendererTests.swift */,
 				000000000000000000000238 /* TranscriptMergerTests.swift */,
 				000000000000000000000236 /* WhisperCppIntegrationTests.swift */,
 				000000000000000000000235 /* SessionTranscriberTests.swift */,
@@ -204,6 +224,18 @@
 				000000000000000000000230 /* WhisperCppService.swift */,
 			);
 			path = Transcription;
+			sourceTree = "<group>";
+		};
+		000000000000000000000609 /* Output */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000239 /* FilenameSanitizer.swift */,
+				000000000000000000000240 /* MarkdownRenderer.swift */,
+				000000000000000000000243 /* ObsidianService.swift */,
+				000000000000000000000241 /* OutputExporter.swift */,
+				000000000000000000000242 /* OutputFolderStore.swift */,
+			);
+			path = Output;
 			sourceTree = "<group>";
 		};
 		000000000000000000000606 /* Products */ = {
@@ -320,6 +352,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000137 /* FilenameSanitizer.swift in Sources */,
+				000000000000000000000138 /* MarkdownRenderer.swift in Sources */,
+				000000000000000000000141 /* ObsidianService.swift in Sources */,
+				000000000000000000000139 /* OutputExporter.swift in Sources */,
+				000000000000000000000140 /* OutputFolderStore.swift in Sources */,
 				000000000000000000000132 /* SessionTranscriber.swift in Sources */,
 				000000000000000000000135 /* TranscriptMerger.swift in Sources */,
 				000000000000000000000124 /* TranscriptModels.swift in Sources */,
@@ -350,6 +387,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */,
+				000000000000000000000143 /* OutputExporterTests.swift in Sources */,
+				000000000000000000000142 /* MarkdownRendererTests.swift in Sources */,
 				000000000000000000000136 /* TranscriptMergerTests.swift in Sources */,
 				000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */,
 				000000000000000000000133 /* SessionTranscriberTests.swift in Sources */,

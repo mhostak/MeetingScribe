@@ -10,6 +10,8 @@ final class AppState: ObservableObject {
     @Published private(set) var captureDiagnostics = CaptureSessionDiagnostics.empty
     @Published private(set) var whisperModelStatus: WhisperModelStatus = .missing
     @Published private(set) var isDownloadingWhisperModel = false
+    @Published private(set) var outputFolderURL: URL?
+    @Published private(set) var lastMarkdownURL: URL?
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
     @Published var meetingTitle = ""
 
@@ -19,6 +21,9 @@ final class AppState: ObservableObject {
     private let audioFinalizer: any AudioFinalizing
     private let modelManager: WhisperModelManager
     private let sessionTranscriber: any SessionTranscribing
+    private let outputExporter: OutputExporter
+    private let outputFolderStore: OutputFolderStore
+    private let obsidianService: ObsidianService
     private var captureMonitorTask: Task<Void, Never>?
 
     init(
@@ -26,19 +31,26 @@ final class AppState: ObservableObject {
         captureCoordinator: CaptureCoordinator = CaptureCoordinator(),
         audioFinalizer: any AudioFinalizing = AudioFinalizer(),
         modelManager: WhisperModelManager = WhisperModelManager(),
-        sessionTranscriber: any SessionTranscribing = SessionTranscriber()
+        sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
+        outputExporter: OutputExporter = OutputExporter(),
+        outputFolderStore: OutputFolderStore? = nil,
+        obsidianService: ObsidianService = ObsidianService()
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
         self.audioFinalizer = audioFinalizer
         self.modelManager = modelManager
         self.sessionTranscriber = sessionTranscriber
+        self.outputExporter = outputExporter
+        self.outputFolderStore = outputFolderStore ?? OutputFolderStore()
+        self.obsidianService = obsidianService
     }
 
     func prepareStorage() async {
         do {
             try await sessionManager.prepareStorage()
             try await modelManager.prepareStorage()
+            outputFolderURL = outputFolderStore.restoreFolder()
             await refreshWhisperModelStatus()
         } catch {
             setFailure(error)
@@ -49,6 +61,7 @@ final class AppState: ObservableObject {
         do {
             try transition(to: .preparing)
             lastError = nil
+            lastMarkdownURL = nil
 
             let session = try await sessionManager.startSession(title: meetingTitle)
             currentSession = session
@@ -78,6 +91,7 @@ final class AppState: ObservableObject {
     func stopRecording() async {
         do {
             try transition(to: .stopping)
+            let stoppedAt = Date()
             stopCaptureMonitoring()
 
             let diagnostics = await captureCoordinator.stop()
@@ -86,6 +100,7 @@ final class AppState: ObservableObject {
             guard let session = currentSession else {
                 throw SessionManagerError.noActiveSession
             }
+            let recordingEndedAt = max(stoppedAt, session.metadata.startedAt ?? stoppedAt)
 
             let finalization: AudioFinalizationMetadata
             do {
@@ -96,6 +111,7 @@ final class AppState: ObservableObject {
             } catch {
                 let failedSession = try await sessionManager.failSession(
                     reason: error.localizedDescription,
+                    now: recordingEndedAt,
                     systemAudio: diagnostics.systemAudio.sessionMetadata,
                     microphoneAudio: diagnostics.microphone.sessionMetadata
                 )
@@ -111,11 +127,20 @@ final class AppState: ObservableObject {
             )
             try transition(to: .exporting)
 
+            var exportSession = session
+            exportSession.metadata.endedAt = recordingEndedAt
+            let output = exportMarkdownIfPossible(
+                session: exportSession,
+                transcript: transcription.mergedTranscript
+            )
+
             let completedSession = try await sessionManager.stopSession(
+                now: recordingEndedAt,
                 systemAudio: diagnostics.systemAudio.sessionMetadata,
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
                 audioFinalization: finalization,
-                transcription: transcription
+                transcription: transcription.metadata,
+                output: output
             )
             currentSession = nil
             lastCompletedSession = completedSession
@@ -148,6 +173,58 @@ final class AppState: ObservableObject {
         }
 
         NSWorkspace.shared.activateFileViewerSelecting([session.manifestURL])
+    }
+
+    var outputFolderDescription: String {
+        outputFolderURL?.path ?? "Recording session folder (default)"
+    }
+
+    var canOpenLastMarkdownInObsidian: Bool {
+        guard let lastMarkdownURL else { return false }
+        return obsidianService.openURL(for: lastMarkdownURL) != nil
+    }
+
+    func chooseOutputFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Markdown output folder"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = outputFolderURL
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try outputFolderStore.selectFolder(url)
+            outputFolderURL = url.standardizedFileURL
+            lastError = nil
+        } catch {
+            lastError = "The output folder could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    func useDefaultOutputFolder() {
+        outputFolderStore.clearFolder()
+        outputFolderURL = nil
+    }
+
+    func openLastMarkdown() {
+        guard let lastMarkdownURL else { return }
+        NSWorkspace.shared.open(lastMarkdownURL)
+    }
+
+    func revealLastMarkdown() {
+        guard let lastMarkdownURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([lastMarkdownURL])
+    }
+
+    func openLastMarkdownInObsidian() {
+        guard let lastMarkdownURL,
+              let url = obsidianService.openURL(for: lastMarkdownURL) else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     var selectedWhisperModel: WhisperModelDescriptor {
@@ -196,7 +273,7 @@ final class AppState: ObservableObject {
     private func transcribeIfPossible(
         session: RecordingSession,
         finalization: AudioFinalizationMetadata
-    ) async -> SessionTranscriptionMetadata {
+    ) async -> TranscriptionOutcome {
         let descriptor = selectedWhisperModel
         let modelStatus: WhisperModelStatus
         do {
@@ -204,15 +281,18 @@ final class AppState: ObservableObject {
             whisperModelStatus = modelStatus
         } catch {
             lastError = "Recording saved. Whisper model check failed: \(error.localizedDescription)"
-            return SessionTranscriptionMetadata(
-                status: .failed,
-                model: descriptor.fileName,
-                startedAt: nil,
-                completedAt: Date(),
-                systemSegmentCount: nil,
-                microphoneSegmentCount: nil,
-                warnings: [],
-                failureReason: error.localizedDescription
+            return TranscriptionOutcome(
+                metadata: SessionTranscriptionMetadata(
+                    status: .failed,
+                    model: descriptor.fileName,
+                    startedAt: nil,
+                    completedAt: Date(),
+                    systemSegmentCount: nil,
+                    microphoneSegmentCount: nil,
+                    warnings: [],
+                    failureReason: error.localizedDescription
+                ),
+                mergedTranscript: nil
             )
         }
 
@@ -224,36 +304,81 @@ final class AppState: ObservableObject {
                 reason = "Download or import the selected Whisper model to transcribe this recording."
             }
             lastError = "Recording saved. \(reason)"
-            return SessionTranscriptionMetadata(
-                status: .modelMissing,
-                model: descriptor.fileName,
-                startedAt: nil,
-                completedAt: Date(),
-                systemSegmentCount: nil,
-                microphoneSegmentCount: nil,
-                warnings: [],
-                failureReason: reason
+            return TranscriptionOutcome(
+                metadata: SessionTranscriptionMetadata(
+                    status: .modelMissing,
+                    model: descriptor.fileName,
+                    startedAt: nil,
+                    completedAt: Date(),
+                    systemSegmentCount: nil,
+                    microphoneSegmentCount: nil,
+                    warnings: [],
+                    failureReason: reason
+                ),
+                mergedTranscript: nil
             )
         }
 
         do {
             try transition(to: .transcribing)
-            return try await sessionTranscriber.transcribe(
+            let result = try await sessionTranscriber.transcribe(
                 session: session,
                 finalization: finalization,
                 modelURL: modelURL,
                 language: session.metadata.language
-            ).metadata
+            )
+            return TranscriptionOutcome(
+                metadata: result.metadata,
+                mergedTranscript: result.mergedTranscript
+            )
         } catch {
             lastError = "Recording saved. Transcription failed: \(error.localizedDescription)"
-            return SessionTranscriptionMetadata(
+            return TranscriptionOutcome(
+                metadata: SessionTranscriptionMetadata(
+                    status: .failed,
+                    model: descriptor.fileName,
+                    startedAt: nil,
+                    completedAt: Date(),
+                    systemSegmentCount: nil,
+                    microphoneSegmentCount: nil,
+                    warnings: [],
+                    failureReason: error.localizedDescription
+                ),
+                mergedTranscript: nil
+            )
+        }
+    }
+
+    private func exportMarkdownIfPossible(
+        session: RecordingSession,
+        transcript: MergedTranscript?
+    ) -> SessionOutputMetadata? {
+        guard let transcript else { return nil }
+
+        let destination = outputFolderURL ?? session.directoryURL
+        do {
+            let result = try outputFolderStore.withAccess(to: destination) {
+                try outputExporter.export(
+                    session: session.metadata,
+                    transcript: transcript,
+                    to: destination
+                )
+            }
+            lastMarkdownURL = result.fileURL
+            return SessionOutputMetadata(
+                status: .completed,
+                markdownFileName: result.fileURL.lastPathComponent,
+                markdownPath: result.fileURL.path,
+                exportedAt: result.exportedAt,
+                failureReason: nil
+            )
+        } catch {
+            lastError = "Transcript saved. Markdown export failed: \(error.localizedDescription)"
+            return SessionOutputMetadata(
                 status: .failed,
-                model: descriptor.fileName,
-                startedAt: nil,
-                completedAt: Date(),
-                systemSegmentCount: nil,
-                microphoneSegmentCount: nil,
-                warnings: [],
+                markdownFileName: nil,
+                markdownPath: nil,
+                exportedAt: Date(),
                 failureReason: error.localizedDescription
             )
         }
@@ -294,4 +419,9 @@ final class AppState: ObservableObject {
         captureMonitorTask?.cancel()
         captureMonitorTask = nil
     }
+}
+
+private struct TranscriptionOutcome: Sendable {
+    let metadata: SessionTranscriptionMetadata
+    let mergedTranscript: MergedTranscript?
 }

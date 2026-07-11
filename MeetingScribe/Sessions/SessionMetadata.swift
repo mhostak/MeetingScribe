@@ -73,6 +73,19 @@ struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+enum SessionOutputStatus: String, Codable, Sendable {
+    case completed
+    case failed
+}
+
+struct SessionOutputMetadata: Codable, Equatable, Sendable {
+    var status: SessionOutputStatus
+    var markdownFileName: String?
+    var markdownPath: String?
+    var exportedAt: Date?
+    var failureReason: String?
+}
+
 struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -88,10 +101,11 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var microphoneAudio: AudioTrackMetadata?
     var audioFinalization: AudioFinalizationMetadata?
     var transcription: SessionTranscriptionMetadata?
+    var output: SessionOutputMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 4,
+        schemaVersion: Int = 5,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -105,6 +119,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
+        output: SessionOutputMetadata? = nil,
         failureReason: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -121,6 +136,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.microphoneAudio = microphoneAudio
         self.audioFinalization = audioFinalization
         self.transcription = transcription
+        self.output = output
         self.failureReason = failureReason
     }
 }

@@ -31,7 +31,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
-        XCTAssertEqual(metadata.schemaVersion, 4)
+        XCTAssertEqual(metadata.schemaVersion, 5)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
         XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
@@ -99,6 +99,13 @@ final class SessionManagerTests: XCTestCase {
             warnings: [],
             failureReason: nil
         )
+        let output = SessionOutputMetadata(
+            status: .completed,
+            markdownFileName: "2026-07-11 09-30 - Meeting.md",
+            markdownPath: "/tmp/2026-07-11 09-30 - Meeting.md",
+            exportedAt: endedAt,
+            failureReason: nil
+        )
 
         let started = try await manager.startSession(title: "", now: startedAt)
         let stopped = try await manager.stopSession(
@@ -106,7 +113,8 @@ final class SessionManagerTests: XCTestCase {
             systemAudio: systemAudio,
             microphoneAudio: microphoneAudio,
             audioFinalization: audioFinalization,
-            transcription: transcription
+            transcription: transcription,
+            output: output
         )
         let activeSession = await manager.currentSession()
 
@@ -123,6 +131,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.microphoneAudio, microphoneAudio)
         XCTAssertEqual(metadata.audioFinalization, audioFinalization)
         XCTAssertEqual(metadata.transcription, transcription)
+        XCTAssertEqual(metadata.output, output)
     }
 
     func testCaptureFailureIsPersistedWithoutDeletingSession() async throws {
