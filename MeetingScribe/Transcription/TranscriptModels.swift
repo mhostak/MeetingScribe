@@ -44,6 +44,39 @@ struct TrackTranscript: Codable, Equatable, Sendable {
     }
 }
 
+struct MergedTranscriptTrack: Codable, Equatable, Sendable {
+    let source: TranscriptSource
+    let model: String
+    let requestedLanguage: TranscriptionLanguage
+    let detectedLanguage: String
+    let segmentCount: Int
+}
+
+struct MergedTranscript: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let sessionID: String
+    let title: String
+    let completedAt: Date
+    let tracks: [MergedTranscriptTrack]
+    let segments: [TranscriptSegment]
+
+    init(
+        schemaVersion: Int = 1,
+        sessionID: String,
+        title: String,
+        completedAt: Date,
+        tracks: [MergedTranscriptTrack],
+        segments: [TranscriptSegment]
+    ) {
+        self.schemaVersion = schemaVersion
+        self.sessionID = sessionID
+        self.title = title
+        self.completedAt = completedAt
+        self.tracks = tracks
+        self.segments = segments
+    }
+}
+
 struct TranscriptionOptions: Equatable, Sendable {
     var language: TranscriptionLanguage
     var source: TranscriptSource

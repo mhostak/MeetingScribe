@@ -43,4 +43,11 @@ struct RecordingSession: Equatable, Sendable {
             isDirectory: false
         )
     }
+
+    var mergedTranscriptURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.merged ?? "transcript.json",
+            isDirectory: false
+        )
+    }
 }

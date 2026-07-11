@@ -68,6 +68,7 @@ struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
     var completedAt: Date?
     var systemSegmentCount: Int?
     var microphoneSegmentCount: Int?
+    var mergedSegmentCount: Int? = nil
     var warnings: [String]
     var failureReason: String?
 }
@@ -90,7 +91,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 3,
+        schemaVersion: Int = 4,
         id: String,
         title: String,
         status: RecordingSessionStatus,

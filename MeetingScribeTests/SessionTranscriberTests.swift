@@ -37,9 +37,11 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(result.metadata.status, .completed)
         XCTAssertEqual(result.metadata.systemSegmentCount, 1)
         XCTAssertEqual(result.metadata.microphoneSegmentCount, 1)
+        XCTAssertEqual(result.metadata.mergedSegmentCount, 2)
         XCTAssertTrue(result.metadata.warnings.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
 
         let options = await service.receivedOptions
         XCTAssertEqual(options.map(\.source), [.system, .microphone])
@@ -52,6 +54,14 @@ final class SessionTranscriberTests: XCTestCase {
             from: systemData
         )
         XCTAssertEqual(persisted.source, .system)
+
+        let mergedData = try Data(contentsOf: session.mergedTranscriptURL)
+        let merged = try TranscriptJSONCoder.makeDecoder().decode(
+            MergedTranscript.self,
+            from: mergedData
+        )
+        XCTAssertEqual(merged.sessionID, "test-session")
+        XCTAssertEqual(merged.segments.map(\.source), [.system, .microphone])
     }
 
     func testMicrophoneTranscriptionFailureDoesNotDiscardSystemTranscript() async throws {
@@ -69,9 +79,12 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(result.metadata.status, .completed)
         XCTAssertEqual(result.metadata.systemSegmentCount, 1)
         XCTAssertNil(result.metadata.microphoneSegmentCount)
+        XCTAssertEqual(result.metadata.mergedSegmentCount, 1)
         XCTAssertEqual(result.metadata.warnings.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
+        XCTAssertEqual(result.mergedTranscript.segments.map(\.source), [.system])
     }
 
     private func makeSession() -> RecordingSession {

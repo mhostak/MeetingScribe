@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. The original CAF recordings are always preserved, including when the model is missing or transcription fails.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. The original CAF recordings are always preserved, including when the model is missing or transcription fails.
 
 ## Requirements
 
@@ -45,6 +45,13 @@ MEETINGSCRIBE_WHISPER_MODEL=/path/to/ggml-model.bin \
 MEETINGSCRIBE_WHISPER_AUDIO=/path/to/16-kHz-mono.wav \
 MEETINGSCRIBE_WHISPER_LANGUAGE=sk \
 swift test --filter WhisperCppIntegrationTests
+```
+
+The transcript merger can also be verified against an existing recording session without modifying it:
+
+```sh
+MEETINGSCRIBE_SESSION_PATH="$HOME/Library/Application Support/MeetingScribe/Recordings/<session-id>" \
+swift test --filter TranscriptMergerTests/testMergesExistingSessionWhenPathIsProvided
 ```
 
 ## Recording permissions during development

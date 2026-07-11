@@ -41,6 +41,8 @@
 		000000000000000000000132 /* SessionTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000234 /* SessionTranscriber.swift */; };
 		000000000000000000000133 /* SessionTranscriberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000235 /* SessionTranscriberTests.swift */; };
 		000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000236 /* WhisperCppIntegrationTests.swift */; };
+		000000000000000000000135 /* TranscriptMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000237 /* TranscriptMerger.swift */; };
+		000000000000000000000136 /* TranscriptMergerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000238 /* TranscriptMergerTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +92,8 @@
 		000000000000000000000234 /* SessionTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTranscriber.swift; sourceTree = "<group>"; };
 		000000000000000000000235 /* SessionTranscriberTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTranscriberTests.swift; sourceTree = "<group>"; };
 		000000000000000000000236 /* WhisperCppIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCppIntegrationTests.swift; sourceTree = "<group>"; };
+		000000000000000000000237 /* TranscriptMerger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptMerger.swift; sourceTree = "<group>"; };
+		000000000000000000000238 /* TranscriptMergerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptMergerTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +160,7 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000238 /* TranscriptMergerTests.swift */,
 				000000000000000000000236 /* WhisperCppIntegrationTests.swift */,
 				000000000000000000000235 /* SessionTranscriberTests.swift */,
 				000000000000000000000231 /* TranscriptModelsTests.swift */,
@@ -191,6 +196,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000234 /* SessionTranscriber.swift */,
+				000000000000000000000237 /* TranscriptMerger.swift */,
 				000000000000000000000226 /* TranscriptModels.swift */,
 				000000000000000000000227 /* TranscriptionService.swift */,
 				000000000000000000000228 /* WhisperAudioReader.swift */,
@@ -315,6 +321,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000132 /* SessionTranscriber.swift in Sources */,
+				000000000000000000000135 /* TranscriptMerger.swift in Sources */,
 				000000000000000000000124 /* TranscriptModels.swift in Sources */,
 				000000000000000000000125 /* TranscriptionService.swift in Sources */,
 				000000000000000000000126 /* WhisperAudioReader.swift in Sources */,
@@ -343,6 +350,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000136 /* TranscriptMergerTests.swift in Sources */,
 				000000000000000000000134 /* WhisperCppIntegrationTests.swift in Sources */,
 				000000000000000000000133 /* SessionTranscriberTests.swift in Sources */,
 				000000000000000000000129 /* TranscriptModelsTests.swift in Sources */,

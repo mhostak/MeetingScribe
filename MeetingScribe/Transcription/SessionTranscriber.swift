@@ -4,6 +4,7 @@ struct SessionTranscriptionResult: Equatable, Sendable {
     let metadata: SessionTranscriptionMetadata
     let systemTranscript: TrackTranscript
     let microphoneTranscript: TrackTranscript?
+    let mergedTranscript: MergedTranscript
 }
 
 protocol SessionTranscribing: Sendable {
@@ -17,13 +18,16 @@ protocol SessionTranscribing: Sendable {
 
 actor SessionTranscriber: SessionTranscribing {
     private let service: any TranscriptionService
+    private let merger: TranscriptMerger
     private let now: @Sendable () -> Date
 
     init(
         service: any TranscriptionService = WhisperCppService(),
+        merger: TranscriptMerger = TranscriptMerger(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.service = service
+        self.merger = merger
         self.now = now
     }
 
@@ -69,24 +73,41 @@ actor SessionTranscriber: SessionTranscribing {
             warnings.append("Microphone working audio was unavailable for transcription.")
         }
 
+        let completedAt = now()
+        let mergedTranscript = try merger.merge(
+            sessionID: session.metadata.id,
+            title: session.metadata.title,
+            systemTranscript: systemTranscript,
+            microphoneTranscript: microphoneTranscript,
+            completedAt: completedAt
+        )
+        try persist(mergedTranscript, to: session.mergedTranscriptURL)
+
         let metadata = SessionTranscriptionMetadata(
             status: .completed,
             model: modelURL.lastPathComponent,
             startedAt: startedAt,
-            completedAt: now(),
+            completedAt: completedAt,
             systemSegmentCount: systemTranscript.segments.count,
             microphoneSegmentCount: microphoneTranscript?.segments.count,
+            mergedSegmentCount: mergedTranscript.segments.count,
             warnings: warnings,
             failureReason: nil
         )
         return SessionTranscriptionResult(
             metadata: metadata,
             systemTranscript: systemTranscript,
-            microphoneTranscript: microphoneTranscript
+            microphoneTranscript: microphoneTranscript,
+            mergedTranscript: mergedTranscript
         )
     }
 
     private func persist(_ transcript: TrackTranscript, to url: URL) throws {
+        let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)
+        try data.write(to: url, options: .atomic)
+    }
+
+    private func persist(_ transcript: MergedTranscript, to url: URL) throws {
         let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)
         try data.write(to: url, options: .atomic)
     }

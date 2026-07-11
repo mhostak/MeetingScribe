@@ -43,4 +43,30 @@ final class TranscriptModelsTests: XCTestCase {
 
         XCTAssertEqual(decoded, transcript)
     }
+
+    func testMergedTranscriptJSONRoundTripPreservesTrackMetadata() throws {
+        let transcript = MergedTranscript(
+            sessionID: "session-1",
+            title: "SOFA weekly",
+            completedAt: Date(timeIntervalSince1970: 1_725_876_700),
+            tracks: [
+                MergedTranscriptTrack(
+                    source: .system,
+                    model: "ggml-test.bin",
+                    requestedLanguage: .automatic,
+                    detectedLanguage: "cs",
+                    segmentCount: 0
+                ),
+            ],
+            segments: []
+        )
+
+        let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)
+        let decoded = try TranscriptJSONCoder.makeDecoder().decode(
+            MergedTranscript.self,
+            from: data
+        )
+
+        XCTAssertEqual(decoded, transcript)
+    }
 }

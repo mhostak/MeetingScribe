@@ -31,13 +31,14 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
-        XCTAssertEqual(metadata.schemaVersion, 3)
+        XCTAssertEqual(metadata.schemaVersion, 4)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
         XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphoneWorking, "microphone-16k.wav")
         XCTAssertEqual(metadata.transcriptFiles?.systemTrack, "system-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
+        XCTAssertEqual(metadata.transcriptFiles?.merged, "transcript.json")
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {
@@ -94,6 +95,7 @@ final class SessionManagerTests: XCTestCase {
             completedAt: endedAt,
             systemSegmentCount: 2,
             microphoneSegmentCount: 1,
+            mergedSegmentCount: 3,
             warnings: [],
             failureReason: nil
         )
@@ -164,6 +166,23 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(files.microphone, "microphone.caf")
         XCTAssertNil(files.systemWorking)
         XCTAssertNil(files.microphoneWorking)
+    }
+
+    func testTranscriptionMetadataDecodesWithoutMergedSegmentCount() throws {
+        let data = Data(#"""
+        {
+            "status": "completed",
+            "model": "ggml-test.bin",
+            "systemSegmentCount": 2,
+            "microphoneSegmentCount": 1,
+            "warnings": []
+        }
+        """#.utf8)
+
+        let metadata = try JSONDecoder().decode(SessionTranscriptionMetadata.self, from: data)
+
+        XCTAssertEqual(metadata.status, .completed)
+        XCTAssertNil(metadata.mergedSegmentCount)
     }
 
     private func decodeMetadata(at url: URL) throws -> SessionMetadata {
