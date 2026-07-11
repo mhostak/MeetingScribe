@@ -38,6 +38,22 @@ struct MenuBarView: View {
                 }
             }
 
+            if appState.lastMarkdownURL != nil {
+                Button("Open Markdown") {
+                    appState.openLastMarkdown()
+                }
+
+                Button("Reveal Markdown in Finder") {
+                    appState.revealLastMarkdown()
+                }
+
+                if appState.canOpenLastMarkdownInObsidian {
+                    Button("Open in Obsidian") {
+                        appState.openLastMarkdownInObsidian()
+                    }
+                }
+            }
+
             Divider()
 
             Button("Quit MeetingScribe") {
@@ -72,6 +88,30 @@ struct MenuBarView: View {
     private var startControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Meeting title (optional)", text: $appState.meetingTitle)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Markdown output", systemImage: "doc.text")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(appState.outputFolderDescription)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+
+                HStack {
+                    Button("Choose folder…") {
+                        appState.chooseOutputFolder()
+                    }
+
+                    if appState.outputFolderURL != nil {
+                        Button("Use default") {
+                            appState.useDefaultOutputFolder()
+                        }
+                    }
+                }
+            }
 
             Picker("Whisper model", selection: $appState.selectedWhisperModelID) {
                 ForEach(WhisperModelDescriptor.supported) { model in
@@ -108,6 +148,11 @@ struct MenuBarView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+
+            Text("Before recording, make sure you have the required permission or participant consent.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if appState.status == .completed || appState.status == .failed {
                 Button("Reset status") {

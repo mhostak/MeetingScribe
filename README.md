@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. The original CAF recordings are always preserved, including when the model is missing or transcription fails.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. MeetingScribe then renders YAML-frontmatter Markdown with timestamped speakers. The original CAF recordings are always preserved, including when the model is missing, transcription fails, or Markdown export fails.
 
 ## Requirements
 
@@ -34,6 +34,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 
 Recording sessions are stored under `~/Library/Application Support/MeetingScribe/Recordings/`.
 
+## Markdown and Obsidian output
+
+MeetingScribe always writes a Markdown result after successful transcription. By default it is stored in the recording's session directory. Use **Choose folder…** in the menu-bar UI to select an Obsidian folder or another destination. The selection is persisted as a security-scoped bookmark and can be reset to the default session folder.
+
+The file name follows `YYYY-MM-DD HH-mm - Meeting title.md`. Existing files are never overwritten; a numeric suffix is added on collision. When the selected folder is inside a directory containing `.obsidian`, the completed result can be opened through an `obsidian://open` URI. Finder reveal and normal file opening are also available.
+
 ## Whisper models
 
 Models are not embedded in the app or committed to Git. MeetingScribe stores checksum-validated models under `~/Library/Application Support/MeetingScribe/Models/`. The menu-bar UI supports the multilingual `large-v3-turbo`, quantized `large-v3-turbo-q5_0`, `medium`, and a small `tiny` prototype model. The production default is `large-v3-turbo`.
@@ -52,6 +58,13 @@ The transcript merger can also be verified against an existing recording session
 ```sh
 MEETINGSCRIBE_SESSION_PATH="$HOME/Library/Application Support/MeetingScribe/Recordings/<session-id>" \
 swift test --filter TranscriptMergerTests/testMergesExistingSessionWhenPathIsProvided
+```
+
+The same environment variable enables the real-session Markdown renderer test:
+
+```sh
+MEETINGSCRIBE_SESSION_PATH="$HOME/Library/Application Support/MeetingScribe/Recordings/<session-id>" \
+swift test --filter MarkdownRendererTests/testRendersExistingSessionWhenPathIsProvided
 ```
 
 ## Recording permissions during development
