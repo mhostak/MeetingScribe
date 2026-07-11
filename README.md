@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. MeetingScribe then renders YAML-frontmatter Markdown with timestamped speakers. The original CAF recordings are always preserved, including when the model is missing, transcription fails, or Markdown export fails.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. MeetingScribe can optionally analyze the transcript with OpenAI and then renders YAML-frontmatter Markdown with structured meeting notes and timestamped speakers. The original CAF recordings and local transcript are always preserved, including when the model is missing, transcription fails, AI analysis fails, or Markdown export fails.
 
 ## Requirements
 
@@ -33,6 +33,20 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ```
 
 Recording sessions are stored under `~/Library/Application Support/MeetingScribe/Recordings/`.
+
+## Optional AI analysis
+
+AI analysis is opt-in and uses the OpenAI Responses API with strict structured output. Only the meeting title, recording identifier, preferred output language, and transcript text are sent; recorded audio remains local. Requests explicitly disable server-side response storage with `store: false`.
+
+The OpenAI API key is stored in the macOS Keychain and is never written to the session manifest or UserDefaults. The default model is `gpt-5.6-luna`; `gpt-5.6-terra` and `gpt-5.6` can be selected in the menu-bar UI. Long transcripts are split at segment boundaries and the partial analyses are consolidated in a final structured request.
+
+Successful output is persisted as `analysis.json` and fills the Markdown summary, decisions, action items, open questions, risks/blockers, and next-meeting topics. If no API key is configured or an analysis request fails, transcription and the base Markdown output still complete and the failure is recorded in the session manifest.
+
+The real Keychain round-trip test is opt-in:
+
+```sh
+MEETINGSCRIBE_KEYCHAIN_TEST=1 swift test --filter APIKeyStoreTests
+```
 
 ## Markdown and Obsidian output
 

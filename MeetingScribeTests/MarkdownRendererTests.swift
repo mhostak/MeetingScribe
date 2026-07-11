@@ -77,6 +77,61 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertFalse(markdown.contains("# Line \"one\"\nLine two"))
     }
 
+    func testRenderFillsAnalysisSectionsWithEvidenceAndUnknownTaskFields() {
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "SOFA weekly",
+            status: .recorded,
+            createdAt: startedAt,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+        let analysis = MeetingAnalysis(
+            summary: "Tím sa dohodol na ďalšom postupe.",
+            decisions: [
+                AnalysisReference(
+                    text: "Použije sa nové API.",
+                    timestampSeconds: 12,
+                    segmentID: "segment-000001"
+                ),
+            ],
+            actionItems: [
+                AnalysisActionItem(
+                    text: "Pripraviť návrh.",
+                    owner: nil,
+                    dueDate: nil,
+                    timestampSeconds: 18,
+                    segmentID: "segment-000002"
+                ),
+            ],
+            openQuestions: [],
+            risksAndBlockers: [],
+            nextMeetingTopics: [
+                AnalysisReference(
+                    text: "Stav implementácie",
+                    timestampSeconds: nil,
+                    segmentID: nil
+                ),
+            ]
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: []),
+            analysis: analysis
+        )
+
+        XCTAssertTrue(markdown.contains("Tím sa dohodol na ďalšom postupe."))
+        XCTAssertTrue(markdown.contains("- Použije sa nové API. — 00:00:12 · `segment-000001`"))
+        XCTAssertTrue(
+            markdown.contains(
+                "- [ ] Neurčené — Pripraviť návrh. — termín: neurčený — 00:00:18 · `segment-000002`"
+            )
+        )
+        XCTAssertTrue(markdown.contains("## Témy na ďalší meeting\n\n- Stav implementácie"))
+        XCTAssertFalse(markdown.contains("<!-- AI analýza zatiaľ nebola vytvorená. -->"))
+    }
+
     func testRendersExistingSessionWhenPathIsProvided() throws {
         guard let path = ProcessInfo.processInfo.environment["MEETINGSCRIBE_SESSION_PATH"],
               !path.isEmpty else {

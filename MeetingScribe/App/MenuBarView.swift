@@ -142,6 +142,66 @@ struct MenuBarView: View {
                 .disabled(appState.isDownloadingWhisperModel)
             }
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("AI meeting analysis", isOn: $appState.aiAnalysisEnabled)
+                    .onChange(of: appState.aiAnalysisEnabled) {
+                        appState.persistAnalysisSettings()
+                    }
+
+                if appState.aiAnalysisEnabled {
+                    Picker("OpenAI model", selection: $appState.selectedOpenAIModel) {
+                        ForEach(OpenAIModelDescriptor.supported) { model in
+                            Text(model.displayName).tag(model.id)
+                        }
+                    }
+                    .onChange(of: appState.selectedOpenAIModel) {
+                        appState.persistAnalysisSettings()
+                    }
+
+                    Label(
+                        appState.hasOpenAIAPIKey
+                            ? "OpenAI API key: stored in Keychain"
+                            : "OpenAI API key: missing",
+                        systemImage: appState.hasOpenAIAPIKey
+                            ? "key.fill"
+                            : "key.slash"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(appState.hasOpenAIAPIKey ? .green : .orange)
+
+                    SecureField("OpenAI API key", text: $appState.openAIAPIKeyInput)
+
+                    HStack {
+                        Button(appState.hasOpenAIAPIKey ? "Replace key" : "Save key") {
+                            Task {
+                                await appState.saveOpenAIAPIKey()
+                            }
+                        }
+                        .disabled(
+                            appState.isSavingOpenAIAPIKey
+                                || appState.openAIAPIKeyInput
+                                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty
+                        )
+
+                        if appState.hasOpenAIAPIKey {
+                            Button("Delete key") {
+                                Task {
+                                    await appState.deleteOpenAIAPIKey()
+                                }
+                            }
+                        }
+                    }
+
+                    Text("Only transcript text and meeting metadata are sent to OpenAI. Audio stays local.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Button("Start recording…") {
                 Task {
                     await appState.startRecording()

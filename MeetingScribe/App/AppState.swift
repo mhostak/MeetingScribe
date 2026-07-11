@@ -12,7 +12,12 @@ final class AppState: ObservableObject {
     @Published private(set) var isDownloadingWhisperModel = false
     @Published private(set) var outputFolderURL: URL?
     @Published private(set) var lastMarkdownURL: URL?
+    @Published private(set) var hasOpenAIAPIKey = false
+    @Published private(set) var isSavingOpenAIAPIKey = false
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
+    @Published var aiAnalysisEnabled = false
+    @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
+    @Published var openAIAPIKeyInput = ""
     @Published var meetingTitle = ""
 
     private var stateMachine = AppStateMachine()
@@ -24,6 +29,8 @@ final class AppState: ObservableObject {
     private let outputExporter: OutputExporter
     private let outputFolderStore: OutputFolderStore
     private let obsidianService: ObsidianService
+    private let apiKeyStore: any APIKeyStoring
+    private let analysisSettingsStore: AnalysisSettingsStore
     private var captureMonitorTask: Task<Void, Never>?
 
     init(
@@ -34,7 +41,9 @@ final class AppState: ObservableObject {
         sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
         outputExporter: OutputExporter = OutputExporter(),
         outputFolderStore: OutputFolderStore? = nil,
-        obsidianService: ObsidianService = ObsidianService()
+        obsidianService: ObsidianService = ObsidianService(),
+        apiKeyStore: (any APIKeyStoring)? = nil,
+        analysisSettingsStore: AnalysisSettingsStore? = nil
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
@@ -44,6 +53,8 @@ final class AppState: ObservableObject {
         self.outputExporter = outputExporter
         self.outputFolderStore = outputFolderStore ?? OutputFolderStore()
         self.obsidianService = obsidianService
+        self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
+        self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
     }
 
     func prepareStorage() async {
@@ -51,6 +62,12 @@ final class AppState: ObservableObject {
             try await sessionManager.prepareStorage()
             try await modelManager.prepareStorage()
             outputFolderURL = outputFolderStore.restoreFolder()
+            aiAnalysisEnabled = analysisSettingsStore.isEnabled
+            let storedModel = analysisSettingsStore.model
+            selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
+                ? storedModel
+                : OpenAIAnalysisProvider.defaultModel
+            hasOpenAIAPIKey = try await apiKeyStore.load() != nil
             await refreshWhisperModelStatus()
         } catch {
             setFailure(error)
@@ -125,13 +142,18 @@ final class AppState: ObservableObject {
                 session: session,
                 finalization: finalization
             )
+            let analysis = await analyzeIfPossible(
+                session: session,
+                transcript: transcription.mergedTranscript
+            )
             try transition(to: .exporting)
 
             var exportSession = session
             exportSession.metadata.endedAt = recordingEndedAt
             let output = exportMarkdownIfPossible(
                 session: exportSession,
-                transcript: transcription.mergedTranscript
+                transcript: transcription.mergedTranscript,
+                analysis: analysis.analysis
             )
 
             let completedSession = try await sessionManager.stopSession(
@@ -140,6 +162,7 @@ final class AppState: ObservableObject {
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
                 audioFinalization: finalization,
                 transcription: transcription.metadata,
+                analysis: analysis.metadata,
                 output: output
             )
             currentSession = nil
@@ -225,6 +248,44 @@ final class AppState: ObservableObject {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    func persistAnalysisSettings() {
+        analysisSettingsStore.setEnabled(aiAnalysisEnabled)
+        analysisSettingsStore.setModel(selectedOpenAIModel)
+    }
+
+    func saveOpenAIAPIKey() async {
+        guard !isSavingOpenAIAPIKey else { return }
+        let normalized = openAIAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            lastError = AnalysisError.missingAPIKey.localizedDescription
+            return
+        }
+
+        isSavingOpenAIAPIKey = true
+        defer { isSavingOpenAIAPIKey = false }
+        do {
+            try await apiKeyStore.save(normalized)
+            openAIAPIKeyInput = ""
+            hasOpenAIAPIKey = true
+            lastError = nil
+        } catch {
+            lastError = "The OpenAI API key could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteOpenAIAPIKey() async {
+        do {
+            try await apiKeyStore.delete()
+            openAIAPIKeyInput = ""
+            hasOpenAIAPIKey = false
+            aiAnalysisEnabled = false
+            persistAnalysisSettings()
+            lastError = nil
+        } catch {
+            lastError = "The OpenAI API key could not be removed: \(error.localizedDescription)"
+        }
     }
 
     var selectedWhisperModel: WhisperModelDescriptor {
@@ -351,7 +412,8 @@ final class AppState: ObservableObject {
 
     private func exportMarkdownIfPossible(
         session: RecordingSession,
-        transcript: MergedTranscript?
+        transcript: MergedTranscript?,
+        analysis: MeetingAnalysis?
     ) -> SessionOutputMetadata? {
         guard let transcript else { return nil }
 
@@ -361,6 +423,7 @@ final class AppState: ObservableObject {
                 try outputExporter.export(
                     session: session.metadata,
                     transcript: transcript,
+                    analysis: analysis,
                     to: destination
                 )
             }
@@ -380,6 +443,75 @@ final class AppState: ObservableObject {
                 markdownPath: nil,
                 exportedAt: Date(),
                 failureReason: error.localizedDescription
+            )
+        }
+    }
+
+    private func analyzeIfPossible(
+        session: RecordingSession,
+        transcript: MergedTranscript?
+    ) async -> AnalysisOutcome {
+        guard aiAnalysisEnabled, let transcript else { return .none }
+
+        let startedAt = Date()
+        do {
+            try transition(to: .analyzing)
+            guard let apiKey = try await apiKeyStore.load(), !apiKey.isEmpty else {
+                let error = AnalysisError.missingAPIKey
+                lastError = "Transcript saved. AI analysis skipped: \(error.localizedDescription)"
+                return AnalysisOutcome(
+                    metadata: SessionAnalysisMetadata(
+                        status: .missingAPIKey,
+                        provider: "openai",
+                        model: selectedOpenAIModel,
+                        startedAt: startedAt,
+                        completedAt: Date(),
+                        transcriptChunkCount: nil,
+                        requestCount: nil,
+                        failureReason: error.localizedDescription
+                    ),
+                    analysis: nil
+                )
+            }
+
+            let provider = OpenAIAnalysisProvider(
+                apiKey: apiKey,
+                model: selectedOpenAIModel
+            )
+            let run = try await MeetingAnalyzer(provider: provider).analyze(
+                session: session.metadata,
+                transcript: transcript,
+                preferredLanguage: "sk"
+            )
+            let data = try JSONEncoder().encode(run.analysis)
+            try data.write(to: session.analysisURL, options: .atomic)
+            return AnalysisOutcome(
+                metadata: SessionAnalysisMetadata(
+                    status: .completed,
+                    provider: "openai",
+                    model: selectedOpenAIModel,
+                    startedAt: startedAt,
+                    completedAt: Date(),
+                    transcriptChunkCount: run.transcriptChunkCount,
+                    requestCount: run.requestCount,
+                    failureReason: nil
+                ),
+                analysis: run.analysis
+            )
+        } catch {
+            lastError = "Transcript saved. AI analysis failed: \(error.localizedDescription)"
+            return AnalysisOutcome(
+                metadata: SessionAnalysisMetadata(
+                    status: .failed,
+                    provider: "openai",
+                    model: selectedOpenAIModel,
+                    startedAt: startedAt,
+                    completedAt: Date(),
+                    transcriptChunkCount: nil,
+                    requestCount: nil,
+                    failureReason: error.localizedDescription
+                ),
+                analysis: nil
             )
         }
     }
@@ -424,4 +556,11 @@ final class AppState: ObservableObject {
 private struct TranscriptionOutcome: Sendable {
     let metadata: SessionTranscriptionMetadata
     let mergedTranscript: MergedTranscript?
+}
+
+private struct AnalysisOutcome: Sendable {
+    let metadata: SessionAnalysisMetadata?
+    let analysis: MeetingAnalysis?
+
+    static let none = AnalysisOutcome(metadata: nil, analysis: nil)
 }

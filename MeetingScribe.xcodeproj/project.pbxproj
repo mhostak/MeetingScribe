@@ -51,6 +51,15 @@
 		000000000000000000000142 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000244 /* MarkdownRendererTests.swift */; };
 		000000000000000000000143 /* OutputExporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000245 /* OutputExporterTests.swift */; };
 		000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000246 /* OutputFolderAndObsidianTests.swift */; };
+		000000000000000000000145 /* AnalysisModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000247 /* AnalysisModels.swift */; };
+		000000000000000000000146 /* AnalysisProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000248 /* AnalysisProvider.swift */; };
+		000000000000000000000147 /* OpenAIAnalysisProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000249 /* OpenAIAnalysisProvider.swift */; };
+		000000000000000000000148 /* APIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000250 /* APIKeyStore.swift */; };
+		000000000000000000000149 /* MeetingAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000251 /* MeetingAnalyzer.swift */; };
+		000000000000000000000150 /* AnalysisSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000252 /* AnalysisSettingsStore.swift */; };
+		000000000000000000000151 /* MeetingAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000253 /* MeetingAnalyzerTests.swift */; };
+		000000000000000000000152 /* OpenAIAnalysisProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */; };
+		000000000000000000000153 /* APIKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000255 /* APIKeyStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -110,6 +119,15 @@
 		000000000000000000000244 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		000000000000000000000245 /* OutputExporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputExporterTests.swift; sourceTree = "<group>"; };
 		000000000000000000000246 /* OutputFolderAndObsidianTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputFolderAndObsidianTests.swift; sourceTree = "<group>"; };
+		000000000000000000000247 /* AnalysisModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisModels.swift; sourceTree = "<group>"; };
+		000000000000000000000248 /* AnalysisProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisProvider.swift; sourceTree = "<group>"; };
+		000000000000000000000249 /* OpenAIAnalysisProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAnalysisProvider.swift; sourceTree = "<group>"; };
+		000000000000000000000250 /* APIKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStore.swift; sourceTree = "<group>"; };
+		000000000000000000000251 /* MeetingAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAnalyzer.swift; sourceTree = "<group>"; };
+		000000000000000000000252 /* AnalysisSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisSettingsStore.swift; sourceTree = "<group>"; };
+		000000000000000000000253 /* MeetingAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAnalyzerTests.swift; sourceTree = "<group>"; };
+		000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAnalysisProviderTests.swift; sourceTree = "<group>"; };
+		000000000000000000000255 /* APIKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -148,6 +166,7 @@
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
 				000000000000000000000608 /* Transcription */,
+				000000000000000000000610 /* Analysis */,
 				000000000000000000000609 /* Output */,
 			);
 			path = MeetingScribe;
@@ -177,6 +196,9 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000255 /* APIKeyStoreTests.swift */,
+				000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */,
+				000000000000000000000253 /* MeetingAnalyzerTests.swift */,
 				000000000000000000000246 /* OutputFolderAndObsidianTests.swift */,
 				000000000000000000000245 /* OutputExporterTests.swift */,
 				000000000000000000000244 /* MarkdownRendererTests.swift */,
@@ -236,6 +258,19 @@
 				000000000000000000000242 /* OutputFolderStore.swift */,
 			);
 			path = Output;
+			sourceTree = "<group>";
+		};
+		000000000000000000000610 /* Analysis */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000247 /* AnalysisModels.swift */,
+				000000000000000000000248 /* AnalysisProvider.swift */,
+				000000000000000000000249 /* OpenAIAnalysisProvider.swift */,
+				000000000000000000000250 /* APIKeyStore.swift */,
+				000000000000000000000251 /* MeetingAnalyzer.swift */,
+				000000000000000000000252 /* AnalysisSettingsStore.swift */,
+			);
+			path = Analysis;
 			sourceTree = "<group>";
 		};
 		000000000000000000000606 /* Products */ = {
@@ -352,6 +387,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000145 /* AnalysisModels.swift in Sources */,
+				000000000000000000000146 /* AnalysisProvider.swift in Sources */,
+				000000000000000000000147 /* OpenAIAnalysisProvider.swift in Sources */,
+				000000000000000000000148 /* APIKeyStore.swift in Sources */,
+				000000000000000000000149 /* MeetingAnalyzer.swift in Sources */,
+				000000000000000000000150 /* AnalysisSettingsStore.swift in Sources */,
 				000000000000000000000137 /* FilenameSanitizer.swift in Sources */,
 				000000000000000000000138 /* MarkdownRenderer.swift in Sources */,
 				000000000000000000000141 /* ObsidianService.swift in Sources */,
@@ -387,6 +428,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000153 /* APIKeyStoreTests.swift in Sources */,
+				000000000000000000000152 /* OpenAIAnalysisProviderTests.swift in Sources */,
+				000000000000000000000151 /* MeetingAnalyzerTests.swift in Sources */,
 				000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */,
 				000000000000000000000143 /* OutputExporterTests.swift in Sources */,
 				000000000000000000000142 /* MarkdownRendererTests.swift in Sources */,

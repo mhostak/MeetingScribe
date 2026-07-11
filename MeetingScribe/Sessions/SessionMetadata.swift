@@ -24,6 +24,7 @@ struct SessionTranscriptFiles: Codable, Equatable, Sendable {
     var systemTrack = "system-transcript.json"
     var microphoneTrack = "microphone-transcript.json"
     var merged = "transcript.json"
+    var analysis: String? = "analysis.json"
 }
 
 struct AudioTrackMetadata: Codable, Equatable, Sendable {
@@ -73,6 +74,23 @@ struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+enum SessionAnalysisStatus: String, Codable, Sendable {
+    case completed
+    case failed
+    case missingAPIKey
+}
+
+struct SessionAnalysisMetadata: Codable, Equatable, Sendable {
+    var status: SessionAnalysisStatus
+    var provider: String
+    var model: String
+    var startedAt: Date?
+    var completedAt: Date?
+    var transcriptChunkCount: Int?
+    var requestCount: Int?
+    var failureReason: String?
+}
+
 enum SessionOutputStatus: String, Codable, Sendable {
     case completed
     case failed
@@ -101,11 +119,12 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var microphoneAudio: AudioTrackMetadata?
     var audioFinalization: AudioFinalizationMetadata?
     var transcription: SessionTranscriptionMetadata?
+    var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 5,
+        schemaVersion: Int = 6,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -119,6 +138,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
+        analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
         failureReason: String? = nil
     ) {
@@ -136,6 +156,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.microphoneAudio = microphoneAudio
         self.audioFinalization = audioFinalization
         self.transcription = transcription
+        self.analysis = analysis
         self.output = output
         self.failureReason = failureReason
     }

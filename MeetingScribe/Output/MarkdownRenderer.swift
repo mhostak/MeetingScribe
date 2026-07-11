@@ -7,7 +7,11 @@ struct MarkdownRenderer: Sendable {
         self.timeZone = timeZone
     }
 
-    func render(session: SessionMetadata, transcript: MergedTranscript) -> String {
+    func render(
+        session: SessionMetadata,
+        transcript: MergedTranscript,
+        analysis: MeetingAnalysis? = nil
+    ) -> String {
         let startedAt = session.startedAt ?? session.createdAt
         let endedAt = session.endedAt ?? transcript.completedAt
         let durationSeconds = max(0, endedAt.timeIntervalSince(startedAt))
@@ -37,27 +41,34 @@ struct MarkdownRenderer: Sendable {
             "",
             "## Súhrn",
             "",
-            "<!-- AI analýza zatiaľ nebola vytvorená. -->",
-            "",
-            "## Rozhodnutia",
-            "",
-            "<!-- AI analýza zatiaľ nebola vytvorená. -->",
-            "",
-            "## Úlohy",
-            "",
-            "<!-- AI analýza zatiaľ nebola vytvorená. -->",
-            "",
-            "## Otvorené otázky",
-            "",
-            "<!-- AI analýza zatiaľ nebola vytvorená. -->",
-            "",
-            "## Riziká a blokery",
-            "",
-            "<!-- AI analýza zatiaľ nebola vytvorená. -->",
-            "",
-            "## Transcript",
-            "",
         ])
+        appendSummary(analysis, to: &lines)
+        appendReferences(
+            title: "Rozhodnutia",
+            values: analysis?.decisions,
+            analysisAvailable: analysis != nil,
+            to: &lines
+        )
+        appendActionItems(analysis?.actionItems, analysisAvailable: analysis != nil, to: &lines)
+        appendReferences(
+            title: "Otvorené otázky",
+            values: analysis?.openQuestions,
+            analysisAvailable: analysis != nil,
+            to: &lines
+        )
+        appendReferences(
+            title: "Riziká a blokery",
+            values: analysis?.risksAndBlockers,
+            analysisAvailable: analysis != nil,
+            to: &lines
+        )
+        appendReferences(
+            title: "Témy na ďalší meeting",
+            values: analysis?.nextMeetingTopics,
+            analysisAvailable: analysis != nil,
+            to: &lines
+        )
+        lines.append(contentsOf: ["## Transcript", ""])
 
         if transcript.segments.isEmpty {
             lines.append("_Transcript neobsahuje žiadne rozpoznané segmenty._")
@@ -77,6 +88,80 @@ struct MarkdownRenderer: Sendable {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
+    }
+
+    private func appendSummary(_ analysis: MeetingAnalysis?, to lines: inout [String]) {
+        guard let analysis else {
+            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            return
+        }
+        let summary = analysis.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append(summary.isEmpty ? "_Súhrn nebol identifikovaný._" : summary)
+        lines.append("")
+    }
+
+    private func appendReferences(
+        title: String,
+        values: [AnalysisReference]?,
+        analysisAvailable: Bool,
+        to lines: inout [String]
+    ) {
+        lines.append(contentsOf: ["## \(title)", ""])
+        guard analysisAvailable else {
+            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            return
+        }
+        guard let values, !values.isEmpty else {
+            lines.append(contentsOf: ["_Neboli identifikované._", ""])
+            return
+        }
+        lines.append(contentsOf: values.map { value in
+            "- \(singleLine(value.text))\(evidenceSuffix(value.timestampSeconds, value.segmentID))"
+        })
+        lines.append("")
+    }
+
+    private func appendActionItems(
+        _ values: [AnalysisActionItem]?,
+        analysisAvailable: Bool,
+        to lines: inout [String]
+    ) {
+        lines.append(contentsOf: ["## Úlohy", ""])
+        guard analysisAvailable else {
+            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            return
+        }
+        guard let values, !values.isEmpty else {
+            lines.append(contentsOf: ["_Neboli identifikované._", ""])
+            return
+        }
+        lines.append(contentsOf: values.map { value in
+            let owner = nonEmpty(value.owner) ?? "Neurčené"
+            let dueDate = nonEmpty(value.dueDate) ?? "neurčený"
+            return "- [ ] \(owner) — \(singleLine(value.text)) — termín: \(dueDate)"
+                + evidenceSuffix(value.timestampSeconds, value.segmentID)
+        })
+        lines.append("")
+    }
+
+    private func evidenceSuffix(_ timestamp: Double?, _ segmentID: String?) -> String {
+        let values = [
+            timestamp.map(elapsedTime),
+            nonEmpty(segmentID).map { "`\($0)`" },
+        ].compactMap { $0 }
+        return values.isEmpty ? "" : " — " + values.joined(separator: " · ")
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !normalized.isEmpty else { return nil }
+        return normalized
+    }
+
+    private func singleLine(_ value: String) -> String {
+        value.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private func appendYAMLList(name: String, values: [String], to lines: inout [String]) {

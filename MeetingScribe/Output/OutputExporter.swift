@@ -23,6 +23,7 @@ struct OutputExporter: Sendable {
     func export(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        analysis: MeetingAnalysis? = nil,
         to directoryURL: URL
     ) throws -> MarkdownExportResult {
         var isDirectory: ObjCBool = false
@@ -42,7 +43,11 @@ struct OutputExporter: Sendable {
             preferredName: preferredName,
             directoryURL: directoryURL
         )
-        let markdown = renderer.render(session: session, transcript: transcript)
+        let markdown = renderer.render(
+            session: session,
+            transcript: transcript,
+            analysis: analysis
+        )
         guard let data = markdown.data(using: .utf8) else {
             throw OutputExportError.couldNotEncodeMarkdown
         }
