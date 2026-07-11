@@ -10,9 +10,15 @@ let package = Package(
     products: [
         .library(name: "MeetingScribe", targets: ["MeetingScribe"])
     ],
+    dependencies: [
+        .package(path: "Packages/WhisperBinary")
+    ],
     targets: [
         .target(
             name: "MeetingScribe",
+            dependencies: [
+                .product(name: "whisper", package: "WhisperBinary")
+            ],
             path: "MeetingScribe",
             exclude: [
                 "App/MeetingScribeApp.swift",
