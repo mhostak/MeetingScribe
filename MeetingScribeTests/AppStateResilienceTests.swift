@@ -171,6 +171,7 @@ final class AppStateResilienceTests: XCTestCase {
 
         await systemCapture.fail(reason: "Simulated required capture failure")
         try await waitUntil { appState.status != .recording }
+        try await waitUntil { appState.status == .completed || appState.status == .failed }
 
         XCTAssertEqual(appState.status, .completed)
         XCTAssertTrue(appState.lastError?.contains("stopped safely") == true)
@@ -293,6 +294,7 @@ final class AppStateResilienceTests: XCTestCase {
         let session = try XCTUnwrap(appState.currentSession)
         await systemCapture.stall()
         try await waitUntil { appState.status != .recording }
+        try await waitUntil { appState.status == .completed || appState.status == .failed }
 
         XCTAssertEqual(appState.status, .completed)
         XCTAssertTrue(appState.lastError?.contains("system audio capture stalled") == true)
