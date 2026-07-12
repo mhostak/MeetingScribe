@@ -37,17 +37,11 @@ final class AudioFileWriter {
             throw AudioCaptureServiceError.invalidAudioFormat
         }
 
-        try prepareAudioFile(for: format)
-
-        guard let audioFile, let audioFormat else {
-            throw AudioCaptureServiceError.invalidAudioFormat
-        }
-
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
 
-        try sampleBuffer.withAudioBufferList { audioBufferList, _ in
+        return try sampleBuffer.withAudioBufferList { audioBufferList, _ in
             guard let pcmBuffer = AVAudioPCMBuffer(
-                pcmFormat: audioFormat,
+                pcmFormat: format,
                 bufferListNoCopy: audioBufferList.unsafePointer,
                 deallocator: nil
             ) else {
@@ -55,14 +49,8 @@ final class AudioFileWriter {
             }
 
             pcmBuffer.frameLength = min(AVAudioFrameCount(frameCount), pcmBuffer.frameCapacity)
-            try audioFile.write(from: pcmBuffer)
+            return try write(pcmBuffer)
         }
-
-        return WriteResult(
-            frameCount: frameCount,
-            sampleRate: format.sampleRate,
-            channelCount: Int(format.channelCount)
-        )
     }
 
     func write(_ pcmBuffer: AVAudioPCMBuffer) throws -> WriteResult {

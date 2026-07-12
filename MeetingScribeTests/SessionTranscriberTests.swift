@@ -62,6 +62,8 @@ final class SessionTranscriberTests: XCTestCase {
         )
         XCTAssertEqual(merged.sessionID, "test-session")
         XCTAssertEqual(merged.segments.map(\.source), [.system, .microphone])
+        let releaseCount = await service.releaseCount
+        XCTAssertEqual(releaseCount, 1)
     }
 
     func testMicrophoneTranscriptionFailureDoesNotDiscardSystemTranscript() async throws {
@@ -85,6 +87,34 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
         XCTAssertEqual(result.mergedTranscript.segments.map(\.source), [.system])
+        let releaseCount = await service.releaseCount
+        XCTAssertEqual(releaseCount, 1)
+    }
+
+    func testCancellationAfterSystemTrackPreventsPersistenceAndMicrophoneWork() async throws {
+        let service = MockTranscriptionService(cancelAfterSystem: true)
+        let session = makeSession()
+        let transcriber = SessionTranscriber(service: service)
+
+        do {
+            _ = try await transcriber.transcribe(
+                session: session,
+                finalization: finalization(),
+                modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+                language: .slovak
+            )
+            XCTFail("Expected transcription cancellation.")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        let options = await service.receivedOptions
+        XCTAssertEqual(options.map(\.source), [.system])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
+        let releaseCount = await service.releaseCount
+        XCTAssertEqual(releaseCount, 1)
     }
 
     private func makeSession() -> RecordingSession {
@@ -127,10 +157,13 @@ final class SessionTranscriberTests: XCTestCase {
 
 private actor MockTranscriptionService: TranscriptionService {
     let failMicrophone: Bool
+    let cancelAfterSystem: Bool
     private(set) var receivedOptions: [TranscriptionOptions] = []
+    private(set) var releaseCount = 0
 
-    init(failMicrophone: Bool = false) {
+    init(failMicrophone: Bool = false, cancelAfterSystem: Bool = false) {
         self.failMicrophone = failMicrophone
+        self.cancelAfterSystem = cancelAfterSystem
     }
 
     func transcribe(
@@ -142,7 +175,7 @@ private actor MockTranscriptionService: TranscriptionService {
         if failMicrophone, options.source == .microphone {
             throw TranscriptionError.inferenceFailed(code: -1)
         }
-        return TrackTranscript(
+        let transcript = TrackTranscript(
             source: options.source,
             model: modelURL.lastPathComponent,
             requestedLanguage: options.language,
@@ -161,5 +194,15 @@ private actor MockTranscriptionService: TranscriptionService {
                 )
             ]
         )
+        if cancelAfterSystem, options.source == .system {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+        }
+        return transcript
+    }
+
+    func releaseResources() {
+        releaseCount += 1
     }
 }

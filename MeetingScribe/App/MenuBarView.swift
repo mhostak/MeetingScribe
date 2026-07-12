@@ -63,9 +63,6 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 320)
-        .task {
-            await appState.prepareStorage()
-        }
     }
 
     private var header: some View {
@@ -140,6 +137,12 @@ struct MenuBarView: View {
             if case .ready = appState.whisperModelStatus {
                 EmptyView()
             } else {
+                if let progress = appState.whisperModelDownloadProgress {
+                    ProgressView(value: progress) {
+                        Text("Downloading… \(progress.formatted(.percent.precision(.fractionLength(0))))")
+                    }
+                    .font(.caption)
+                }
                 Button(downloadModelButtonTitle) {
                     Task {
                         await appState.downloadSelectedWhisperModel()

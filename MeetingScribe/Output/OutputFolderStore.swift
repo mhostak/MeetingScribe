@@ -59,4 +59,17 @@ final class OutputFolderStore {
         }
         return try operation()
     }
+
+    func withAccess<T: Sendable>(
+        to url: URL,
+        operation: @Sendable () async throws -> T
+    ) async rethrows -> T {
+        let didStart = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStart {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try await operation()
+    }
 }

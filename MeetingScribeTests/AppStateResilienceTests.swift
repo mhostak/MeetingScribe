@@ -4,6 +4,50 @@ import XCTest
 
 @MainActor
 final class AppStateResilienceTests: XCTestCase {
+    func testPrepareStorageRunsInitializationOnlyOnce() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let apiKeyStore = CountingResilienceAPIKeyStore()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            modelManager: WhisperModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            apiKeyStore: apiKeyStore,
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.prepareStorage()
+
+        let loadCount = await apiKeyStore.loadCount()
+        XCTAssertEqual(loadCount, 1)
+        XCTAssertEqual(appState.status, .idle)
+    }
+
+    func testPrepareStorageTreatsKeychainFailureAsNonfatal() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            modelManager: WhisperModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            apiKeyStore: FailingResilienceAPIKeyStore(),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+
+        XCTAssertEqual(appState.status, .idle)
+        XCTAssertTrue(appState.lastError?.contains("API key could not be loaded") == true)
+        XCTAssertFalse(appState.hasOpenAIAPIKey)
+    }
+
     func testAppStateRecoversInterruptedSessionFromMergedTranscriptEndToEnd() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -50,6 +94,49 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertTrue(log.contains(#""event":"recoveryCompleted""#))
     }
 
+    func testMarkdownExportDoesNotBlockMainActorDuringRecovery() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let sessionDirectory = recordingsRoot.appendingPathComponent("background-export", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+        let metadata = SessionMetadata(
+            id: "background-export",
+            title: "Background export",
+            status: .recording,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            startedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let session = RecordingSession(metadata: metadata, directoryURL: sessionDirectory)
+        try SessionJSONCoder.makeEncoder().encode(metadata)
+            .write(to: session.manifestURL, options: .atomic)
+        try TranscriptJSONCoder.makeEncoder().encode(
+            makeTranscript(sessionID: metadata.id, title: metadata.title)
+        ).write(to: session.mergedTranscriptURL, options: .atomic)
+
+        let gate = BlockingFileServiceGate()
+        let fileService = BlockingExportProcessingFileService(gate: gate)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            modelManager: WhisperModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            processingFileService: fileService,
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+        let candidate = try XCTUnwrap(appState.recoveryCandidates.first)
+
+        let recoveryTask = Task { await appState.recoverSession(candidate) }
+        let didReachBackgroundExport = await gate.waitUntilBlocked()
+
+        XCTAssertTrue(didReachBackgroundExport)
+        XCTAssertEqual(appState.status, .exporting)
+        gate.release()
+        await recoveryTask.value
+        XCTAssertEqual(appState.status, .completed)
+    }
+
     func testRequiredSystemCaptureFailureTriggersSafeAutomaticStop() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -93,6 +180,126 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(persisted.output?.status, .completed)
     }
 
+    func testCancelledLowStorageCheckDoesNotStopRecordingTwice() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
+        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
+
+        let storageCheck = SuspendedLowStorageCheck()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(
+                interval: .milliseconds(5),
+                storageCheckEveryTicks: 1
+            ),
+            storageStatusProvider: { await storageCheck.status() },
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        await storageCheck.waitUntilRequested()
+
+        let stopTask = Task { await appState.stopRecording() }
+        try await waitUntil { appState.status != .recording }
+        await storageCheck.resume()
+        await stopTask.value
+        try await waitUntil { appState.status == .completed || appState.status == .failed }
+
+        XCTAssertEqual(appState.status, .completed)
+        XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
+    }
+
+    func testTransientSystemAudioStallRecoversWithoutStoppingRecording() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
+        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
+
+        let systemCapture = ResilienceCaptureService()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(
+                interval: .milliseconds(5),
+                storageCheckEveryTicks: 1_000,
+                stalledSystemAudioCheckCount: 20
+            ),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        await systemCapture.stall()
+        try await waitUntil { appState.captureDiagnostics.systemAudio.health() == .stalled }
+
+        await systemCapture.resumeBuffers()
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(appState.status, .recording)
+        await appState.stopRecording()
+        XCTAssertEqual(appState.status, .completed)
+    }
+
+    func testPersistentSystemAudioStallTriggersSafeAutomaticStop() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
+        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
+        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
+
+        let systemCapture = ResilienceCaptureService()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(
+                interval: .milliseconds(5),
+                storageCheckEveryTicks: 1_000,
+                stalledSystemAudioCheckCount: 2
+            ),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        await systemCapture.stall()
+        try await waitUntil { appState.status != .recording }
+
+        XCTAssertEqual(appState.status, .completed)
+        XCTAssertTrue(appState.lastError?.contains("system audio capture stalled") == true)
+        let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+        XCTAssertTrue(log.contains("System audio capture stopped producing buffers."))
+    }
+
     private func makeSessionManager(root: URL) -> SessionManager {
         SessionManager(
             recordingsRoot: root,
@@ -109,7 +316,10 @@ final class AppStateResilienceTests: XCTestCase {
         audioFinalizer: any AudioFinalizing = AudioFinalizer(),
         modelManager: WhisperModelManager,
         sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
+        processingFileService: (any ProcessingFileServicing)? = nil,
         monitoring: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
+        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
+        apiKeyStore: any APIKeyStoring = ResilienceAPIKeyStore(),
         defaults: UserDefaults
     ) -> AppState {
         AppState(
@@ -118,11 +328,13 @@ final class AppStateResilienceTests: XCTestCase {
             audioFinalizer: audioFinalizer,
             modelManager: modelManager,
             sessionTranscriber: sessionTranscriber,
+            processingFileService: processingFileService,
             outputFolderStore: OutputFolderStore(defaults: defaults),
-            apiKeyStore: ResilienceAPIKeyStore(),
+            apiKeyStore: apiKeyStore,
             analysisSettingsStore: AnalysisSettingsStore(defaults: defaults),
             whisperSettingsStore: WhisperSettingsStore(defaults: defaults),
-            captureMonitoringConfiguration: monitoring
+            captureMonitoringConfiguration: monitoring,
+            storageStatusProvider: storageStatusProvider
         )
     }
 
@@ -175,6 +387,106 @@ final class AppStateResilienceTests: XCTestCase {
     }
 }
 
+private actor BlockingExportProcessingFileService: ProcessingFileServicing {
+    private let delegate = ProcessingFileService()
+    private let gate: BlockingFileServiceGate
+
+    init(gate: BlockingFileServiceGate) {
+        self.gate = gate
+    }
+
+    func loadRecoveredArtifacts(
+        from session: RecordingSession
+    ) async -> RecoveredProcessingArtifacts? {
+        await delegate.loadRecoveredArtifacts(from: session)
+    }
+
+    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {
+        try await delegate.persistAnalysis(analysis, to: url)
+    }
+
+    func exportMarkdown(
+        session: SessionMetadata,
+        transcript: MergedTranscript,
+        analysis: MeetingAnalysis?,
+        to directoryURL: URL
+    ) async throws -> MarkdownExportResult {
+        gate.block()
+        return try await delegate.exportMarkdown(
+            session: session,
+            transcript: transcript,
+            analysis: analysis,
+            to: directoryURL
+        )
+    }
+}
+
+private final class BlockingFileServiceGate: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var isBlocked = false
+    private var isReleased = false
+
+    func block() {
+        condition.lock()
+        isBlocked = true
+        condition.broadcast()
+        while !isReleased {
+            condition.wait()
+        }
+        condition.unlock()
+    }
+
+    func waitUntilBlocked() async -> Bool {
+        for _ in 0..<500 {
+            if blockedStatus() { return true }
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return false
+    }
+
+    private func blockedStatus() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        return isBlocked
+    }
+
+    func release() {
+        condition.lock()
+        isReleased = true
+        condition.broadcast()
+        condition.unlock()
+    }
+}
+
+private actor SuspendedLowStorageCheck {
+    private var requestContinuation: CheckedContinuation<Void, Never>?
+    private var statusContinuation: CheckedContinuation<StorageStatus, Never>?
+    private var wasRequested = false
+
+    func status() async -> StorageStatus {
+        wasRequested = true
+        requestContinuation?.resume()
+        requestContinuation = nil
+        return await withCheckedContinuation { continuation in
+            statusContinuation = continuation
+        }
+    }
+
+    func waitUntilRequested() async {
+        guard !wasRequested else { return }
+        await withCheckedContinuation { continuation in
+            requestContinuation = continuation
+        }
+    }
+
+    func resume() {
+        statusContinuation?.resume(
+            returning: StorageStatus(availableBytes: 0, requiredBytes: 1)
+        )
+        statusContinuation = nil
+    }
+}
+
 private struct ResilienceTestFixture {
     let root: URL
     let defaults: UserDefaults
@@ -193,6 +505,24 @@ private struct AppStateCapacityProvider: StorageCapacityProviding {
 private actor ResilienceAPIKeyStore: APIKeyStoring {
     func save(_ apiKey: String) async throws {}
     func load() async throws -> String? { nil }
+    func delete() async throws {}
+}
+
+private actor CountingResilienceAPIKeyStore: APIKeyStoring {
+    private var loads = 0
+
+    func save(_ apiKey: String) async throws {}
+    func load() async throws -> String? {
+        loads += 1
+        return nil
+    }
+    func delete() async throws {}
+    func loadCount() -> Int { loads }
+}
+
+private actor FailingResilienceAPIKeyStore: APIKeyStoring {
+    func save(_ apiKey: String) async throws {}
+    func load() async throws -> String? { throw KeychainStoreError.invalidUTF8 }
     func delete() async throws {}
 }
 
@@ -218,6 +548,19 @@ private actor ResilienceCaptureService: AudioCaptureService {
 
     func fail(reason: String) {
         current.failureReason = reason
+    }
+
+    func stall() {
+        current.lastBufferReceivedAt = Date().addingTimeInterval(-20)
+    }
+
+    func resumeBuffers() {
+        current.registerBuffer(
+            frameCount: 4_800,
+            sampleRate: 48_000,
+            channelCount: 1,
+            presentationTimestamp: current.lastPresentationTimestamp ?? 0
+        )
     }
 }
 

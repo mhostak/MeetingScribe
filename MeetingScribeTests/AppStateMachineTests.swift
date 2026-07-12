@@ -2,6 +2,18 @@ import XCTest
 @testable import MeetingScribe
 
 final class AppStateMachineTests: XCTestCase {
+    private let allowedTransitions: [AppStatus: Set<AppStatus>] = [
+        .idle: [.preparing, .failed],
+        .preparing: [.recording, .failed],
+        .recording: [.stopping, .failed],
+        .stopping: [.transcribing, .analyzing, .exporting, .completed, .failed],
+        .transcribing: [.analyzing, .exporting, .failed],
+        .analyzing: [.exporting, .failed],
+        .exporting: [.completed, .failed],
+        .completed: [.idle, .preparing, .failed],
+        .failed: [.idle, .preparing],
+    ]
+
     func testHappyPathForPhaseOne() throws {
         var machine = AppStateMachine()
 
@@ -34,5 +46,31 @@ final class AppStateMachineTests: XCTestCase {
         try machine.transition(to: .completed)
 
         XCTAssertEqual(machine.status, .completed)
+    }
+
+    func testEveryDocumentedTransitionIsAccepted() throws {
+        for (source, destinations) in allowedTransitions {
+            for destination in destinations {
+                var machine = AppStateMachine(status: source)
+                try machine.transition(to: destination)
+                XCTAssertEqual(machine.status, destination, "\(source) -> \(destination)")
+            }
+        }
+    }
+
+    func testEveryOtherTransitionIsRejectedWithoutChangingState() {
+        for source in AppStatus.allCases {
+            let allowed = allowedTransitions[source, default: []]
+            for destination in AppStatus.allCases where !allowed.contains(destination) {
+                var machine = AppStateMachine(status: source)
+                XCTAssertThrowsError(try machine.transition(to: destination)) { error in
+                    XCTAssertEqual(
+                        error as? AppStateTransitionError,
+                        .invalidTransition(from: source, to: destination)
+                    )
+                }
+                XCTAssertEqual(machine.status, source, "\(source) -> \(destination)")
+            }
+        }
     }
 }

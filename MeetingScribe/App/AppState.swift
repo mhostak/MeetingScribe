@@ -4,6 +4,7 @@ import Foundation
 struct CaptureMonitoringConfiguration: Sendable {
     var interval: Duration = .seconds(1)
     var storageCheckEveryTicks = 5
+    var stalledSystemAudioCheckCount = 3
 }
 
 @MainActor
@@ -15,6 +16,7 @@ final class AppState: ObservableObject {
     @Published private(set) var captureDiagnostics = CaptureSessionDiagnostics.empty
     @Published private(set) var whisperModelStatus: WhisperModelStatus = .missing
     @Published private(set) var isDownloadingWhisperModel = false
+    @Published private(set) var whisperModelDownloadProgress: Double?
     @Published private(set) var outputFolderURL: URL?
     @Published private(set) var lastMarkdownURL: URL?
     @Published private(set) var hasOpenAIAPIKey = false
@@ -34,7 +36,7 @@ final class AppState: ObservableObject {
     private let audioFinalizer: any AudioFinalizing
     private let modelManager: WhisperModelManager
     private let sessionTranscriber: any SessionTranscribing
-    private let outputExporter: OutputExporter
+    private let processingFileService: any ProcessingFileServicing
     private let outputFolderStore: OutputFolderStore
     private let obsidianService: ObsidianService
     private let apiKeyStore: any APIKeyStoring
@@ -43,10 +45,14 @@ final class AppState: ObservableObject {
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
+    private let storageStatusProvider: @Sendable () async throws -> StorageStatus
     private var captureMonitorTask: Task<Void, Never>?
     private var storageCheckTick = 0
+    private var stalledSystemAudioCheckTick = 0
     private var isStoppingForLowStorage = false
     private var isStoppingForCaptureFailure = false
+    private var hasPreparedStorage = false
+    private var isPreparingStorage = false
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -55,51 +61,71 @@ final class AppState: ObservableObject {
         modelManager: WhisperModelManager = WhisperModelManager(),
         sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
         outputExporter: OutputExporter = OutputExporter(),
+        processingFileService: (any ProcessingFileServicing)? = nil,
         outputFolderStore: OutputFolderStore? = nil,
-        obsidianService: ObsidianService = ObsidianService(),
+        obsidianService: ObsidianService? = nil,
         apiKeyStore: (any APIKeyStoring)? = nil,
         analysisSettingsStore: AnalysisSettingsStore? = nil,
         whisperSettingsStore: WhisperSettingsStore? = nil,
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
-        captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration()
+        captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
+        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
         self.audioFinalizer = audioFinalizer
         self.modelManager = modelManager
         self.sessionTranscriber = sessionTranscriber
-        self.outputExporter = outputExporter
+        self.processingFileService = processingFileService
+            ?? ProcessingFileService(outputExporter: outputExporter)
         self.outputFolderStore = outputFolderStore ?? OutputFolderStore()
-        self.obsidianService = obsidianService
+        self.obsidianService = obsidianService ?? ObsidianService()
         self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
         self.whisperSettingsStore = whisperSettingsStore ?? WhisperSettingsStore()
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
+        self.storageStatusProvider = storageStatusProvider ?? {
+            try await sessionManager.storageStatus()
+        }
     }
 
     func prepareStorage() async {
+        guard !hasPreparedStorage, !isPreparingStorage else { return }
+        isPreparingStorage = true
+        defer { isPreparingStorage = false }
+
         do {
             try await sessionManager.prepareStorage()
             try await modelManager.prepareStorage()
-            outputFolderURL = outputFolderStore.restoreFolder()
-            let storedWhisperModelID = whisperSettingsStore.selectedModelID
-            selectedWhisperModelID = WhisperModelDescriptor.supported.contains {
-                $0.id == storedWhisperModelID
-            } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
-            aiAnalysisEnabled = analysisSettingsStore.isEnabled
-            let storedModel = analysisSettingsStore.model
-            selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
-                ? storedModel
-                : OpenAIAnalysisProvider.defaultModel
-            hasOpenAIAPIKey = try await apiKeyStore.load() != nil
-            await refreshWhisperModelStatus()
-            await refreshRecoveryCandidates()
         } catch {
             setFailure(error)
+            return
         }
+
+        outputFolderURL = outputFolderStore.restoreFolder()
+        let storedWhisperModelID = whisperSettingsStore.selectedModelID
+        selectedWhisperModelID = WhisperModelDescriptor.supported.contains {
+            $0.id == storedWhisperModelID
+        } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
+        aiAnalysisEnabled = analysisSettingsStore.isEnabled
+        let storedModel = analysisSettingsStore.model
+        selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
+            ? storedModel
+            : OpenAIAnalysisProvider.defaultModel
+
+        do {
+            hasOpenAIAPIKey = try await apiKeyStore.load() != nil
+        } catch {
+            hasOpenAIAPIKey = false
+            lastError = "The OpenAI API key could not be loaded: \(error.localizedDescription)"
+        }
+
+        await refreshWhisperModelStatus()
+        await refreshRecoveryCandidates()
+        hasPreparedStorage = true
     }
 
     func startRecording() async {
@@ -113,6 +139,7 @@ final class AppState: ObservableObject {
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
             storageCheckTick = 0
+            stalledSystemAudioCheckTick = 0
 
             let session = try await sessionManager.startSession(title: meetingTitle)
             currentSession = session
@@ -195,7 +222,9 @@ final class AppState: ObservableObject {
             try transition(to: .stopping)
             try? await processingLogger.log(.recoveryStarted, for: session)
 
-            if let transcript = loadRecoveredTranscript(from: session) {
+            if let recoveredArtifacts = await processingFileService.loadRecoveredArtifacts(
+                from: session
+            ) {
                 let diagnostics = recoveredMetadataDiagnostics(for: session)
                 captureDiagnostics = diagnostics
                 await completeProcessedSession(
@@ -205,9 +234,12 @@ final class AppState: ObservableObject {
                     finalization: session.metadata.audioFinalization,
                     transcription: recoveredTranscriptionOutcome(
                         session: session,
-                        transcript: transcript
+                        transcript: recoveredArtifacts.transcript
                     ),
-                    recoveredAnalysis: loadRecoveredAnalysis(from: session)
+                    recoveredAnalysis: recoveredAnalysisOutcome(
+                        session: session,
+                        analysis: recoveredArtifacts.analysis
+                    )
                 )
             } else {
                 let diagnostics = try recoveredAudioInspector.inspect(session: session)
@@ -394,15 +426,23 @@ final class AppState: ObservableObject {
     func downloadSelectedWhisperModel() async {
         guard !isDownloadingWhisperModel else { return }
         isDownloadingWhisperModel = true
+        whisperModelDownloadProgress = 0
         lastError = nil
+        defer {
+            isDownloadingWhisperModel = false
+            whisperModelDownloadProgress = nil
+        }
         do {
-            _ = try await modelManager.download(selectedWhisperModel)
+            _ = try await modelManager.download(selectedWhisperModel) { [weak self] progress in
+                Task { @MainActor in
+                    self?.whisperModelDownloadProgress = progress
+                }
+            }
             await refreshWhisperModelStatus()
         } catch {
             lastError = error.localizedDescription
             await refreshWhisperModelStatus()
         }
-        isDownloadingWhisperModel = false
     }
 
     private func refreshRecoveryCandidates() async {
@@ -528,7 +568,7 @@ final class AppState: ObservableObject {
 
             var exportSession = session
             exportSession.metadata.endedAt = recordingEndedAt
-            let output = exportMarkdownIfPossible(
+            let output = await exportMarkdownIfPossible(
                 session: exportSession,
                 transcript: transcription.mergedTranscript,
                 analysis: analysis.analysis
@@ -577,14 +617,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func loadRecoveredTranscript(from session: RecordingSession) -> MergedTranscript? {
-        guard FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path),
-              let data = try? Data(contentsOf: session.mergedTranscriptURL) else {
-            return nil
-        }
-        return try? TranscriptJSONCoder.makeDecoder().decode(MergedTranscript.self, from: data)
-    }
-
     private func recoveredTranscriptionOutcome(
         session: RecordingSession,
         transcript: MergedTranscript
@@ -605,12 +637,11 @@ final class AppState: ObservableObject {
         return TranscriptionOutcome(metadata: metadata, mergedTranscript: transcript)
     }
 
-    private func loadRecoveredAnalysis(from session: RecordingSession) -> AnalysisOutcome? {
-        guard FileManager.default.fileExists(atPath: session.analysisURL.path),
-              let data = try? Data(contentsOf: session.analysisURL),
-              let analysis = try? JSONDecoder().decode(MeetingAnalysis.self, from: data) else {
-            return nil
-        }
+    private func recoveredAnalysisOutcome(
+        session: RecordingSession,
+        analysis: MeetingAnalysis?
+    ) -> AnalysisOutcome? {
+        guard let analysis else { return nil }
         let metadata = session.metadata.analysis.flatMap {
             $0.status == .completed ? $0 : nil
         } ?? SessionAnalysisMetadata(
@@ -751,13 +782,14 @@ final class AppState: ObservableObject {
         session: RecordingSession,
         transcript: MergedTranscript?,
         analysis: MeetingAnalysis?
-    ) -> SessionOutputMetadata? {
+    ) async -> SessionOutputMetadata? {
         guard let transcript else { return nil }
 
         let destination = outputFolderURL ?? session.directoryURL
         do {
-            let result = try outputFolderStore.withAccess(to: destination) {
-                try outputExporter.export(
+            let processingFileService = processingFileService
+            let result = try await outputFolderStore.withAccess(to: destination) {
+                try await processingFileService.exportMarkdown(
                     session: session.metadata,
                     transcript: transcript,
                     analysis: analysis,
@@ -820,8 +852,10 @@ final class AppState: ObservableObject {
                 transcript: transcript,
                 preferredLanguage: "sk"
             )
-            let data = try JSONEncoder().encode(run.analysis)
-            try data.write(to: session.analysisURL, options: .atomic)
+            try await processingFileService.persistAnalysis(
+                run.analysis,
+                to: session.analysisURL
+            )
             return AnalysisOutcome(
                 metadata: SessionAnalysisMetadata(
                     status: .completed,
@@ -881,23 +915,38 @@ final class AppState: ObservableObject {
 
                 guard let self else { break }
                 self.captureDiagnostics = await self.captureCoordinator.diagnostics()
+                let systemAudioHealth = self.captureDiagnostics.systemAudio.health()
 
-                if self.captureDiagnostics.systemAudio.health() == .failed,
-                   !self.isStoppingForCaptureFailure,
-                   self.status == .recording {
-                    self.isStoppingForCaptureFailure = true
+                if systemAudioHealth == .stalled {
+                    self.stalledSystemAudioCheckTick += 1
+                } else {
+                    self.stalledSystemAudioCheckTick = 0
+                }
+
+                if systemAudioHealth == .failed {
                     let reason = self.captureDiagnostics.systemAudio.failureReason
                         ?? "System audio capture failed."
-                    if let session = self.currentSession {
-                        try? await self.processingLogger.log(
-                            .captureFailed,
-                            for: session,
-                            attributes: [.reason(reason)]
-                        )
+                    if await self.stopRecordingForCaptureFailure(
+                        reason: reason,
+                        message: "Recording was stopped safely because system audio capture failed: \(reason) Existing audio was preserved."
+                    ) {
+                        break
                     }
-                    await self.stopRecording()
-                    self.lastError = "Recording was stopped safely because system audio capture failed: \(reason) Existing audio was preserved."
-                    break
+                }
+
+                let stalledCheckCount = max(
+                    1,
+                    monitoringConfiguration.stalledSystemAudioCheckCount
+                )
+                if systemAudioHealth == .stalled,
+                   self.stalledSystemAudioCheckTick >= stalledCheckCount {
+                    let reason = "System audio capture stopped producing buffers."
+                    if await self.stopRecordingForCaptureFailure(
+                        reason: reason,
+                        message: "Recording was stopped safely because system audio capture stalled. Existing audio was preserved."
+                    ) {
+                        break
+                    }
                 }
 
                 self.storageCheckTick += 1
@@ -907,9 +956,13 @@ final class AppState: ObservableObject {
                 )
                 guard self.storageCheckTick.isMultiple(of: storageFrequency),
                       !self.isStoppingForLowStorage,
-                      let storage = try? await self.sessionManager.storageStatus(),
+                      let storage = try? await self.storageStatusProvider(),
                       !storage.hasSufficientCapacity else {
                     continue
+                }
+
+                guard !Task.isCancelled, self.status == .recording else {
+                    break
                 }
 
                 self.isStoppingForLowStorage = true
@@ -923,11 +976,35 @@ final class AppState: ObservableObject {
                         ]
                     )
                 }
+                let message = "Recording was stopped safely because free disk space became critically low. Existing audio was preserved."
+                self.lastError = message
                 await self.stopRecording()
-                self.lastError = "Recording was stopped safely because free disk space became critically low. Existing audio was preserved."
+                self.lastError = message
                 break
             }
         }
+    }
+
+    private func stopRecordingForCaptureFailure(
+        reason: String,
+        message: String
+    ) async -> Bool {
+        guard !isStoppingForCaptureFailure, status == .recording else {
+            return false
+        }
+
+        isStoppingForCaptureFailure = true
+        if let session = currentSession {
+            try? await processingLogger.log(
+                .captureFailed,
+                for: session,
+                attributes: [.reason(reason)]
+            )
+        }
+        lastError = message
+        await stopRecording()
+        lastError = message
+        return true
     }
 
     private func stopCaptureMonitoring() {

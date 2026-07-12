@@ -1,8 +1,15 @@
 import Foundation
 
+/// Produces a deterministic, loss-preserving view of independently transcribed tracks.
+///
+/// Meaningful segments from both tracks are retained, including simultaneous
+/// speech; this type does not deduplicate acoustic echo or collapse overlaps.
+/// Timestamps are clamped to zero, rounded to milliseconds, and ordered by
+/// start time, then system-before-microphone, end time, and original ID.
 struct TranscriptMerger: Sendable {
     private static let timestampScale = 1_000.0
 
+    /// Merges source-labelled tracks and assigns stable IDs in final timeline order.
     func merge(
         sessionID: String,
         title: String,

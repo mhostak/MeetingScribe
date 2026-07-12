@@ -26,7 +26,7 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
             XCTAssertEqual(format["strict"] as? Bool, true)
             XCTAssertTrue((json["input"] as? String)?.contains("Transcript text") == true)
 
-            return (200, try self.successResponse(expected))
+            return MockAnalysisResponse(statusCode: 200, data: try self.successResponse(expected))
         }
 
         let provider = OpenAIAnalysisProvider(
@@ -41,8 +41,13 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
     }
 
     func testProviderSurfacesAPIErrorMessage() async {
+        let attempts = LockedCounter()
         MockAnalysisURLProtocol.handler = { _ in
-            (401, Data(#"{"error":{"message":"Invalid API key"}}"#.utf8))
+            _ = attempts.increment()
+            return MockAnalysisResponse(
+                statusCode: 401,
+                data: Data(#"{"error":{"message":"Invalid API key"}}"#.utf8)
+            )
         }
         let provider = OpenAIAnalysisProvider(
             apiKey: "bad-key",
@@ -59,13 +64,14 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
                 .apiError(statusCode: 401, message: "Invalid API key")
             )
         }
+        XCTAssertEqual(attempts.value, 1)
     }
 
     func testProviderSurfacesStructuredRefusal() async {
         MockAnalysisURLProtocol.handler = { _ in
-            (
-                200,
-                Data(#"{"status":"completed","output":[{"content":[{"type":"refusal","refusal":"Cannot analyze"}]}]}"#.utf8)
+            MockAnalysisResponse(
+                statusCode: 200,
+                data: Data(#"{"status":"completed","output":[{"content":[{"type":"refusal","refusal":"Cannot analyze"}]}]}"#.utf8)
             )
         }
         let provider = OpenAIAnalysisProvider(
@@ -84,7 +90,10 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
 
     func testProviderRejectsIncompleteResponse() async {
         MockAnalysisURLProtocol.handler = { _ in
-            (200, Data(#"{"status":"incomplete","output":[]}"#.utf8))
+            MockAnalysisResponse(
+                statusCode: 200,
+                data: Data(#"{"status":"incomplete","output":[]}"#.utf8)
+            )
         }
         let provider = OpenAIAnalysisProvider(
             apiKey: "test-key",
@@ -100,10 +109,198 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
         }
     }
 
+    func testProviderRetriesRateLimitUsingRetryAfterThenSucceeds() async throws {
+        let expected = sampleAnalysis()
+        let attempts = LockedCounter()
+        let delays = LockedDelayRecorder()
+        MockAnalysisURLProtocol.handler = { _ in
+            if attempts.increment() == 1 {
+                return MockAnalysisResponse(
+                    statusCode: 429,
+                    headers: ["Retry-After": "2"],
+                    data: Data(#"{"error":{"message":"Slow down"}}"#.utf8)
+                )
+            }
+            return MockAnalysisResponse(statusCode: 200, data: try self.successResponse(expected))
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(
+                maxAttempts: 3,
+                baseDelaySeconds: 1,
+                maximumDelaySeconds: 8,
+                jitterRatio: 0
+            ),
+            sleep: { delays.record($0) }
+        )
+
+        let result = try await provider.analyze(makeRequest())
+
+        XCTAssertEqual(result, expected)
+        XCTAssertEqual(attempts.value, 2)
+        XCTAssertEqual(delays.values, [2])
+    }
+
+    func testProviderRetriesServerErrorsWithBoundedExponentialBackoff() async {
+        let attempts = LockedCounter()
+        let delays = LockedDelayRecorder()
+        MockAnalysisURLProtocol.handler = { _ in
+            _ = attempts.increment()
+            return MockAnalysisResponse(
+                statusCode: 503,
+                data: Data(#"{"error":{"message":"Temporarily unavailable"}}"#.utf8)
+            )
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(
+                maxAttempts: 3,
+                baseDelaySeconds: 0.5,
+                maximumDelaySeconds: 4,
+                jitterRatio: 0
+            ),
+            sleep: { delays.record($0) }
+        )
+
+        do {
+            _ = try await provider.analyze(makeRequest())
+            XCTFail("Expected the final server error.")
+        } catch {
+            XCTAssertEqual(
+                error as? AnalysisError,
+                .serverError(statusCode: 503, message: "Temporarily unavailable")
+            )
+        }
+        XCTAssertEqual(attempts.value, 3)
+        XCTAssertEqual(delays.values, [0.5, 1])
+    }
+
+    func testProviderRetriesWhitelistedNetworkErrorThenSucceeds() async throws {
+        let expected = sampleAnalysis()
+        let attempts = LockedCounter()
+        let delays = LockedDelayRecorder()
+        MockAnalysisURLProtocol.handler = { _ in
+            if attempts.increment() == 1 {
+                throw URLError(.timedOut)
+            }
+            return MockAnalysisResponse(statusCode: 200, data: try self.successResponse(expected))
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(
+                maxAttempts: 2,
+                baseDelaySeconds: 0.25,
+                maximumDelaySeconds: 2,
+                jitterRatio: 0
+            ),
+            sleep: { delays.record($0) }
+        )
+
+        let result = try await provider.analyze(makeRequest())
+
+        XCTAssertEqual(result, expected)
+        XCTAssertEqual(attempts.value, 2)
+        XCTAssertEqual(delays.values, [0.25])
+    }
+
+    func testProviderMapsNetworkErrorToTypedErrorWhenRetriesAreExhausted() async {
+        MockAnalysisURLProtocol.handler = { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(maxAttempts: 1),
+            sleep: { _ in XCTFail("A single-attempt policy must not sleep.") }
+        )
+
+        do {
+            _ = try await provider.analyze(makeRequest())
+            XCTFail("Expected a typed network error.")
+        } catch {
+            guard case let .network(code, _) = error as? AnalysisError else {
+                return XCTFail("Expected AnalysisError.network, received \(error)")
+            }
+            XCTAssertEqual(code, .notConnectedToInternet)
+        }
+    }
+
+    func testProviderAddsDeterministicJitterWithinConfiguredBound() async throws {
+        let expected = sampleAnalysis()
+        let attempts = LockedCounter()
+        let delays = LockedDelayRecorder()
+        MockAnalysisURLProtocol.handler = { _ in
+            if attempts.increment() == 1 {
+                return MockAnalysisResponse(
+                    statusCode: 500,
+                    data: Data(#"{"error":{"message":"Retry me"}}"#.utf8)
+                )
+            }
+            return MockAnalysisResponse(statusCode: 200, data: try self.successResponse(expected))
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(
+                maxAttempts: 2,
+                baseDelaySeconds: 2,
+                maximumDelaySeconds: 8,
+                jitterRatio: 0.5
+            ),
+            sleep: { delays.record($0) },
+            jitter: { 0.5 }
+        )
+
+        _ = try await provider.analyze(makeRequest())
+
+        XCTAssertEqual(delays.values, [2.5])
+    }
+
+    func testProviderDoesNotRetryWhenRetryAfterExceedsLocalDelayLimit() async {
+        let attempts = LockedCounter()
+        MockAnalysisURLProtocol.handler = { _ in
+            _ = attempts.increment()
+            return MockAnalysisResponse(
+                statusCode: 429,
+                headers: ["Retry-After": "60"],
+                data: Data(#"{"error":{"message":"Quota window"}}"#.utf8)
+            )
+        }
+        let provider = makeProvider(
+            retryPolicy: AnalysisRetryPolicy(
+                maxAttempts: 3,
+                baseDelaySeconds: 1,
+                maximumDelaySeconds: 8,
+                jitterRatio: 0
+            ),
+            sleep: { _ in XCTFail("An excessive Retry-After must not be shortened.") }
+        )
+
+        do {
+            _ = try await provider.analyze(makeRequest())
+            XCTFail("Expected a typed rate-limit error.")
+        } catch {
+            XCTAssertEqual(
+                error as? AnalysisError,
+                .rateLimited(message: "Quota window", retryAfterSeconds: 60)
+            )
+        }
+        XCTAssertEqual(attempts.value, 1)
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockAnalysisURLProtocol.self]
         return URLSession(configuration: configuration)
+    }
+
+    private func makeProvider(
+        retryPolicy: AnalysisRetryPolicy,
+        sleep: @escaping @Sendable (Double) async throws -> Void,
+        jitter: @escaping @Sendable () -> Double = { 0 }
+    ) -> OpenAIAnalysisProvider {
+        OpenAIAnalysisProvider(
+            apiKey: "test-key",
+            model: "gpt-test",
+            endpointURL: URL(string: "https://example.test/v1/responses")!,
+            session: makeSession(),
+            retryPolicy: retryPolicy,
+            sleep: sleep,
+            jitter: jitter
+        )
     }
 
     private func makeRequest() -> AnalysisRequest {
@@ -144,8 +341,39 @@ final class OpenAIAnalysisProviderTests: XCTestCase {
     }
 }
 
+private struct MockAnalysisResponse {
+    let statusCode: Int
+    var headers: [String: String] = [:]
+    let data: Data
+}
+
+private final class LockedCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int { lock.withLock { count } }
+
+    func increment() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+}
+
+private final class LockedDelayRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+
+    var values: [Double] { lock.withLock { storage } }
+
+    func record(_ delay: Double) {
+        lock.withLock { storage.append(delay) }
+    }
+}
+
 private final class MockAnalysisURLProtocol: URLProtocol, @unchecked Sendable {
-    nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Int, Data))?
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> MockAnalysisResponse)?
 
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -177,15 +405,17 @@ private final class MockAnalysisURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         do {
-            let (statusCode, data) = try handler(request)
+            let result = try handler(request)
+            var headers = result.headers
+            headers["Content-Type"] = "application/json"
             let response = HTTPURLResponse(
                 url: request.url!,
-                statusCode: statusCode,
+                statusCode: result.statusCode,
                 httpVersion: nil,
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: headers
             )!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocol(self, didLoad: result.data)
             client?.urlProtocolDidFinishLoading(self)
         } catch {
             client?.urlProtocol(self, didFailWithError: error)

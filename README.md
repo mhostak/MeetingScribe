@@ -11,6 +11,19 @@ The current implementation provides the menu-bar application shell, validated ap
 - macOS 14 or newer
 - Xcode 26 or newer
 
+## Runtime and architecture invariants
+
+The current application target uses Hardened Runtime but does **not** enable App Sandbox. `MeetingScribe.entitlements` contains the audio-input entitlement and no `com.apple.security.app-sandbox` entitlement. The security-scoped bookmark used for a user-selected Markdown folder is still maintained for stable folder access, but it must not be interpreted as evidence that the process is sandboxed.
+
+`Packages/WhisperBinary` is a local SwiftPM wrapper referenced by both `Package.swift` and the Xcode project. Its manifest pins the official whisper.cpp v1.8.1 XCFramework release URL and checksum; the binary is resolved by SwiftPM and is not committed to this repository. This is separate from runtime Whisper model files, which the application downloads and verifies under Application Support.
+
+Capture and transcript processing preserve these invariants:
+
+- ScreenCaptureKit presentation timestamps and valid microphone mach host-time values are the only inputs to the shared capture timeline. Invalid microphone host time stays missing; `systemUptime` and sample time are not mixed into the timeline.
+- Finalization chooses the earliest plausible captured track start as the timeline origin. A track's relative offset is `max(0, trackStart - timelineOrigin)`; the converter does not insert leading silence.
+- System and microphone tracks are transcribed sequentially. One loaded Whisper context is reused between them and explicitly released after the complete session, while each track's audio samples are released before the next track is read.
+- Merge is deterministic and loss-preserving: segments are normalized to millisecond precision and ordered by time with stable tie-breakers. Cross-track overlap is retained and labelled; acoustic echo is not deduplicated.
+
 ## Build and test
 
 ```sh
@@ -46,7 +59,7 @@ Each session has a newline-delimited JSON `processing.log`. It contains only tec
 
 ## Stabilization testing
 
-The standard SwiftPM suite contains 72 tests. Five hardware or fixture-dependent tests skip unless explicitly enabled; the remaining 67 pass without failures. The most recent completed full Xcode app/test scheme contains the preceding 68-test set and reports 63 passed, 5 skipped, and 0 failed. In addition, the opt-in long-session test has been executed successfully against a generated one-hour, approximately 58 MB PCM stream.
+The current standard SwiftPM baseline contains 117 tests: 111 pass and 6 hardware-, credential-, or fixture-dependent tests skip unless explicitly enabled. The Xcode app and test targets use Swift 6 with complete strict-concurrency checking. GitHub Actions runs both the SwiftPM suite and the shared Xcode scheme on a pinned `macos-26` runner, so the SwiftUI application layer cannot be skipped by a core-only build. In addition, the opt-in long-session test has been executed successfully against a generated one-hour, approximately 58 MB PCM stream. These automated counts describe the current working tree; release acceptance still requires the manual hardware matrix below.
 
 AppState-level integration tests cover recovery from a preserved merged transcript and a safe automatic stop after required system-audio capture fails. These tests verify the resulting Markdown, manifest, processing log, preserved audio, and recovery status rather than only isolated model types.
 
@@ -83,6 +96,8 @@ MEETINGSCRIBE_KEYCHAIN_TEST=1 swift test --filter APIKeyStoreTests
 MeetingScribe always writes a Markdown result after successful transcription. By default it is stored in the recording's session directory. Use **Choose folder…** in the menu-bar UI to select an Obsidian folder or another destination. The selection is persisted as a security-scoped bookmark and can be reset to the default session folder.
 
 The file name follows `YYYY-MM-DD HH-mm - Meeting title.md`. Existing files are never overwritten; a numeric suffix is added on collision. When the selected folder is inside a directory containing `.obsidian`, the completed result can be opened through an `obsidian://open` URI. Finder reveal and normal file opening are also available.
+
+The Obsidian action is a best-effort handoff, not a vault sync or import API. MeetingScribe locates the nearest ancestor containing `.obsidian` and builds `obsidian://open` from the vault directory name plus the note's relative path. Obsidian must already know that local vault and be registered as the URI handler. Two registered vaults with the same directory name can be ambiguous, and MeetingScribe cannot confirm which one Obsidian selects; use normal file opening or Finder reveal in that case.
 
 ## Whisper models
 

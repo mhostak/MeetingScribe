@@ -28,9 +28,34 @@ private final class WhisperContextHandle: @unchecked Sendable {
     }
 }
 
-actor WhisperCppService: TranscriptionService {
+final class WhisperCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    func cancel() {
+        lock.withLock { cancelled = true }
+    }
+}
+
+func whisperCancellationCallback(_ userData: UnsafeMutableRawPointer?) -> Bool {
+    guard let userData else { return false }
+    return Unmanaged<WhisperCancellationToken>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+        .isCancelled
+}
+
+final class WhisperCppService: TranscriptionService, @unchecked Sendable {
     private let audioReader: WhisperAudioReader
     private let now: @Sendable () -> Date
+    private let inferenceQueue = DispatchQueue(
+        label: "com.martinhostak.MeetingScribe.whisper-inference",
+        qos: .userInitiated
+    )
     private var context: WhisperContextHandle?
     private var loadedModelURL: URL?
 
@@ -47,7 +72,60 @@ actor WhisperCppService: TranscriptionService {
         modelURL: URL,
         options: TranscriptionOptions
     ) async throws -> TrackTranscript {
+        try Task.checkCancellation()
+        let cancellationToken = WhisperCancellationToken()
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                inferenceQueue.async { [self] in
+                    guard !cancellationToken.isCancelled else {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
+                    do {
+                        continuation.resume(returning: try transcribeSynchronously(
+                            audioURL: audioURL,
+                            modelURL: modelURL,
+                            options: options,
+                            cancellationToken: cancellationToken
+                        ))
+                    } catch {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        } onCancel: {
+            cancellationToken.cancel()
+        }
+    }
+
+    func releaseResources() async {
+        await withCheckedContinuation { continuation in
+            inferenceQueue.async { [self] in
+                context = nil
+                loadedModelURL = nil
+                continuation.resume()
+            }
+        }
+    }
+
+    func hasLoadedContext() async -> Bool {
+        await withCheckedContinuation { continuation in
+            inferenceQueue.async { [self] in
+                continuation.resume(returning: context != nil)
+            }
+        }
+    }
+
+    private func transcribeSynchronously(
+        audioURL: URL,
+        modelURL: URL,
+        options: TranscriptionOptions,
+        cancellationToken: WhisperCancellationToken
+    ) throws -> TrackTranscript {
+        guard !cancellationToken.isCancelled else { throw CancellationError() }
         let samples = try audioReader.readSamples(from: audioURL)
+        guard !cancellationToken.isCancelled else { throw CancellationError() }
         let context = try loadContext(modelURL: modelURL)
         var parameters = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         parameters.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.processorCount - 2)))
@@ -60,6 +138,10 @@ actor WhisperCppService: TranscriptionService {
         parameters.print_realtime = false
         parameters.print_timestamps = false
         parameters.detect_language = false
+        parameters.abort_callback = whisperCancellationCallback
+        parameters.abort_callback_user_data = Unmanaged
+            .passUnretained(cancellationToken)
+            .toOpaque()
 
         let result = try options.language.rawValue.withCString { languagePointer in
             parameters.language = languagePointer
@@ -71,7 +153,8 @@ actor WhisperCppService: TranscriptionService {
                         parameters: parameters,
                         samples: samples,
                         options: options,
-                        modelURL: modelURL
+                        modelURL: modelURL,
+                        cancellationToken: cancellationToken
                     )
                 }
             }
@@ -81,7 +164,8 @@ actor WhisperCppService: TranscriptionService {
                 parameters: parameters,
                 samples: samples,
                 options: options,
-                modelURL: modelURL
+                modelURL: modelURL,
+                cancellationToken: cancellationToken
             )
         }
         return result
@@ -113,12 +197,14 @@ actor WhisperCppService: TranscriptionService {
         parameters: whisper_full_params,
         samples: [Float],
         options: TranscriptionOptions,
-        modelURL: URL
+        modelURL: URL,
+        cancellationToken: WhisperCancellationToken
     ) throws -> TrackTranscript {
         whisper_reset_timings(context)
         let code = samples.withUnsafeBufferPointer { pointer in
             whisper_full(context, parameters, pointer.baseAddress, Int32(pointer.count))
         }
+        guard !cancellationToken.isCancelled else { throw CancellationError() }
         guard code == 0 else {
             throw TranscriptionError.inferenceFailed(code: code)
         }
