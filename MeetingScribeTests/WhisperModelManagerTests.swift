@@ -65,6 +65,22 @@ final class WhisperModelManagerTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testWhisperModelSelectionPersists() throws {
+        let suiteName = "MeetingScribeWhisperSettings-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = WhisperSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.selectedModelID, WhisperModelDescriptor.largeV3Turbo.id)
+        store.setSelectedModelID(WhisperModelDescriptor.tiny.id)
+
+        XCTAssertEqual(
+            WhisperSettingsStore(defaults: defaults).selectedModelID,
+            WhisperModelDescriptor.tiny.id
+        )
+    }
+
     private func descriptor(expectedSHA1: String) -> WhisperModelDescriptor {
         WhisperModelDescriptor(
             id: "test",

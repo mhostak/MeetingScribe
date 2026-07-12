@@ -4,7 +4,7 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 ## Current scope
 
-The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. MeetingScribe can optionally analyze the transcript with OpenAI and then renders YAML-frontmatter Markdown with structured meeting notes and timestamped speakers. The original CAF recordings and local transcript are always preserved, including when the model is missing, transcription fails, AI analysis fails, or Markdown export fails.
+The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, ScreenCaptureKit-based system audio capture to `system.caf`, and a separate microphone track in `microphone.caf`. After recording, both available tracks are validated and converted to 16 kHz mono PCM WAV files (`system-16k.wav` and `microphone-16k.wav`). Local transcription uses the official whisper.cpp v1.8.1 XCFramework with Metal acceleration and writes separate timestamped `system-transcript.json` and `microphone-transcript.json` files. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source and speaker. MeetingScribe can optionally analyze the transcript with OpenAI and then renders YAML-frontmatter Markdown with structured meeting notes and timestamped speakers. Interrupted and failed sessions can be recovered from preserved audio or transcript artifacts. The original files are never deleted by recovery, including when the model is missing, transcription fails, AI analysis fails, Markdown export fails, or the application exits unexpectedly.
 
 ## Requirements
 
@@ -33,6 +33,28 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ```
 
 Recording sessions are stored under `~/Library/Application Support/MeetingScribe/Recordings/`.
+
+## Recovery and resilience
+
+At startup, MeetingScribe scans recording manifests for interrupted capture, failed transcription, missing models, and incomplete Markdown export. The menu-bar UI requires each recoverable session to be either processed again or closed explicitly. Closing recovery marks the session as failed but does not delete any audio, transcript, analysis, or log file.
+
+Recovery reuses a valid `transcript.json` and `analysis.json` when available. Otherwise it reconstructs technical metadata from a readable `system.caf`, regenerates the 16 kHz working audio, and resumes the normal transcription and export pipeline. Recovery attempts and outcomes are recorded in session manifest schema 7.
+
+Recording requires at least 1 GB of free space. Capacity is checked before creating a session and every five seconds while recording. If available storage becomes critical, capture is stopped and finalized through the normal safe-stop pipeline.
+
+Each session has a newline-delimited JSON `processing.log`. It contains only technical events and bounded diagnostic fields such as timestamps, models, frame counts, sample rates, durations, and sanitized error messages. Transcript text, audio data, API requests, meeting titles, and API keys are not logged; token-like values are redacted.
+
+## Stabilization testing
+
+The standard SwiftPM suite contains 69 tests. Five hardware or fixture-dependent tests skip unless explicitly enabled; the remaining 64 pass without failures. The most recent completed full Xcode app/test scheme contains the preceding 68-test set and reports 63 passed, 5 skipped, and 0 failed. In addition, the opt-in long-session test has been executed successfully against a generated one-hour, approximately 58 MB PCM stream.
+
+AppState-level integration tests cover recovery from a preserved merged transcript and a safe automatic stop after required system-audio capture fails. These tests verify the resulting Markdown, manifest, processing log, preserved audio, and recovery status rather than only isolated model types.
+
+Real forced-termination tests recovered both a 172.7-second system-only session and a 102-second dual-track session. The dual-track recovery preserved both original CAF files, generated both 16 kHz working WAV files, transcribed both tracks, merged 10 segments, exported Markdown, and completed the recovery audit. Recovery also infers the relative microphone start from file end times and durations because CAF does not retain presentation timestamps after a hard crash.
+
+The stably signed build now includes the Hardened Runtime audio-input entitlement. A real dual-track run recorded and finalized both system audio and microphone audio, created both 16 kHz working WAV files, transcribed both tracks without warnings, merged 15 segments, and exported Markdown.
+
+Sleep/wake, Bluetooth/device changes, meeting-application scenarios, real 60-minute recording, and production-model CZ/SK quality acceptance still require the remaining hardware matrix in [the phase 10 stabilization protocol](docs/phase-10-stabilization.md). Detailed completed and pending evidence is recorded in [the phase 10 results](docs/phase-10-results.md). Automated results must not be treated as a substitute for that manual evidence.
 
 ## Optional AI analysis
 

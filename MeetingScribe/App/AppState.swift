@@ -1,6 +1,11 @@
 import AppKit
 import Foundation
 
+struct CaptureMonitoringConfiguration: Sendable {
+    var interval: Duration = .seconds(1)
+    var storageCheckEveryTicks = 5
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var status: AppStatus = .idle
@@ -14,6 +19,9 @@ final class AppState: ObservableObject {
     @Published private(set) var lastMarkdownURL: URL?
     @Published private(set) var hasOpenAIAPIKey = false
     @Published private(set) var isSavingOpenAIAPIKey = false
+    @Published private(set) var recoveryCandidates: [SessionRecoveryCandidate] = []
+    @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
+    @Published private(set) var isRecoveringSession = false
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
     @Published var aiAnalysisEnabled = false
     @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
@@ -31,7 +39,14 @@ final class AppState: ObservableObject {
     private let obsidianService: ObsidianService
     private let apiKeyStore: any APIKeyStoring
     private let analysisSettingsStore: AnalysisSettingsStore
+    private let whisperSettingsStore: WhisperSettingsStore
+    private let recoveredAudioInspector: RecoveredAudioInspector
+    private let processingLogger: ProcessingLogger
+    private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
     private var captureMonitorTask: Task<Void, Never>?
+    private var storageCheckTick = 0
+    private var isStoppingForLowStorage = false
+    private var isStoppingForCaptureFailure = false
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -43,7 +58,11 @@ final class AppState: ObservableObject {
         outputFolderStore: OutputFolderStore? = nil,
         obsidianService: ObsidianService = ObsidianService(),
         apiKeyStore: (any APIKeyStoring)? = nil,
-        analysisSettingsStore: AnalysisSettingsStore? = nil
+        analysisSettingsStore: AnalysisSettingsStore? = nil,
+        whisperSettingsStore: WhisperSettingsStore? = nil,
+        recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
+        processingLogger: ProcessingLogger = ProcessingLogger(),
+        captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration()
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
@@ -55,6 +74,10 @@ final class AppState: ObservableObject {
         self.obsidianService = obsidianService
         self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
+        self.whisperSettingsStore = whisperSettingsStore ?? WhisperSettingsStore()
+        self.recoveredAudioInspector = recoveredAudioInspector
+        self.processingLogger = processingLogger
+        self.captureMonitoringConfiguration = captureMonitoringConfiguration
     }
 
     func prepareStorage() async {
@@ -62,6 +85,10 @@ final class AppState: ObservableObject {
             try await sessionManager.prepareStorage()
             try await modelManager.prepareStorage()
             outputFolderURL = outputFolderStore.restoreFolder()
+            let storedWhisperModelID = whisperSettingsStore.selectedModelID
+            selectedWhisperModelID = WhisperModelDescriptor.supported.contains {
+                $0.id == storedWhisperModelID
+            } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
             aiAnalysisEnabled = analysisSettingsStore.isEnabled
             let storedModel = analysisSettingsStore.model
             selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
@@ -69,6 +96,7 @@ final class AppState: ObservableObject {
                 : OpenAIAnalysisProvider.defaultModel
             hasOpenAIAPIKey = try await apiKeyStore.load() != nil
             await refreshWhisperModelStatus()
+            await refreshRecoveryCandidates()
         } catch {
             setFailure(error)
         }
@@ -76,12 +104,19 @@ final class AppState: ObservableObject {
 
     func startRecording() async {
         do {
+            guard recoveryCandidates.isEmpty else {
+                throw SessionRecoveryError.pendingRecoveryMustBeResolved
+            }
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
+            isStoppingForLowStorage = false
+            isStoppingForCaptureFailure = false
+            storageCheckTick = 0
 
             let session = try await sessionManager.startSession(title: meetingTitle)
             currentSession = session
+            try? await processingLogger.log(.sessionCreated, for: session)
 
             do {
                 captureDiagnostics = try await captureCoordinator.start(for: session)
@@ -95,10 +130,16 @@ final class AppState: ObservableObject {
                 currentSession = nil
                 lastCompletedSession = failedSession
                 captureDiagnostics = diagnostics
+                try? await processingLogger.log(
+                    .captureFailed,
+                    for: session,
+                    attributes: [.reason(error.localizedDescription)]
+                )
                 throw error
             }
 
             try transition(to: .recording)
+            try? await processingLogger.log(.captureStarted, for: session)
             startCaptureMonitoring()
         } catch {
             setFailure(error)
@@ -118,59 +159,91 @@ final class AppState: ObservableObject {
                 throw SessionManagerError.noActiveSession
             }
             let recordingEndedAt = max(stoppedAt, session.metadata.startedAt ?? stoppedAt)
-
-            let finalization: AudioFinalizationMetadata
-            do {
-                finalization = try await audioFinalizer.finalize(
-                    session: session,
-                    diagnostics: diagnostics
-                )
-            } catch {
-                let failedSession = try await sessionManager.failSession(
-                    reason: error.localizedDescription,
-                    now: recordingEndedAt,
-                    systemAudio: diagnostics.systemAudio.sessionMetadata,
-                    microphoneAudio: diagnostics.microphone.sessionMetadata
-                )
-                currentSession = nil
-                lastCompletedSession = failedSession
-                setFailure(error)
-                return
-            }
-
-            let transcription = await transcribeIfPossible(
+            try? await processingLogger.log(
+                .captureStopped,
+                for: session,
+                attributes: [
+                    .bufferCount(diagnostics.systemAudio.bufferCount),
+                    .frameCount(diagnostics.systemAudio.totalFrames),
+                ]
+            )
+            await processStoppedSession(
                 session: session,
-                finalization: finalization
+                diagnostics: diagnostics,
+                recordingEndedAt: recordingEndedAt
             )
-            let analysis = await analyzeIfPossible(
-                session: session,
-                transcript: transcription.mergedTranscript
-            )
-            try transition(to: .exporting)
-
-            var exportSession = session
-            exportSession.metadata.endedAt = recordingEndedAt
-            let output = exportMarkdownIfPossible(
-                session: exportSession,
-                transcript: transcription.mergedTranscript,
-                analysis: analysis.analysis
-            )
-
-            let completedSession = try await sessionManager.stopSession(
-                now: recordingEndedAt,
-                systemAudio: diagnostics.systemAudio.sessionMetadata,
-                microphoneAudio: diagnostics.microphone.sessionMetadata,
-                audioFinalization: finalization,
-                transcription: transcription.metadata,
-                analysis: analysis.metadata,
-                output: output
-            )
-            currentSession = nil
-            lastCompletedSession = completedSession
-            try transition(to: .completed)
         } catch {
             setFailure(error)
         }
+    }
+
+    func recoverSession(_ candidate: SessionRecoveryCandidate) async {
+        guard !isRecoveringSession else { return }
+        isRecoveringSession = true
+        defer { isRecoveringSession = false }
+
+        do {
+            if status == .completed || status == .failed { reset() }
+            guard status == .idle else { return }
+            try transition(to: .preparing)
+            lastError = nil
+            lastMarkdownURL = nil
+
+            let session = try await sessionManager.beginRecovery(id: candidate.id)
+            currentSession = session
+            try transition(to: .recording)
+            try transition(to: .stopping)
+            try? await processingLogger.log(.recoveryStarted, for: session)
+
+            if let transcript = loadRecoveredTranscript(from: session) {
+                let diagnostics = recoveredMetadataDiagnostics(for: session)
+                captureDiagnostics = diagnostics
+                await completeProcessedSession(
+                    session: session,
+                    diagnostics: diagnostics,
+                    recordingEndedAt: candidate.suggestedEndAt,
+                    finalization: session.metadata.audioFinalization,
+                    transcription: recoveredTranscriptionOutcome(
+                        session: session,
+                        transcript: transcript
+                    ),
+                    recoveredAnalysis: loadRecoveredAnalysis(from: session)
+                )
+            } else {
+                let diagnostics = try recoveredAudioInspector.inspect(session: session)
+                captureDiagnostics = diagnostics
+                await processStoppedSession(
+                    session: session,
+                    diagnostics: diagnostics,
+                    recordingEndedAt: candidate.suggestedEndAt
+                )
+            }
+            await refreshRecoveryCandidates()
+        } catch {
+            if await sessionManager.currentSession() != nil {
+                let failed = try? await sessionManager.failSession(reason: error.localizedDescription)
+                lastCompletedSession = failed
+            }
+            currentSession = nil
+            setFailure(error)
+            await refreshRecoveryCandidates()
+        }
+    }
+
+    func closeRecovery(_ candidate: SessionRecoveryCandidate) async {
+        do {
+            let closed = try await sessionManager.closeRecovery(id: candidate.id)
+            lastCompletedSession = closed
+            try? await processingLogger.log(.recoveryClosed, for: closed)
+            await refreshRecoveryCandidates()
+            lastError = nil
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func revealRecovery(_ candidate: SessionRecoveryCandidate) {
+        NSWorkspace.shared.activateFileViewerSelecting([candidate.session.manifestURL])
     }
 
     func reset() {
@@ -180,6 +253,8 @@ final class AppState: ObservableObject {
             try transition(to: .idle)
             lastError = nil
             captureDiagnostics = .empty
+            isStoppingForLowStorage = false
+            isStoppingForCaptureFailure = false
         } catch {
             setFailure(error)
         }
@@ -293,6 +368,10 @@ final class AppState: ObservableObject {
             ?? .largeV3Turbo
     }
 
+    func persistWhisperModelSelection() {
+        whisperSettingsStore.setSelectedModelID(selectedWhisperModelID)
+    }
+
     var whisperModelStatusText: String {
         switch whisperModelStatus {
         case .missing:
@@ -324,6 +403,264 @@ final class AppState: ObservableObject {
             await refreshWhisperModelStatus()
         }
         isDownloadingWhisperModel = false
+    }
+
+    private func refreshRecoveryCandidates() async {
+        do {
+            let result = try await sessionManager.scanForRecovery()
+            recoveryCandidates = result.candidates
+            recoveryIssues = result.issues
+            for candidate in result.candidates {
+                try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+            }
+            if !result.issues.isEmpty, lastError == nil {
+                lastError = "Some recording folders could not be recovered. Open the recordings folder for details."
+            }
+        } catch {
+            recoveryCandidates = []
+            recoveryIssues = []
+            lastError = "Recovery scan failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func processStoppedSession(
+        session: RecordingSession,
+        diagnostics: CaptureSessionDiagnostics,
+        recordingEndedAt: Date
+    ) async {
+        let finalization: AudioFinalizationMetadata
+        do {
+            try? await processingLogger.log(.finalizationStarted, for: session)
+            finalization = try await audioFinalizer.finalize(
+                session: session,
+                diagnostics: diagnostics
+            )
+            try? await processingLogger.log(
+                .finalizationCompleted,
+                for: session,
+                attributes: [.durationSeconds(finalization.system.durationSeconds)]
+            )
+        } catch {
+            let failedSession = try? await sessionManager.failSession(
+                reason: error.localizedDescription,
+                now: recordingEndedAt,
+                systemAudio: diagnostics.systemAudio.sessionMetadata,
+                microphoneAudio: diagnostics.microphone.sessionMetadata
+            )
+            currentSession = nil
+            lastCompletedSession = failedSession
+            try? await processingLogger.log(
+                .processingFailed,
+                for: failedSession ?? session,
+                attributes: [.reason(error.localizedDescription)]
+            )
+            setFailure(error)
+            return
+        }
+
+        try? await processingLogger.log(
+            .transcriptionStarted,
+            for: session,
+            attributes: [.model(selectedWhisperModel.fileName)]
+        )
+        let transcription = await transcribeIfPossible(
+            session: session,
+            finalization: finalization
+        )
+        await completeProcessedSession(
+            session: session,
+            diagnostics: diagnostics,
+            recordingEndedAt: recordingEndedAt,
+            finalization: finalization,
+            transcription: transcription
+        )
+    }
+
+    private func completeProcessedSession(
+        session: RecordingSession,
+        diagnostics: CaptureSessionDiagnostics,
+        recordingEndedAt: Date,
+        finalization: AudioFinalizationMetadata?,
+        transcription: TranscriptionOutcome,
+        recoveredAnalysis: AnalysisOutcome? = nil
+    ) async {
+        do {
+            if transcription.metadata.status == .completed {
+                try? await processingLogger.log(
+                    .transcriptionCompleted,
+                    for: session,
+                    attributes: [
+                        .model(transcription.metadata.model),
+                        .segmentCount(transcription.metadata.mergedSegmentCount ?? 0),
+                    ]
+                )
+            } else {
+                try? await processingLogger.log(
+                    .transcriptionFailed,
+                    for: session,
+                    attributes: [
+                        .model(transcription.metadata.model),
+                        .reason(transcription.metadata.failureReason ?? "Transcription unavailable"),
+                    ]
+                )
+            }
+
+            let analysis: AnalysisOutcome
+            if let recoveredAnalysis {
+                analysis = recoveredAnalysis
+            } else {
+                analysis = await analyzeIfPossible(
+                    session: session,
+                    transcript: transcription.mergedTranscript
+                )
+            }
+            if let metadata = analysis.metadata {
+                try? await processingLogger.log(
+                    metadata.status == .completed ? .analysisCompleted : .analysisFailed,
+                    for: session,
+                    attributes: [
+                        .model(metadata.model),
+                        .reason(metadata.failureReason ?? "none"),
+                    ]
+                )
+            }
+            try transition(to: .exporting)
+
+            var exportSession = session
+            exportSession.metadata.endedAt = recordingEndedAt
+            let output = exportMarkdownIfPossible(
+                session: exportSession,
+                transcript: transcription.mergedTranscript,
+                analysis: analysis.analysis
+            )
+            if let output {
+                try? await processingLogger.log(
+                    output.status == .completed ? .exportCompleted : .exportFailed,
+                    for: session,
+                    attributes: output.failureReason.map { [.reason($0)] } ?? []
+                )
+            }
+
+            let completedSession = try await sessionManager.stopSession(
+                now: recordingEndedAt,
+                systemAudio: diagnostics.systemAudio.sessionMetadata,
+                microphoneAudio: diagnostics.microphone.sessionMetadata,
+                audioFinalization: finalization,
+                transcription: transcription.metadata,
+                analysis: analysis.metadata,
+                output: output
+            )
+            currentSession = nil
+            lastCompletedSession = completedSession
+            if completedSession.metadata.recovery?.status == .completed {
+                try? await processingLogger.log(.recoveryCompleted, for: completedSession)
+            }
+            try transition(to: .completed)
+            await refreshRecoveryCandidates()
+        } catch {
+            if await sessionManager.currentSession() != nil {
+                let failed = try? await sessionManager.failSession(
+                    reason: error.localizedDescription,
+                    now: recordingEndedAt,
+                    systemAudio: diagnostics.systemAudio.sessionMetadata,
+                    microphoneAudio: diagnostics.microphone.sessionMetadata
+                )
+                lastCompletedSession = failed
+            }
+            currentSession = nil
+            try? await processingLogger.log(
+                .processingFailed,
+                for: lastCompletedSession ?? session,
+                attributes: [.reason(error.localizedDescription)]
+            )
+            setFailure(error)
+        }
+    }
+
+    private func loadRecoveredTranscript(from session: RecordingSession) -> MergedTranscript? {
+        guard FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path),
+              let data = try? Data(contentsOf: session.mergedTranscriptURL) else {
+            return nil
+        }
+        return try? TranscriptJSONCoder.makeDecoder().decode(MergedTranscript.self, from: data)
+    }
+
+    private func recoveredTranscriptionOutcome(
+        session: RecordingSession,
+        transcript: MergedTranscript
+    ) -> TranscriptionOutcome {
+        let metadata = session.metadata.transcription.flatMap {
+            $0.status == .completed ? $0 : nil
+        } ?? SessionTranscriptionMetadata(
+            status: .completed,
+            model: "recovered-transcript",
+            startedAt: nil,
+            completedAt: transcript.completedAt,
+            systemSegmentCount: transcript.segments.filter { $0.source == .system }.count,
+            microphoneSegmentCount: transcript.segments.filter { $0.source == .microphone }.count,
+            mergedSegmentCount: transcript.segments.count,
+            warnings: ["Reused a merged transcript found during session recovery."],
+            failureReason: nil
+        )
+        return TranscriptionOutcome(metadata: metadata, mergedTranscript: transcript)
+    }
+
+    private func loadRecoveredAnalysis(from session: RecordingSession) -> AnalysisOutcome? {
+        guard FileManager.default.fileExists(atPath: session.analysisURL.path),
+              let data = try? Data(contentsOf: session.analysisURL),
+              let analysis = try? JSONDecoder().decode(MeetingAnalysis.self, from: data) else {
+            return nil
+        }
+        let metadata = session.metadata.analysis.flatMap {
+            $0.status == .completed ? $0 : nil
+        } ?? SessionAnalysisMetadata(
+            status: .completed,
+            provider: "recovered",
+            model: "recovered-analysis",
+            startedAt: nil,
+            completedAt: Date(),
+            transcriptChunkCount: nil,
+            requestCount: 0,
+            failureReason: nil
+        )
+        return AnalysisOutcome(metadata: metadata, analysis: analysis)
+    }
+
+    private func recoveredMetadataDiagnostics(for session: RecordingSession) -> CaptureSessionDiagnostics {
+        CaptureSessionDiagnostics(
+            systemAudio: recoveredDiagnostics(
+                metadata: session.metadata.systemAudio,
+                fileName: session.metadata.audioFiles.system
+            ),
+            microphone: recoveredDiagnostics(
+                metadata: session.metadata.microphoneAudio,
+                fileName: session.metadata.audioFiles.microphone
+            )
+        )
+    }
+
+    private func recoveredDiagnostics(
+        metadata: AudioTrackMetadata?,
+        fileName: String
+    ) -> AudioCaptureDiagnostics {
+        guard let metadata else {
+            var empty = AudioCaptureDiagnostics.empty
+            empty.fileName = fileName
+            return empty
+        }
+        return AudioCaptureDiagnostics(
+            fileName: metadata.fileName,
+            startedAt: nil,
+            lastBufferReceivedAt: nil,
+            bufferCount: metadata.bufferCount,
+            totalFrames: metadata.totalFrames,
+            sampleRate: metadata.sampleRate,
+            channelCount: metadata.channelCount,
+            firstPresentationTimestamp: metadata.firstPresentationTimestamp,
+            lastPresentationTimestamp: metadata.lastPresentationTimestamp,
+            lastBufferDurationSeconds: nil,
+            failureReason: metadata.failureReason
+        )
     }
 
     private func transition(to nextStatus: AppStatus) throws {
@@ -532,17 +869,63 @@ final class AppState: ObservableObject {
 
     private func startCaptureMonitoring() {
         stopCaptureMonitoring()
+        let monitoringConfiguration = captureMonitoringConfiguration
 
         captureMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
-                    try await Task.sleep(for: .seconds(1))
+                    try await Task.sleep(for: monitoringConfiguration.interval)
                 } catch {
                     break
                 }
 
                 guard let self else { break }
                 self.captureDiagnostics = await self.captureCoordinator.diagnostics()
+
+                if self.captureDiagnostics.systemAudio.health() == .failed,
+                   !self.isStoppingForCaptureFailure,
+                   self.status == .recording {
+                    self.isStoppingForCaptureFailure = true
+                    let reason = self.captureDiagnostics.systemAudio.failureReason
+                        ?? "System audio capture failed."
+                    if let session = self.currentSession {
+                        try? await self.processingLogger.log(
+                            .captureFailed,
+                            for: session,
+                            attributes: [.reason(reason)]
+                        )
+                    }
+                    await self.stopRecording()
+                    self.lastError = "Recording was stopped safely because system audio capture failed: \(reason) Existing audio was preserved."
+                    break
+                }
+
+                self.storageCheckTick += 1
+                let storageFrequency = max(
+                    1,
+                    monitoringConfiguration.storageCheckEveryTicks
+                )
+                guard self.storageCheckTick.isMultiple(of: storageFrequency),
+                      !self.isStoppingForLowStorage,
+                      let storage = try? await self.sessionManager.storageStatus(),
+                      !storage.hasSufficientCapacity else {
+                    continue
+                }
+
+                self.isStoppingForLowStorage = true
+                if let session = self.currentSession {
+                    try? await self.processingLogger.log(
+                        .diskSpaceLow,
+                        for: session,
+                        attributes: [
+                            .availableBytes(storage.availableBytes),
+                            .requiredBytes(storage.requiredBytes),
+                        ]
+                    )
+                }
+                await self.stopRecording()
+                self.lastError = "Recording was stopped safely because free disk space became critically low. Existing audio was preserved."
+                break
             }
         }
     }

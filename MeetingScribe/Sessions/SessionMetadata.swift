@@ -96,6 +96,23 @@ enum SessionOutputStatus: String, Codable, Sendable {
     case failed
 }
 
+enum SessionRecoveryStatus: String, Codable, Sendable {
+    case inProgress
+    case completed
+    case failed
+    case closed
+}
+
+struct SessionRecoveryMetadata: Codable, Equatable, Sendable {
+    var status: SessionRecoveryStatus
+    var originalStatus: RecordingSessionStatus
+    var detectedAt: Date
+    var startedAt: Date?
+    var completedAt: Date?
+    var attemptCount: Int
+    var failureReason: String?
+}
+
 struct SessionOutputMetadata: Codable, Equatable, Sendable {
     var status: SessionOutputStatus
     var markdownFileName: String?
@@ -121,10 +138,11 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var transcription: SessionTranscriptionMetadata?
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
+    var recovery: SessionRecoveryMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 6,
+        schemaVersion: Int = 7,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -140,6 +158,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         transcription: SessionTranscriptionMetadata? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
+        recovery: SessionRecoveryMetadata? = nil,
         failureReason: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -158,6 +177,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.transcription = transcription
         self.analysis = analysis
         self.output = output
+        self.recovery = recovery
         self.failureReason = failureReason
     }
 }

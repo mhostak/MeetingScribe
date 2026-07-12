@@ -31,7 +31,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
-        XCTAssertEqual(metadata.schemaVersion, 6)
+        XCTAssertEqual(metadata.schemaVersion, 7)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
         XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
