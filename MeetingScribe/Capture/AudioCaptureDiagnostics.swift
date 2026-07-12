@@ -57,7 +57,7 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         frameCount: Int,
         sampleRate: Double,
         channelCount: Int,
-        presentationTimestamp: Double,
+        presentationTimestamp: Double?,
         receivedAt: Date = Date()
     ) {
         bufferCount += 1
@@ -67,10 +67,12 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         lastBufferReceivedAt = receivedAt
         lastBufferDurationSeconds = sampleRate > 0 ? Double(frameCount) / sampleRate : nil
 
-        if firstPresentationTimestamp == nil {
-            firstPresentationTimestamp = presentationTimestamp
+        if let presentationTimestamp {
+            if firstPresentationTimestamp == nil {
+                firstPresentationTimestamp = presentationTimestamp
+            }
+            lastPresentationTimestamp = presentationTimestamp
         }
-        lastPresentationTimestamp = presentationTimestamp
     }
 
     var sessionMetadata: AudioTrackMetadata {

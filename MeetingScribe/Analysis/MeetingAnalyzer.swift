@@ -23,6 +23,7 @@ struct MeetingAnalyzer: Sendable {
         transcript: MergedTranscript,
         preferredLanguage: String = "sk"
     ) async throws -> MeetingAnalysisRun {
+        try Task.checkCancellation()
         let chunks = try transcriptChunks(from: transcript.segments)
         guard !chunks.isEmpty else {
             return MeetingAnalysisRun(
@@ -35,6 +36,7 @@ struct MeetingAnalyzer: Sendable {
         var requestCount = 0
         var partials: [MeetingAnalysis] = []
         for chunk in chunks {
+            try Task.checkCancellation()
             partials.append(
                 try await provider.analyze(
                     AnalysisRequest(
@@ -46,10 +48,12 @@ struct MeetingAnalyzer: Sendable {
                     )
                 )
             )
+            try Task.checkCancellation()
             requestCount += 1
         }
 
         while partials.count > 1 {
+            try Task.checkCancellation()
             let groups = try consolidationGroups(from: partials)
             guard groups.count < partials.count else {
                 throw AnalysisError.transcriptChunkTooLarge
@@ -57,6 +61,7 @@ struct MeetingAnalyzer: Sendable {
 
             var consolidated: [MeetingAnalysis] = []
             for group in groups {
+                try Task.checkCancellation()
                 if group.count == 1 {
                     consolidated.append(group[0])
                     continue
@@ -73,11 +78,13 @@ struct MeetingAnalyzer: Sendable {
                         )
                     )
                 )
+                try Task.checkCancellation()
                 requestCount += 1
             }
             partials = consolidated
         }
 
+        try Task.checkCancellation()
         return MeetingAnalysisRun(
             analysis: partials[0],
             transcriptChunkCount: chunks.count,

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swiftpm-tests:
+    name: SwiftPM tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify Xcode 26
+        run: |
+          xcodebuild -version
+          xcodebuild -version | head -n 1 | grep -E '^Xcode 26([.]|$)'
+      - name: Run SwiftPM tests
+        run: swift test --scratch-path .derivedData/swiftpm
+
+  xcode-app-tests:
+    name: Xcode app and tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify Xcode 26
+        run: |
+          xcodebuild -version
+          xcodebuild -version | head -n 1 | grep -E '^Xcode 26([.]|$)'
+      - name: Build app and run tests
+        run: |
+          xcodebuild test \
+            -project MeetingScribe.xcodeproj \
+            -scheme MeetingScribe \
+            -destination 'platform=macOS' \
+            -derivedDataPath .derivedData/xcode-ci \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM=

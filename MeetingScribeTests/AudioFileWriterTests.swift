@@ -81,6 +81,34 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(Double(file.length) / 48_000, 0.2, accuracy: 0.01)
     }
 
+    func testConvertsChangedSystemSampleBufferFormatIntoOriginalCAFFormat() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeSystemRouteChange-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let writer = AudioFileWriter(outputURL: outputURL)
+        let first = try writer.write(makeSampleBuffer(
+            frameCount: 4_800,
+            sampleRate: 48_000,
+            channelCount: 2
+        ))
+        let second = try writer.write(makeSampleBuffer(
+            frameCount: 2_400,
+            sampleRate: 24_000,
+            channelCount: 1
+        ))
+        writer.finish()
+
+        let file = try AVAudioFile(forReading: outputURL)
+        XCTAssertEqual(first.sampleRate, 48_000)
+        XCTAssertEqual(second.sampleRate, 48_000)
+        XCTAssertEqual(first.channelCount, 2)
+        XCTAssertEqual(second.channelCount, 2)
+        XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
+        XCTAssertEqual(file.processingFormat.channelCount, 2)
+        XCTAssertEqual(Double(file.length) / 48_000, 0.2, accuracy: 0.01)
+    }
+
     private func makePCMBuffer(
         sampleRate: Double,
         channels: AVAudioChannelCount,
@@ -104,8 +132,11 @@ final class AudioFileWriterTests: XCTestCase {
         return buffer
     }
 
-    private func makeSampleBuffer(frameCount: Int) throws -> CMSampleBuffer {
-        let channelCount = 2
+    private func makeSampleBuffer(
+        frameCount: Int,
+        sampleRate: Double = 48_000,
+        channelCount: Int = 2
+    ) throws -> CMSampleBuffer {
         let bytesPerFrame = channelCount * MemoryLayout<Float>.size
         let byteCount = frameCount * bytesPerFrame
         let samples = [Float](repeating: 0.25, count: frameCount * channelCount)
@@ -134,7 +165,7 @@ final class AudioFileWriterTests: XCTestCase {
         }
 
         var streamDescription = AudioStreamBasicDescription(
-            mSampleRate: 48_000,
+            mSampleRate: sampleRate,
             mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
             mBytesPerPacket: UInt32(bytesPerFrame),
@@ -157,7 +188,7 @@ final class AudioFileWriterTests: XCTestCase {
         ))
 
         var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: 48_000),
+            duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
             presentationTimeStamp: .zero,
             decodeTimeStamp: .invalid
         )

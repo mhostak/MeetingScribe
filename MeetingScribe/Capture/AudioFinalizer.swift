@@ -7,7 +7,16 @@ protocol AudioFinalizing: Sendable {
     ) async throws -> AudioFinalizationMetadata
 }
 
+/// Converts captured tracks and maps them onto one relative session timeline.
+///
+/// System audio is required. A microphone track is optional and participates
+/// only when it has buffers and its host-time start is within the plausibility
+/// guard of the system start. The origin is `min(valid track starts)` and each
+/// output offset is `max(0, trackStart - origin)`. No silence is inserted into
+/// the WAV files; the offset is added later to Whisper segment timestamps.
 struct AudioFinalizer: AudioFinalizing {
+    static let maximumPlausibleTrackStartDifference: TimeInterval = 60
+
     private let converter: WorkingAudioConverter
     private let now: @Sendable () -> Date
 
@@ -19,6 +28,7 @@ struct AudioFinalizer: AudioFinalizing {
         self.now = now
     }
 
+    /// Finalizes available tracks while preserving every original CAF on failure.
     func finalize(
         session: RecordingSession,
         diagnostics: CaptureSessionDiagnostics
@@ -31,8 +41,12 @@ struct AudioFinalizer: AudioFinalizing {
         }
 
         let microphoneDiagnostics = diagnostics.microphone
+        let microphoneStart = microphoneDiagnostics.firstPresentationTimestamp
+        let hasCompatibleMicrophoneTimeline = microphoneStart.map {
+            abs($0 - systemStart) <= Self.maximumPlausibleTrackStartDifference
+        } ?? false
         let canFinalizeMicrophone = microphoneDiagnostics.bufferCount > 0
-            && microphoneDiagnostics.firstPresentationTimestamp != nil
+            && hasCompatibleMicrophoneTimeline
         let timelineOrigin = min(
             systemStart,
             canFinalizeMicrophone
@@ -50,7 +64,7 @@ struct AudioFinalizer: AudioFinalizing {
         var warnings: [String] = []
         var microphone: FinalizedAudioTrackMetadata?
 
-        if canFinalizeMicrophone, let microphoneStart = microphoneDiagnostics.firstPresentationTimestamp {
+        if canFinalizeMicrophone, let microphoneStart {
             do {
                 microphone = try finalizeTrack(
                     inputURL: session.microphoneAudioURL,
@@ -64,6 +78,12 @@ struct AudioFinalizer: AudioFinalizing {
             } catch {
                 warnings.append("Microphone working audio was not created: \(error.localizedDescription)")
             }
+        } else if microphoneDiagnostics.bufferCount > 0,
+                  microphoneStart != nil,
+                  !hasCompatibleMicrophoneTimeline {
+            warnings.append(
+                "Microphone track was preserved but skipped because its timestamp did not share a plausible host-time origin with system audio."
+            )
         } else if let failureReason = microphoneDiagnostics.failureReason {
             warnings.append("Microphone capture was unavailable: \(failureReason)")
         } else {

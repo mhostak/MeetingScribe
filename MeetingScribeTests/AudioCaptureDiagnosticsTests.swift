@@ -49,6 +49,22 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
         XCTAssertEqual(diagnostics.health(), .failed)
     }
 
+    func testBufferWithoutCompatibleTimestampPreservesAudioStatistics() {
+        var diagnostics = AudioCaptureDiagnostics(startedAt: Date())
+
+        diagnostics.registerBuffer(
+            frameCount: 4_800,
+            sampleRate: 48_000,
+            channelCount: 1,
+            presentationTimestamp: nil
+        )
+
+        XCTAssertEqual(diagnostics.bufferCount, 1)
+        XCTAssertEqual(diagnostics.totalFrames, 4_800)
+        XCTAssertNil(diagnostics.firstPresentationTimestamp)
+        XCTAssertNil(diagnostics.lastPresentationTimestamp)
+    }
+
     func testAlreadyStoppedAndUserStoppedErrorsAreBenign() {
         let alreadyStopped = NSError(domain: SCStreamErrorDomain, code: -3_808)
         let userStopped = NSError(domain: SCStreamErrorDomain, code: -3_817)

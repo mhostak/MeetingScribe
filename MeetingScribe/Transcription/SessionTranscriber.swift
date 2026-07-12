@@ -16,6 +16,12 @@ protocol SessionTranscribing: Sendable {
     ) async throws -> SessionTranscriptionResult
 }
 
+/// Transcribes system and microphone tracks sequentially with one reusable model context.
+///
+/// The context is retained between the two tracks to avoid loading the model
+/// twice, then released after the complete session on success, failure, or
+/// cancellation. Both full audio sample arrays are therefore never eager in
+/// memory at the same time.
 actor SessionTranscriber: SessionTranscribing {
     private let service: any TranscriptionService
     private let merger: TranscriptMerger
@@ -37,6 +43,28 @@ actor SessionTranscriber: SessionTranscribing {
         modelURL: URL,
         language: TranscriptionLanguage
     ) async throws -> SessionTranscriptionResult {
+        do {
+            let result = try await transcribeTracks(
+                session: session,
+                finalization: finalization,
+                modelURL: modelURL,
+                language: language
+            )
+            await service.releaseResources()
+            return result
+        } catch {
+            await service.releaseResources()
+            throw error
+        }
+    }
+
+    private func transcribeTracks(
+        session: RecordingSession,
+        finalization: AudioFinalizationMetadata,
+        modelURL: URL,
+        language: TranscriptionLanguage
+    ) async throws -> SessionTranscriptionResult {
+        try Task.checkCancellation()
         let startedAt = now()
         let systemTranscript = try await service.transcribe(
             audioURL: session.systemWorkingAudioURL,
@@ -48,11 +76,13 @@ actor SessionTranscriber: SessionTranscribing {
                 timelineOffsetSeconds: finalization.system.timelineOffsetSeconds
             )
         )
+        try Task.checkCancellation()
         try persist(systemTranscript, to: session.systemTrackTranscriptURL)
 
         var warnings: [String] = []
         var microphoneTranscript: TrackTranscript?
         if let microphone = finalization.microphone {
+            try Task.checkCancellation()
             do {
                 let transcript = try await service.transcribe(
                     audioURL: session.microphoneWorkingAudioURL,
@@ -64,8 +94,11 @@ actor SessionTranscriber: SessionTranscribing {
                         timelineOffsetSeconds: microphone.timelineOffsetSeconds
                     )
                 )
+                try Task.checkCancellation()
                 try persist(transcript, to: session.microphoneTrackTranscriptURL)
                 microphoneTranscript = transcript
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 warnings.append("Microphone transcription failed: \(error.localizedDescription)")
             }
@@ -73,6 +106,7 @@ actor SessionTranscriber: SessionTranscribing {
             warnings.append("Microphone working audio was unavailable for transcription.")
         }
 
+        try Task.checkCancellation()
         let completedAt = now()
         let mergedTranscript = try merger.merge(
             sessionID: session.metadata.id,
@@ -81,6 +115,7 @@ actor SessionTranscriber: SessionTranscribing {
             microphoneTranscript: microphoneTranscript,
             completedAt: completedAt
         )
+        try Task.checkCancellation()
         try persist(mergedTranscript, to: session.mergedTranscriptURL)
 
         let metadata = SessionTranscriptionMetadata(

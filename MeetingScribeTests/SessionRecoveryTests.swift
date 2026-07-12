@@ -173,6 +173,64 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertEqual(stopped.metadata.recovery?.failureReason, "Model missing")
         let candidates = try await manager.scanForRecovery().candidates
         XCTAssertEqual(candidates.map(\.id), ["retry-me"])
+
+        let retried = try await manager.beginRecovery(id: "retry-me")
+        XCTAssertEqual(retried.metadata.recovery?.status, .inProgress)
+        XCTAssertEqual(retried.metadata.recovery?.originalStatus, .recording)
+        XCTAssertEqual(retried.metadata.recovery?.attemptCount, 2)
+
+        let failedAgain = try await manager.failSession(reason: "Second attempt failed")
+        XCTAssertEqual(failedAgain.metadata.recovery?.status, .failed)
+        XCTAssertEqual(failedAgain.metadata.recovery?.attemptCount, 2)
+        XCTAssertEqual(failedAgain.metadata.recovery?.failureReason, "Second attempt failed")
+        let candidatesAfterSecondFailure = try await manager.scanForRecovery().candidates
+        XCTAssertEqual(candidatesAfterSecondFailure.map(\.id), ["retry-me"])
+    }
+
+    func testRecoveryCommandsRejectUnknownCandidateWithoutCreatingActiveSession() async {
+        let manager = SessionManager(
+            recordingsRoot: root,
+            storageGuard: StorageGuard(provider: RecoveryCapacityProvider(), minimumBytes: 1)
+        )
+
+        do {
+            _ = try await manager.beginRecovery(id: "missing")
+            XCTFail("Expected beginRecovery to reject an unknown candidate.")
+        } catch {
+            XCTAssertEqual(error as? SessionRecoveryError, .candidateNotFound)
+        }
+        do {
+            _ = try await manager.closeRecovery(id: "missing")
+            XCTFail("Expected closeRecovery to reject an unknown candidate.")
+        } catch {
+            XCTAssertEqual(error as? SessionRecoveryError, .candidateNotFound)
+        }
+        let activeSession = await manager.currentSession()
+        XCTAssertNil(activeSession)
+    }
+
+    func testRecoveryCommandsAreRejectedWhileAnotherSessionIsActive() async throws {
+        let candidate = try makeSession(id: "waiting-recovery", status: .recording)
+        try Data("recoverable audio".utf8).write(to: candidate.systemAudioURL)
+        let manager = SessionManager(
+            recordingsRoot: root,
+            storageGuard: StorageGuard(provider: RecoveryCapacityProvider(), minimumBytes: 1)
+        )
+        _ = try await manager.startSession(title: "Active recording")
+
+        do {
+            _ = try await manager.beginRecovery(id: candidate.metadata.id)
+            XCTFail("Expected active recording to block beginRecovery.")
+        } catch {
+            XCTAssertEqual(error as? SessionManagerError, .sessionAlreadyActive)
+        }
+        do {
+            _ = try await manager.closeRecovery(id: candidate.metadata.id)
+            XCTFail("Expected active recording to block closeRecovery.")
+        } catch {
+            XCTAssertEqual(error as? SessionManagerError, .sessionAlreadyActive)
+        }
+        _ = try await manager.failSession(reason: "Test cleanup")
     }
 
     func testActiveSessionIsNeverReportedAsRecoveryCandidate() async throws {
@@ -203,6 +261,25 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertEqual(diagnostics.systemAudio.channelCount, 1)
         XCTAssertEqual(diagnostics.systemAudio.capturedDurationSeconds ?? -1, 0.1, accuracy: 0.001)
         XCTAssertNotNil(diagnostics.microphone.failureReason)
+    }
+
+    func testRecoveredAudioInspectorReadsOneHourSparseFileAsMetadataOnly() throws {
+        let session = try makeSession(id: "one-hour-sparse-audio", status: .recording)
+        let frameCount: UInt32 = 16_000 * 60 * 60
+        try writeSparseWave(
+            to: session.systemAudioURL,
+            sampleRate: 16_000,
+            frameCount: frameCount
+        )
+
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let diagnostics = try RecoveredAudioInspector().inspect(session: session)
+        let elapsed = startedAt.duration(to: clock.now)
+
+        XCTAssertEqual(diagnostics.systemAudio.totalFrames, Int64(frameCount))
+        XCTAssertEqual(diagnostics.systemAudio.capturedDurationSeconds ?? -1, 3_600, accuracy: 0.001)
+        XCTAssertLessThan(elapsed, .seconds(1))
     }
 
     func testRecoveredAudioInspectorInfersMicrophoneTimelineOffset() throws {
@@ -326,6 +403,39 @@ final class SessionRecoveryTests: XCTestCase {
         let writer = AudioFileWriter(outputURL: url)
         _ = try writer.write(buffer)
         writer.finish()
+    }
+
+    private func writeSparseWave(
+        to url: URL,
+        sampleRate: UInt32,
+        frameCount: UInt32
+    ) throws {
+        let bytesPerFrame: UInt32 = 2
+        let payloadSize = frameCount * bytesPerFrame
+        var header = Data("RIFF".utf8)
+        appendLittleEndian(36 + payloadSize, to: &header)
+        header.append(Data("WAVEfmt ".utf8))
+        appendLittleEndian(UInt32(16), to: &header)
+        appendLittleEndian(UInt16(1), to: &header)
+        appendLittleEndian(UInt16(1), to: &header)
+        appendLittleEndian(sampleRate, to: &header)
+        appendLittleEndian(sampleRate * bytesPerFrame, to: &header)
+        appendLittleEndian(UInt16(bytesPerFrame), to: &header)
+        appendLittleEndian(UInt16(16), to: &header)
+        header.append(Data("data".utf8))
+        appendLittleEndian(payloadSize, to: &header)
+        try header.write(to: url)
+
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: UInt64(header.count) + UInt64(payloadSize))
+    }
+
+    private func appendLittleEndian<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { bytes in
+            data.append(contentsOf: bytes)
+        }
     }
 }
 

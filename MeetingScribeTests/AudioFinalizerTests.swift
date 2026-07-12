@@ -40,6 +40,82 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertGreaterThan(outputFile.length, 0)
     }
 
+    func testConverterRejectsMissingInputWithTypedError() {
+        let inputURL = temporaryRoot.appendingPathComponent("missing.caf")
+        let outputURL = temporaryRoot.appendingPathComponent("output.wav")
+
+        XCTAssertThrowsError(
+            try WorkingAudioConverter().convert(inputURL: inputURL, outputURL: outputURL)
+        ) { error in
+            guard case let AudioConversionError.unreadableInput(fileName, _) = error else {
+                return XCTFail("Expected unreadableInput, received \(error)")
+            }
+            XCTAssertEqual(fileName, "missing.caf")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testConverterRejectsEmptyInputWithTypedError() throws {
+        let inputURL = temporaryRoot.appendingPathComponent("empty.caf")
+        let outputURL = temporaryRoot.appendingPathComponent("output.wav")
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 1
+        ))
+        var emptyFile: AVAudioFile? = try AVAudioFile(
+            forWriting: inputURL,
+            settings: format.settings
+        )
+        emptyFile = nil
+        XCTAssertNil(emptyFile)
+
+        XCTAssertThrowsError(
+            try WorkingAudioConverter().convert(inputURL: inputURL, outputURL: outputURL)
+        ) { error in
+            guard case let AudioConversionError.emptyInput(fileName) = error else {
+                return XCTFail("Expected emptyInput, received \(error)")
+            }
+            XCTAssertEqual(fileName, "empty.caf")
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
+    func testConverterDrainPolicyRequiresTwoEmptyCyclesAndResetsAfterOutput() {
+        var policy = AudioConverterDrainPolicy()
+
+        XCTAssertEqual(
+            policy.action(for: .inputRanDry, producedFrameCount: 0, reachedInputEnd: true),
+            .continueConversion
+        )
+        XCTAssertEqual(policy.consecutiveEmptyDrains, 1)
+        XCTAssertEqual(
+            policy.action(for: .haveData, producedFrameCount: 128, reachedInputEnd: true),
+            .continueConversion
+        )
+        XCTAssertEqual(policy.consecutiveEmptyDrains, 0)
+        XCTAssertEqual(
+            policy.action(for: .inputRanDry, producedFrameCount: 0, reachedInputEnd: true),
+            .continueConversion
+        )
+        XCTAssertEqual(
+            policy.action(for: .inputRanDry, producedFrameCount: 0, reachedInputEnd: true),
+            .finish
+        )
+    }
+
+    func testConverterDrainPolicyHandlesTerminalStatuses() {
+        var policy = AudioConverterDrainPolicy()
+
+        XCTAssertEqual(
+            policy.action(for: .endOfStream, producedFrameCount: 0, reachedInputEnd: true),
+            .finish
+        )
+        XCTAssertEqual(
+            policy.action(for: .error, producedFrameCount: 0, reachedInputEnd: false),
+            .fail
+        )
+    }
+
     func testFinalizerCreatesBothWorkingTracksWithTimelineOffsets() async throws {
         let session = makeSession()
         try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
@@ -129,6 +205,33 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertEqual(metadata.warnings.count, 1)
         XCTAssertTrue(metadata.warnings[0].contains("ended early"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
+    }
+
+    func testFinalizerSkipsMicrophoneWithImplausibleTimelineOrigin() async throws {
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: "system.caf",
+                    channelCount: 2,
+                    presentationTimestamp: 100
+                ),
+                microphone: diagnostics(
+                    fileName: "microphone.caf",
+                    channelCount: 1,
+                    presentationTimestamp: 10_000
+                )
+            )
+        )
+
+        XCTAssertNil(metadata.microphone)
+        XCTAssertTrue(metadata.warnings.contains { $0.contains("plausible host-time origin") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
     func testFinalizerRejectsEmptyRequiredSystemTrack() async throws {

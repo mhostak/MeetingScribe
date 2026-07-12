@@ -73,11 +73,11 @@ struct MarkdownRenderer: Sendable {
         if transcript.segments.isEmpty {
             lines.append("_Transcript neobsahuje žiadne rozpoznané segmenty._")
         } else {
+            let overlappingIndices = TranscriptOverlapDetector().overlappingIndices(
+                in: transcript.segments
+            )
             for (index, segment) in transcript.segments.enumerated() {
-                let overlap = overlapsAnotherSource(
-                    segmentAt: index,
-                    in: transcript.segments
-                ) ? " *(prekrytie reči)*" : ""
+                let overlap = overlappingIndices.contains(index) ? " *(prekrytie reči)*" : ""
                 lines.append(
                     "### \(elapsedTime(segment.start)) — \(markdownHeading(segment.speaker))\(overlap)"
                 )
@@ -182,19 +182,6 @@ struct MarkdownRenderer: Sendable {
         }
     }
 
-    private func overlapsAnotherSource(
-        segmentAt index: Int,
-        in segments: [TranscriptSegment]
-    ) -> Bool {
-        let segment = segments[index]
-        return segments.indices.contains { otherIndex in
-            guard otherIndex != index else { return false }
-            let other = segments[otherIndex]
-            guard other.source != segment.source else { return false }
-            return max(segment.start, other.start) < min(segment.end, other.end)
-        }
-    }
-
     private func dateString(_ date: Date) -> String {
         formatted(date, pattern: "yyyy-MM-dd")
     }
@@ -237,5 +224,79 @@ struct MarkdownRenderer: Sendable {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+struct TranscriptOverlapDetector: Sendable {
+    func overlappingIndices(in segments: [TranscriptSegment]) -> Set<Int> {
+        let systemIndices = sortedIndices(for: .system, in: segments)
+        let microphoneIndices = sortedIndices(for: .microphone, in: segments)
+        var overlaps = Set<Int>()
+        markOverlaps(
+            in: systemIndices,
+            against: mergedIntervals(from: microphoneIndices, in: segments),
+            segments: segments,
+            result: &overlaps
+        )
+        markOverlaps(
+            in: microphoneIndices,
+            against: mergedIntervals(from: systemIndices, in: segments),
+            segments: segments,
+            result: &overlaps
+        )
+        return overlaps
+    }
+
+    private func markOverlaps(
+        in indices: [Int],
+        against intervals: [(start: Double, end: Double)],
+        segments: [TranscriptSegment],
+        result: inout Set<Int>
+    ) {
+        var intervalCursor = 0
+        for index in indices {
+            let segment = segments[index]
+            guard segment.start < segment.end else { continue }
+            while intervalCursor < intervals.count,
+                  intervals[intervalCursor].end <= segment.start {
+                intervalCursor += 1
+            }
+            guard intervalCursor < intervals.count else { return }
+            if intervals[intervalCursor].start < segment.end {
+                result.insert(index)
+            }
+        }
+    }
+
+    private func mergedIntervals(
+        from indices: [Int],
+        in segments: [TranscriptSegment]
+    ) -> [(start: Double, end: Double)] {
+        var result: [(start: Double, end: Double)] = []
+        for index in indices {
+            let segment = segments[index]
+            guard segment.start < segment.end else { continue }
+            if let last = result.last, segment.start <= last.end {
+                result[result.count - 1].end = max(last.end, segment.end)
+            } else {
+                result.append((segment.start, segment.end))
+            }
+        }
+        return result
+    }
+
+    private func sortedIndices(
+        for source: TranscriptSource,
+        in segments: [TranscriptSegment]
+    ) -> [Int] {
+        segments.indices
+            .filter { segments[$0].source == source }
+            .sorted {
+                let lhs = segments[$0]
+                let rhs = segments[$1]
+                if lhs.start != rhs.start { return lhs.start < rhs.start }
+                if lhs.end != rhs.end { return lhs.end < rhs.end }
+                return $0 < $1
+            }
     }
 }

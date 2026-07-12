@@ -1,6 +1,77 @@
 import AVFoundation
 import Foundation
 
+struct MicrophoneRecoveryConfiguration: Equatable, Sendable {
+    let delay: TimeInterval
+    let maximumAttempts: Int
+    let minimumBufferCount: Int
+
+    init(
+        delay: TimeInterval = 0.5,
+        maximumAttempts: Int = 8,
+        minimumBufferCount: Int = 3
+    ) {
+        self.delay = max(0, delay)
+        self.maximumAttempts = max(1, maximumAttempts)
+        self.minimumBufferCount = max(1, minimumBufferCount)
+    }
+
+    var verificationDelay: TimeInterval {
+        max(delay, 1.0)
+    }
+
+    func hasEnoughRecoveredBuffers(baseline: Int, current: Int) -> Bool {
+        current - baseline >= minimumBufferCount
+    }
+
+    func shouldRetry(after attempts: Int) -> Bool {
+        attempts < maximumAttempts
+    }
+}
+
+protocol MicrophoneAudioEngine: AnyObject {
+    var notificationObject: AnyObject { get }
+    func inputFormat() -> AVAudioFormat
+    func installTap(_ handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void)
+    func removeTap()
+    func prepare()
+    func start() throws
+    func stop()
+    func reset()
+}
+
+private final class AVAudioEngineAdapter: MicrophoneAudioEngine {
+    private let engine: AVAudioEngine
+
+    init(engine: AVAudioEngine = AVAudioEngine()) {
+        self.engine = engine
+    }
+
+    var notificationObject: AnyObject { engine }
+
+    func inputFormat() -> AVAudioFormat {
+        engine.inputNode.inputFormat(forBus: 0)
+    }
+
+    func installTap(_ handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) {
+        engine.inputNode.installTap(
+            onBus: 0,
+            bufferSize: 4_096,
+            format: nil,
+            block: handler
+        )
+    }
+
+    func removeTap() {
+        engine.inputNode.removeTap(onBus: 0)
+    }
+
+    func prepare() { engine.prepare() }
+    func start() throws { try engine.start() }
+    func stop() { engine.stop() }
+    func reset() { engine.reset() }
+}
+
 final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private struct TransferredPCMBuffer: @unchecked Sendable {
         let value: AVAudioPCMBuffer
@@ -15,11 +86,11 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         var configurationRecoveryAttempts = 0
     }
 
-    private static let maximumConfigurationRecoveryAttempts = 8
-    private static let minimumRecoveryBufferCount = 3
-    private var engine: AVAudioEngine
+    private var engine: any MicrophoneAudioEngine
+    private let engineFactory: () -> any MicrophoneAudioEngine
     private let notificationCenter: NotificationCenter
-    private let configurationRecoveryDelay: TimeInterval
+    private let recoveryConfiguration: MicrophoneRecoveryConfiguration
+    private let permissionRequester: () async throws -> Void
     private let writerQueue = DispatchQueue(
         label: "com.martinhostak.MeetingScribe.microphone-audio",
         qos: .userInitiated
@@ -27,24 +98,42 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private var state = State()
     private var configurationObserver: NSObjectProtocol?
 
-    init(
+    convenience init(
         engine: AVAudioEngine = AVAudioEngine(),
         notificationCenter: NotificationCenter = .default,
-        configurationRecoveryDelay: TimeInterval = 0.5
+        recoveryConfiguration: MicrophoneRecoveryConfiguration = MicrophoneRecoveryConfiguration()
+    ) {
+        self.init(
+            engine: AVAudioEngineAdapter(engine: engine),
+            engineFactory: { AVAudioEngineAdapter() },
+            notificationCenter: notificationCenter,
+            recoveryConfiguration: recoveryConfiguration,
+            permissionRequester: { try await Self.requestPermissionIfNeeded() }
+        )
+    }
+
+    init(
+        engine: any MicrophoneAudioEngine,
+        engineFactory: @escaping () -> any MicrophoneAudioEngine,
+        notificationCenter: NotificationCenter,
+        recoveryConfiguration: MicrophoneRecoveryConfiguration,
+        permissionRequester: @escaping () async throws -> Void
     ) {
         self.engine = engine
+        self.engineFactory = engineFactory
         self.notificationCenter = notificationCenter
-        self.configurationRecoveryDelay = configurationRecoveryDelay
+        self.recoveryConfiguration = recoveryConfiguration
+        self.permissionRequester = permissionRequester
         observeConfigurationChanges(for: engine)
     }
 
-    private func observeConfigurationChanges(for engine: AVAudioEngine) {
+    private func observeConfigurationChanges(for engine: any MicrophoneAudioEngine) {
         if let configurationObserver {
             notificationCenter.removeObserver(configurationObserver)
         }
         configurationObserver = notificationCenter.addObserver(
             forName: .AVAudioEngineConfigurationChange,
-            object: engine,
+            object: engine.notificationObject,
             queue: nil
         ) { [weak self] _ in
             // Apple posts this callback on an internal queue and warns against
@@ -60,27 +149,26 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     func start(outputURL: URL) async throws {
-        let isAlreadyCapturing = writerQueue.sync { state.isCapturing }
-        guard !isAlreadyCapturing else {
-            throw AudioCaptureServiceError.alreadyCapturing
-        }
-
         do {
-            try await requestPermissionIfNeeded()
+            try await permissionRequester()
         } catch {
             setStartupFailure(error, outputURL: outputURL)
             throw error
         }
 
-        let inputNode = engine.inputNode
-        let format = inputNode.inputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            let error = AudioCaptureServiceError.microphoneUnavailable
-            setStartupFailure(error, outputURL: outputURL)
-            throw error
-        }
+        try writerQueue.sync {
+            guard !state.isCapturing else {
+                throw AudioCaptureServiceError.alreadyCapturing
+            }
 
-        writerQueue.sync {
+            let currentEngine = engine
+            let format = currentEngine.inputFormat()
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                let error = AudioCaptureServiceError.microphoneUnavailable
+                state = failedState(error: error, outputURL: outputURL)
+                throw error
+            }
+
             state = State(
                 isCapturing: true,
                 writer: AudioFileWriter(outputURL: outputURL),
@@ -89,44 +177,36 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                     startedAt: Date()
                 )
             )
-        }
+            installTap(on: currentEngine)
+            state.tapInstalled = true
 
-        installTap(on: inputNode)
-        writerQueue.sync { state.tapInstalled = true }
-
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            writerQueue.sync {
+            currentEngine.prepare()
+            do {
+                try currentEngine.start()
+            } catch {
+                currentEngine.removeTap()
                 state.diagnostics.failureReason = error.localizedDescription
                 state.writer?.finish()
                 state.writer = nil
                 state.isCapturing = false
                 state.tapInstalled = false
+                throw error
             }
-            throw error
         }
     }
 
     func stop() async -> AudioCaptureDiagnostics {
-        let wasCapturing = writerQueue.sync { state.isCapturing }
-        guard wasCapturing else {
-            return writerQueue.sync { state.diagnostics }
-        }
+        writerQueue.sync {
+            guard state.isCapturing else { return state.diagnostics }
 
-        let shouldRemoveTap = writerQueue.sync { () -> Bool in
             state.isCapturing = false
             state.configurationRecoveryScheduled = false
-            return state.tapInstalled
-        }
-        if shouldRemoveTap {
-            engine.inputNode.removeTap(onBus: 0)
-        }
-        engine.stop()
+            let currentEngine = engine
+            if state.tapInstalled {
+                currentEngine.removeTap()
+            }
+            currentEngine.stop()
 
-        return writerQueue.sync {
             state.writer?.finish()
             state.writer = nil
             state.tapInstalled = false
@@ -138,7 +218,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         writerQueue.sync { state.diagnostics }
     }
 
-    private func requestPermissionIfNeeded() async throws {
+    private static func requestPermissionIfNeeded() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return
@@ -155,24 +235,25 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     private func setStartupFailure(_ error: Error, outputURL: URL) {
         writerQueue.sync {
-            state = State(
-                isCapturing: false,
-                writer: nil,
-                diagnostics: AudioCaptureDiagnostics(
-                    fileName: outputURL.lastPathComponent,
-                    startedAt: Date(),
-                    failureReason: error.localizedDescription
-                )
-            )
+            state = failedState(error: error, outputURL: outputURL)
         }
     }
 
-    private func installTap(on inputNode: AVAudioInputNode) {
-        inputNode.installTap(
-            onBus: 0,
-            bufferSize: 4_096,
-            format: nil
-        ) { [weak self] buffer, time in
+    private func failedState(error: Error, outputURL: URL) -> State {
+        State(
+            isCapturing: false,
+            writer: nil,
+            diagnostics: AudioCaptureDiagnostics(
+                fileName: outputURL.lastPathComponent,
+                startedAt: Date(),
+                failureReason: error.localizedDescription
+            )
+        )
+    }
+
+    private func installTap(on engine: any MicrophoneAudioEngine) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        engine.installTap { [weak self] buffer, time in
             guard
                 let self,
                 let copiedBuffer = Self.copy(buffer)
@@ -199,7 +280,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             }
             state.configurationRecoveryScheduled = true
             writerQueue.asyncAfter(
-                deadline: .now() + configurationRecoveryDelay
+                deadline: .now() + recoveryConfiguration.delay
             ) { [weak self] in
                 self?.recoverFromConfigurationChange()
             }
@@ -207,13 +288,13 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     private func recoverFromConfigurationChange() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
         state.configurationRecoveryScheduled = false
         guard state.isCapturing else { return }
 
         let previousEngine = engine
-        let inputNode = previousEngine.inputNode
         if state.tapInstalled {
-            inputNode.removeTap(onBus: 0)
+            previousEngine.removeTap()
             state.tapInstalled = false
         }
         previousEngine.stop()
@@ -222,43 +303,44 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         // Recreate the engine after a route change. A successfully restarted
         // instance can otherwise remain attached to the old hardware route and
         // report `isRunning` without ever delivering microphone buffers.
-        let replacementEngine = AVAudioEngine()
+        let replacementEngine = engineFactory()
         engine = replacementEngine
         observeConfigurationChanges(for: replacementEngine)
 
-        let replacementInputNode = replacementEngine.inputNode
-        let format = replacementInputNode.inputFormat(forBus: 0)
+        let format = replacementEngine.inputFormat()
         guard format.sampleRate > 0, format.channelCount > 0 else {
             retryConfigurationRecovery(reason: "The selected microphone is not ready.")
             return
         }
 
         let baselineBufferCount = state.diagnostics.bufferCount
-        installTap(on: replacementInputNode)
+        installTap(on: replacementEngine)
         state.tapInstalled = true
         replacementEngine.prepare()
         do {
             try replacementEngine.start()
             verifyConfigurationRecovery(after: baselineBufferCount)
         } catch {
-            replacementInputNode.removeTap(onBus: 0)
+            replacementEngine.removeTap()
             state.tapInstalled = false
             retryConfigurationRecovery(reason: error.localizedDescription)
         }
     }
 
     private func verifyConfigurationRecovery(after baselineBufferCount: Int) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
         state.configurationRecoveryScheduled = true
         writerQueue.asyncAfter(
-            deadline: .now() + max(configurationRecoveryDelay, 1.0)
+            deadline: .now() + recoveryConfiguration.verificationDelay
         ) { [weak self] in
             guard let self else { return }
             state.configurationRecoveryScheduled = false
             guard state.isCapturing else { return }
 
-            let receivedBufferCount =
-                state.diagnostics.bufferCount - baselineBufferCount
-            guard receivedBufferCount >= Self.minimumRecoveryBufferCount else {
+            guard recoveryConfiguration.hasEnoughRecoveredBuffers(
+                baseline: baselineBufferCount,
+                current: state.diagnostics.bufferCount
+            ) else {
                 retryConfigurationRecovery(
                     reason: "The audio engine started but the microphone produced no buffers."
                 )
@@ -273,11 +355,11 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     private func retryConfigurationRecovery(reason: String) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
         state.configurationRecoveryAttempts += 1
-        guard
-            state.configurationRecoveryAttempts
-                < Self.maximumConfigurationRecoveryAttempts
-        else {
+        guard recoveryConfiguration.shouldRetry(
+            after: state.configurationRecoveryAttempts
+        ) else {
             state.diagnostics.failureReason =
                 "Microphone did not resume after the audio device changed: \(reason)"
             return
@@ -285,7 +367,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
         state.configurationRecoveryScheduled = true
         writerQueue.asyncAfter(
-            deadline: .now() + configurationRecoveryDelay
+            deadline: .now() + recoveryConfiguration.delay
         ) { [weak self] in
             self?.recoverFromConfigurationChange()
         }
@@ -293,8 +375,9 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     private func write(
         _ buffer: AVAudioPCMBuffer,
-        presentationTimestamp: Double
+        presentationTimestamp: Double?
     ) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
         guard state.isCapturing, let writer = state.writer else { return }
 
         do {

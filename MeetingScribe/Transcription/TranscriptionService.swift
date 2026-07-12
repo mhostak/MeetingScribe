@@ -6,6 +6,12 @@ protocol TranscriptionService: Sendable {
         modelURL: URL,
         options: TranscriptionOptions
     ) async throws -> TrackTranscript
+
+    func releaseResources() async
+}
+
+extension TranscriptionService {
+    func releaseResources() async {}
 }
 
 enum TranscriptionError: Error, LocalizedError {

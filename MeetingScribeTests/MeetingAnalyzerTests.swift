@@ -79,6 +79,69 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testConsolidationDeadEndIsRejectedInsteadOfLooping() async {
+        let provider = LargePartialAnalysisProvider()
+        let segments = (0..<2).map { index in
+            TranscriptSegment(
+                id: String(format: "segment-%06d", index),
+                source: .system,
+                speaker: "Other",
+                start: Double(index),
+                end: Double(index + 1),
+                language: "sk",
+                text: String(repeating: "x", count: 700),
+                confidence: nil
+            )
+        }
+
+        do {
+            _ = try await MeetingAnalyzer(
+                provider: provider,
+                maxInputCharacters: 1_000
+            ).analyze(
+                session: makeSession(),
+                transcript: makeTranscript(segments: segments)
+            )
+            XCTFail("Expected non-reducible consolidation to fail.")
+        } catch {
+            XCTAssertEqual(error as? AnalysisError, .transcriptChunkTooLarge)
+        }
+        let requestCount = await provider.requestCount
+        XCTAssertEqual(requestCount, 2)
+    }
+
+    func testCancellationAfterFirstRequestStopsRemainingAnalysis() async throws {
+        let provider = MockAnalysisProvider(cancelAfterFirstRequest: true)
+        let segments = (0..<3).map { index in
+            TranscriptSegment(
+                id: "segment-\(index)",
+                source: .system,
+                speaker: "Other",
+                start: Double(index),
+                end: Double(index + 1),
+                language: "sk",
+                text: String(repeating: "slovo ", count: 110),
+                confidence: nil
+            )
+        }
+
+        do {
+            _ = try await MeetingAnalyzer(
+                provider: provider,
+                maxInputCharacters: 1_000
+            ).analyze(
+                session: makeSession(),
+                transcript: makeTranscript(segments: segments)
+            )
+            XCTFail("Expected analysis cancellation.")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        let requests = await provider.requests
+        XCTAssertEqual(requests.count, 1)
+    }
+
     private func makeSession() -> SessionMetadata {
         SessionMetadata(
             id: "session-1",
@@ -100,12 +163,38 @@ final class MeetingAnalyzerTests: XCTestCase {
 }
 
 private actor MockAnalysisProvider: AnalysisProvider {
+    let cancelAfterFirstRequest: Bool
     private(set) var requests: [AnalysisRequest] = []
+
+    init(cancelAfterFirstRequest: Bool = false) {
+        self.cancelAfterFirstRequest = cancelAfterFirstRequest
+    }
 
     func analyze(_ request: AnalysisRequest) async throws -> MeetingAnalysis {
         requests.append(request)
+        if cancelAfterFirstRequest, requests.count == 1 {
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+        }
         return MeetingAnalysis(
             summary: request.mode == .consolidation ? "Consolidated" : "Partial",
+            decisions: [],
+            actionItems: [],
+            openQuestions: [],
+            risksAndBlockers: [],
+            nextMeetingTopics: []
+        )
+    }
+}
+
+private actor LargePartialAnalysisProvider: AnalysisProvider {
+    private(set) var requestCount = 0
+
+    func analyze(_ request: AnalysisRequest) async throws -> MeetingAnalysis {
+        requestCount += 1
+        return MeetingAnalysis(
+            summary: String(repeating: "y", count: 700),
             decisions: [],
             actionItems: [],
             openQuestions: [],

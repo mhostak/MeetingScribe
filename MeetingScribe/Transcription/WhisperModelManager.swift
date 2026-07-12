@@ -67,13 +67,16 @@ enum WhisperModelStatus: Equatable, Sendable {
 actor WhisperModelManager {
     nonisolated let modelsRoot: URL
     private let fileManager: FileManager
+    private let urlSession: URLSession
 
     init(
         modelsRoot: URL = WhisperModelManager.defaultModelsRoot,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        urlSession: URLSession = .shared
     ) {
         self.modelsRoot = modelsRoot
         self.fileManager = fileManager
+        self.urlSession = urlSession
     }
 
     static var defaultModelsRoot: URL {
@@ -124,17 +127,116 @@ actor WhisperModelManager {
         return destinationURL
     }
 
-    func download(_ descriptor: WhisperModelDescriptor) async throws -> URL {
+    func download(
+        _ descriptor: WhisperModelDescriptor,
+        progress: @escaping @Sendable (Double) -> Void = { _ in }
+    ) async throws -> URL {
         try prepareStorage()
-        let (temporaryURL, response) = try await URLSession.shared.download(
-            from: descriptor.downloadURL
-        )
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200..<300).contains(httpResponse.statusCode)
-        else {
+
+        let destinationURL = modelURL(for: descriptor)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            do {
+                try validateChecksum(of: destinationURL, expectedSHA1: descriptor.expectedSHA1)
+                progress(1)
+                return destinationURL
+            } catch {
+                try fileManager.removeItem(at: destinationURL)
+            }
+        }
+
+        let partialURL = downloadPartialURL(for: descriptor)
+        let existingBytes = fileSize(at: partialURL)
+        var request = URLRequest(url: descriptor.downloadURL)
+        if existingBytes > 0 {
+            request.setValue("bytes=\(existingBytes)-", forHTTPHeaderField: "Range")
+        }
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await urlSession.bytes(for: request)
+        } catch {
+            throw error
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            try? fileManager.removeItem(at: partialURL)
             throw WhisperModelManagerError.downloadFailed
         }
-        return try importModel(from: temporaryURL, as: descriptor)
+
+        let isResume = existingBytes > 0 && httpResponse.statusCode == 206
+        if isResume {
+            guard contentRangeStarts(at: existingBytes, response: httpResponse) else {
+                try? fileManager.removeItem(at: partialURL)
+                throw WhisperModelManagerError.invalidResumeResponse
+            }
+        } else if !(200..<300).contains(httpResponse.statusCode) {
+            try? fileManager.removeItem(at: partialURL)
+            throw WhisperModelManagerError.downloadFailed
+        }
+
+        let startingBytes = isResume ? existingBytes : 0
+        if !isResume {
+            try? fileManager.removeItem(at: partialURL)
+            guard fileManager.createFile(atPath: partialURL.path, contents: nil) else {
+                throw WhisperModelManagerError.downloadFailed
+            }
+        }
+
+        let expectedResponseBytes = response.expectedContentLength
+        let expectedTotalBytes = expectedResponseBytes > 0
+            ? startingBytes + expectedResponseBytes
+            : descriptor.approximateSizeBytes
+        let handle = try FileHandle(forWritingTo: partialURL)
+        do {
+            try handle.seekToEnd()
+            var buffer = Data()
+            buffer.reserveCapacity(64 * 1_024)
+            var downloadedBytes = startingBytes
+
+            for try await byte in bytes {
+                try Task.checkCancellation()
+                buffer.append(byte)
+                if buffer.count >= 64 * 1_024 {
+                    try handle.write(contentsOf: buffer)
+                    downloadedBytes += Int64(buffer.count)
+                    buffer.removeAll(keepingCapacity: true)
+                    reportProgress(downloadedBytes, expectedTotalBytes, progress)
+                }
+            }
+            if !buffer.isEmpty {
+                try handle.write(contentsOf: buffer)
+                downloadedBytes += Int64(buffer.count)
+                reportProgress(downloadedBytes, expectedTotalBytes, progress)
+            }
+            try handle.synchronize()
+            try handle.close()
+        } catch {
+            try? handle.synchronize()
+            try? handle.close()
+            if !(error is CancellationError) {
+                // URLSession transport errors leave a valid byte prefix for a later Range request.
+                // Local file errors can make that prefix unreliable.
+                if !(error is URLError) {
+                    try? fileManager.removeItem(at: partialURL)
+                }
+            }
+            throw error
+        }
+
+        do {
+            try validateChecksum(of: partialURL, expectedSHA1: descriptor.expectedSHA1)
+            try fileManager.moveItem(at: partialURL, to: destinationURL)
+            progress(1)
+            return destinationURL
+        } catch {
+            try? fileManager.removeItem(at: partialURL)
+            throw error
+        }
+    }
+
+    nonisolated func downloadPartialURL(for descriptor: WhisperModelDescriptor) -> URL {
+        modelURL(for: descriptor).appendingPathExtension("download")
     }
 
     func validateChecksum(of url: URL, expectedSHA1: String) throws {
@@ -153,16 +255,42 @@ actor WhisperModelManager {
             )
         }
     }
+
+    private func fileSize(at url: URL) -> Int64 {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber
+        else { return 0 }
+        return size.int64Value
+    }
+
+    private func contentRangeStarts(at offset: Int64, response: HTTPURLResponse) -> Bool {
+        guard let value = response.value(forHTTPHeaderField: "Content-Range") else {
+            return false
+        }
+        return value.lowercased().hasPrefix("bytes \(offset)-")
+    }
+
+    private func reportProgress(
+        _ downloadedBytes: Int64,
+        _ expectedTotalBytes: Int64,
+        _ progress: @Sendable (Double) -> Void
+    ) {
+        guard expectedTotalBytes > 0 else { return }
+        progress(min(Double(downloadedBytes) / Double(expectedTotalBytes), 0.999))
+    }
 }
 
 enum WhisperModelManagerError: Error, LocalizedError, Equatable {
     case downloadFailed
+    case invalidResumeResponse
     case checksumMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
         case .downloadFailed:
             return "The Whisper model download failed."
+        case .invalidResumeResponse:
+            return "The Whisper model server returned an invalid resume response."
         case let .checksumMismatch(expected, actual):
             return "The Whisper model checksum is invalid. Expected \(expected), received \(actual)."
         }

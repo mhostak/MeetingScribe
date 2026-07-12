@@ -21,9 +21,51 @@ struct ConvertedAudioFile: Equatable, Sendable {
     }
 }
 
+enum AudioConverterLoopAction: Equatable, Sendable {
+    case continueConversion
+    case finish
+    case fail
+}
+
+struct AudioConverterDrainPolicy: Sendable {
+    private(set) var consecutiveEmptyDrains = 0
+
+    mutating func action(
+        for status: AVAudioConverterOutputStatus,
+        producedFrameCount: AVAudioFrameCount,
+        reachedInputEnd: Bool
+    ) -> AudioConverterLoopAction {
+        if producedFrameCount > 0 {
+            consecutiveEmptyDrains = 0
+        } else if reachedInputEnd {
+            consecutiveEmptyDrains += 1
+        }
+
+        switch status {
+        case .haveData:
+            return .continueConversion
+        case .inputRanDry:
+            return reachedInputEnd
+                && consecutiveEmptyDrains >= WorkingAudioConverter.maximumConsecutiveEmptyDrainCycles
+                ? .finish
+                : .continueConversion
+        case .endOfStream:
+            return .finish
+        case .error:
+            return .fail
+        @unknown default:
+            return .fail
+        }
+    }
+}
+
+/// Converts one captured CAF into the 16 kHz mono PCM format expected by Whisper.
 struct WorkingAudioConverter: Sendable {
     static let targetSampleRate = 16_000.0
     static let targetChannelCount: AVAudioChannelCount = 1
+    /// Bounds the fallback drain loop when AVAudioConverter reaches input EOF
+    /// but never emits an explicit `.endOfStream` status.
+    static let maximumConsecutiveEmptyDrainCycles = 2
 
     func convert(inputURL: URL, outputURL: URL) throws -> ConvertedAudioFile {
         let inputFile: AVAudioFile
@@ -74,7 +116,12 @@ struct WorkingAudioConverter: Sendable {
 
         let outputCapacity: AVAudioFrameCount = 4_096
         let inputState = AudioConversionInputState(inputFile: inputFile)
-        var consecutiveEmptyDrains = 0
+        // AVAudioConverter may report `.inputRanDry` after the input callback
+        // has reached EOF while still holding delayed output internally. Keep
+        // calling it with `.endOfStream`; two consecutive empty drain cycles
+        // are the bounded termination heuristic when no explicit
+        // `.endOfStream` status arrives. Any produced frame resets the count.
+        var drainPolicy = AudioConverterDrainPolicy()
 
         conversionLoop: while true {
             guard let outputBuffer = AVAudioPCMBuffer(
@@ -145,26 +192,21 @@ struct WorkingAudioConverter: Sendable {
 
             if outputBuffer.frameLength > 0 {
                 try outputFile?.write(from: outputBuffer)
-                consecutiveEmptyDrains = 0
-            } else if inputState.reachedEnd {
-                consecutiveEmptyDrains += 1
             }
 
-            switch status {
-            case .haveData:
+            switch drainPolicy.action(
+                for: status,
+                producedFrameCount: outputBuffer.frameLength,
+                reachedInputEnd: inputState.reachedEnd
+            ) {
+            case .continueConversion:
                 continue
-            case .inputRanDry:
-                if inputState.reachedEnd, consecutiveEmptyDrains >= 2 {
-                    break conversionLoop
-                }
-            case .endOfStream:
+            case .finish:
                 break conversionLoop
-            case .error:
+            case .fail:
                 throw AudioConversionError.conversionFailed(
                     reason: conversionFailure?.localizedDescription ?? "Unknown converter error."
                 )
-            @unknown default:
-                throw AudioConversionError.conversionFailed(reason: "Unknown converter status.")
             }
         }
 

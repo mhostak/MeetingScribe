@@ -132,6 +132,75 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertFalse(markdown.contains("<!-- AI analýza zatiaľ nebola vytvorená. -->"))
     }
 
+    func testOverlapDetectorHandlesNestedSameSourceIntervalsAndTouchingBoundaries() {
+        let segments = [
+            segment(
+                id: "system-long",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 10,
+                language: "sk",
+                text: "Long"
+            ),
+            segment(
+                id: "system-nested",
+                source: .system,
+                speaker: "Other",
+                start: 2,
+                end: 4,
+                language: "sk",
+                text: "Nested"
+            ),
+            segment(
+                id: "microphone-overlap",
+                source: .microphone,
+                speaker: "Martin",
+                start: 3,
+                end: 3.5,
+                language: "sk",
+                text: "Overlap"
+            ),
+            segment(
+                id: "microphone-boundary",
+                source: .microphone,
+                speaker: "Martin",
+                start: 10,
+                end: 12,
+                language: "sk",
+                text: "Boundary"
+            ),
+        ]
+
+        XCTAssertEqual(
+            TranscriptOverlapDetector().overlappingIndices(in: segments),
+            Set([0, 1, 2])
+        )
+    }
+
+    func testOverlapDetectorScalesToLargeTranscript() {
+        let segments = (0..<50_000).map { index in
+            let block = Double(index / 2) * 4
+            let isSystem = index.isMultiple(of: 2)
+            return segment(
+                id: "segment-\(index)",
+                source: isSystem ? .system : .microphone,
+                speaker: isSystem ? "Other" : "Martin",
+                start: block + (isSystem ? 0 : 2),
+                end: block + (isSystem ? 1 : 3),
+                language: "sk",
+                text: "Text"
+            )
+        }
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+
+        let overlaps = TranscriptOverlapDetector().overlappingIndices(in: segments)
+
+        XCTAssertTrue(overlaps.isEmpty)
+        XCTAssertLessThan(startedAt.duration(to: clock.now), .seconds(2))
+    }
+
     func testRendersExistingSessionWhenPathIsProvided() throws {
         guard let path = ProcessInfo.processInfo.environment["MEETINGSCRIBE_SESSION_PATH"],
               !path.isEmpty else {

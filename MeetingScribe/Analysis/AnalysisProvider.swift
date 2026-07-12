@@ -8,6 +8,9 @@ enum AnalysisError: Error, Equatable, LocalizedError {
     case missingAPIKey
     case transcriptChunkTooLarge
     case invalidHTTPResponse
+    case network(code: URLError.Code, message: String)
+    case rateLimited(message: String, retryAfterSeconds: Double?)
+    case serverError(statusCode: Int, message: String)
     case apiError(statusCode: Int, message: String)
     case incompleteResponse(status: String)
     case refusal(String)
@@ -22,6 +25,13 @@ enum AnalysisError: Error, Equatable, LocalizedError {
             return "A transcript segment or partial analysis is too large to process safely."
         case .invalidHTTPResponse:
             return "OpenAI returned an invalid HTTP response."
+        case let .network(code, message):
+            return "OpenAI network error \(code.rawValue): \(message)"
+        case let .rateLimited(message, retryAfterSeconds):
+            let retry = retryAfterSeconds.map { " Retry after \($0.formatted()) seconds." } ?? ""
+            return "OpenAI rate limit: \(message).\(retry)"
+        case let .serverError(statusCode, message):
+            return "OpenAI server error \(statusCode): \(message)"
         case let .apiError(statusCode, message):
             return "OpenAI API error \(statusCode): \(message)"
         case let .incompleteResponse(status):
