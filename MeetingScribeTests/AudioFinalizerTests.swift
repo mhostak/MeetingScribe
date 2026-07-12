@@ -102,6 +102,35 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
+    func testFinalizerPreservesPartialMicrophoneTrackAfterRouteFailure() async throws {
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 0.5)
+        var microphoneDiagnostics = diagnostics(
+            fileName: "microphone.caf",
+            channelCount: 1,
+            presentationTimestamp: 300.1
+        )
+        microphoneDiagnostics.failureReason = "Audio input route did not recover."
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: "system.caf",
+                    channelCount: 2,
+                    presentationTimestamp: 300
+                ),
+                microphone: microphoneDiagnostics
+            )
+        )
+
+        XCTAssertNotNil(metadata.microphone)
+        XCTAssertEqual(metadata.warnings.count, 1)
+        XCTAssertTrue(metadata.warnings[0].contains("ended early"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
+    }
+
     func testFinalizerRejectsEmptyRequiredSystemTrack() async throws {
         let session = makeSession()
 

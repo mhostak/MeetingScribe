@@ -31,8 +31,7 @@ struct AudioFinalizer: AudioFinalizing {
         }
 
         let microphoneDiagnostics = diagnostics.microphone
-        let canFinalizeMicrophone = microphoneDiagnostics.failureReason == nil
-            && microphoneDiagnostics.bufferCount > 0
+        let canFinalizeMicrophone = microphoneDiagnostics.bufferCount > 0
             && microphoneDiagnostics.firstPresentationTimestamp != nil
         let timelineOrigin = min(
             systemStart,
@@ -59,6 +58,9 @@ struct AudioFinalizer: AudioFinalizing {
                     startedAt: microphoneStart,
                     timelineOrigin: timelineOrigin
                 )
+                if let failureReason = microphoneDiagnostics.failureReason {
+                    warnings.append("Microphone capture ended early: \(failureReason)")
+                }
             } catch {
                 warnings.append("Microphone working audio was not created: \(error.localizedDescription)")
             }

@@ -228,6 +228,64 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertEqual(diagnostics.microphone.capturedDurationSeconds ?? -1, 0.1, accuracy: 0.001)
     }
 
+    func testRecoveredAudioInspectorPrefersPersistedCaptureTimeline() throws {
+        let systemStart = 10_000.25
+        let microphoneStart = 10_000.327
+        let session = try makeSession(
+            metadata: SessionMetadata(
+                id: "persisted-timeline",
+                title: "persisted-timeline",
+                status: .failed,
+                createdAt: Date(),
+                startedAt: Date(),
+                systemAudio: AudioTrackMetadata(
+                    fileName: "system.caf",
+                    sampleRate: 48_000,
+                    channelCount: 1,
+                    bufferCount: 100,
+                    totalFrames: 9_600,
+                    firstPresentationTimestamp: systemStart,
+                    lastPresentationTimestamp: systemStart + 0.19,
+                    capturedDurationSeconds: 0.2,
+                    failureReason: "Display became unavailable."
+                ),
+                microphoneAudio: AudioTrackMetadata(
+                    fileName: "microphone.caf",
+                    sampleRate: 48_000,
+                    channelCount: 1,
+                    bufferCount: 50,
+                    totalFrames: 4_800,
+                    firstPresentationTimestamp: microphoneStart,
+                    lastPresentationTimestamp: microphoneStart + 0.09,
+                    capturedDurationSeconds: 0.1,
+                    failureReason: nil
+                )
+            )
+        )
+        try writeAudio(to: session.systemAudioURL, frameCount: 9_600)
+        try writeAudio(to: session.microphoneAudioURL, frameCount: 4_800)
+
+        let systemEnd = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let misleadingMicrophoneEnd = systemEnd.addingTimeInterval(0.8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: systemEnd],
+            ofItemAtPath: session.systemAudioURL.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: misleadingMicrophoneEnd],
+            ofItemAtPath: session.microphoneAudioURL.path
+        )
+
+        let diagnostics = try RecoveredAudioInspector().inspect(session: session)
+
+        XCTAssertEqual(diagnostics.systemAudio.firstPresentationTimestamp, 0)
+        XCTAssertEqual(
+            diagnostics.microphone.firstPresentationTimestamp ?? -1,
+            microphoneStart - systemStart,
+            accuracy: 0.000_001
+        )
+    }
+
     private func makeSession(id: String, status: RecordingSessionStatus) throws -> RecordingSession {
         try makeSession(
             metadata: SessionMetadata(

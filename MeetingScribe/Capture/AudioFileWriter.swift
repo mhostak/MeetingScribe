@@ -3,6 +3,15 @@ import CoreMedia
 import Foundation
 
 final class AudioFileWriter {
+    private final class ConversionInput: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        var wasSupplied = false
+
+        init(buffer: AVAudioPCMBuffer) {
+            self.buffer = buffer
+        }
+    }
+
     struct WriteResult: Equatable {
         let frameCount: Int
         let sampleRate: Double
@@ -60,15 +69,28 @@ final class AudioFileWriter {
         let format = pcmBuffer.format
         try prepareAudioFile(for: format)
 
-        guard let audioFile, let audioFormat, audioFormat == format else {
+        guard let audioFile, let audioFormat else {
             throw AudioCaptureServiceError.invalidAudioFormat
         }
 
-        try audioFile.write(from: pcmBuffer)
+        let writtenFrameCount: Int
+        if audioFormat == format {
+            try audioFile.write(from: pcmBuffer)
+            writtenFrameCount = Int(pcmBuffer.frameLength)
+        } else {
+            let convertedBuffers = try convert(pcmBuffer, to: audioFormat)
+            for convertedBuffer in convertedBuffers {
+                try audioFile.write(from: convertedBuffer)
+            }
+            writtenFrameCount = convertedBuffers.reduce(0) {
+                $0 + Int($1.frameLength)
+            }
+        }
+
         return WriteResult(
-            frameCount: Int(pcmBuffer.frameLength),
-            sampleRate: format.sampleRate,
-            channelCount: Int(format.channelCount)
+            frameCount: writtenFrameCount,
+            sampleRate: audioFormat.sampleRate,
+            channelCount: Int(audioFormat.channelCount)
         )
     }
 
@@ -87,5 +109,72 @@ final class AudioFileWriter {
             interleaved: format.isInterleaved
         )
         audioFormat = format
+    }
+
+    private func convert(
+        _ inputBuffer: AVAudioPCMBuffer,
+        to outputFormat: AVAudioFormat
+    ) throws -> [AVAudioPCMBuffer] {
+        guard
+            inputBuffer.format.sampleRate > 0,
+            let converter = AVAudioConverter(
+                from: inputBuffer.format,
+                to: outputFormat
+            )
+        else {
+            throw AudioCaptureServiceError.invalidAudioFormat
+        }
+
+        let ratio = outputFormat.sampleRate / inputBuffer.format.sampleRate
+        let estimatedFrames = ceil(Double(inputBuffer.frameLength) * ratio)
+        let outputCapacity = AVAudioFrameCount(max(1, estimatedFrames + 64))
+        let conversionInput = ConversionInput(buffer: inputBuffer)
+        var outputs: [AVAudioPCMBuffer] = []
+
+        for _ in 0..<8 {
+            guard let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFormat,
+                frameCapacity: outputCapacity
+            ) else {
+                throw AudioCaptureServiceError.unableToCreateAudioBuffer
+            }
+
+            var conversionError: NSError?
+            let status = converter.convert(
+                to: outputBuffer,
+                error: &conversionError
+            ) { _, inputStatus in
+                guard !conversionInput.wasSupplied else {
+                    inputStatus.pointee = .endOfStream
+                    return nil
+                }
+                conversionInput.wasSupplied = true
+                inputStatus.pointee = .haveData
+                return conversionInput.buffer
+            }
+
+            if let conversionError {
+                throw conversionError
+            }
+            if outputBuffer.frameLength > 0 {
+                outputs.append(outputBuffer)
+            }
+
+            switch status {
+            case .haveData, .inputRanDry:
+                continue
+            case .endOfStream:
+                guard !outputs.isEmpty else {
+                    throw AudioCaptureServiceError.unableToCreateAudioBuffer
+                }
+                return outputs
+            case .error:
+                throw AudioCaptureServiceError.invalidAudioFormat
+            @unknown default:
+                throw AudioCaptureServiceError.invalidAudioFormat
+            }
+        }
+
+        throw AudioCaptureServiceError.invalidAudioFormat
     }
 }

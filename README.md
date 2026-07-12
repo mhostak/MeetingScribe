@@ -46,15 +46,23 @@ Each session has a newline-delimited JSON `processing.log`. It contains only tec
 
 ## Stabilization testing
 
-The standard SwiftPM suite contains 69 tests. Five hardware or fixture-dependent tests skip unless explicitly enabled; the remaining 64 pass without failures. The most recent completed full Xcode app/test scheme contains the preceding 68-test set and reports 63 passed, 5 skipped, and 0 failed. In addition, the opt-in long-session test has been executed successfully against a generated one-hour, approximately 58 MB PCM stream.
+The standard SwiftPM suite contains 72 tests. Five hardware or fixture-dependent tests skip unless explicitly enabled; the remaining 67 pass without failures. The most recent completed full Xcode app/test scheme contains the preceding 68-test set and reports 63 passed, 5 skipped, and 0 failed. In addition, the opt-in long-session test has been executed successfully against a generated one-hour, approximately 58 MB PCM stream.
 
 AppState-level integration tests cover recovery from a preserved merged transcript and a safe automatic stop after required system-audio capture fails. These tests verify the resulting Markdown, manifest, processing log, preserved audio, and recovery status rather than only isolated model types.
 
 Real forced-termination tests recovered both a 172.7-second system-only session and a 102-second dual-track session. The dual-track recovery preserved both original CAF files, generated both 16 kHz working WAV files, transcribed both tracks, merged 10 segments, exported Markdown, and completed the recovery audit. Recovery also infers the relative microphone start from file end times and durations because CAF does not retain presentation timestamps after a hard crash.
 
+The alternative **Close without deleting files** path has also been validated after a real forced termination. It closes the recovery audit without processing and preserves both original CAF tracks.
+
 The stably signed build now includes the Hardened Runtime audio-input entitlement. A real dual-track run recorded and finalized both system audio and microphone audio, created both 16 kHz working WAV files, transcribed both tracks without warnings, merged 15 segments, and exported Markdown.
 
-Sleep/wake, Bluetooth/device changes, meeting-application scenarios, real 60-minute recording, and production-model CZ/SK quality acceptance still require the remaining hardware matrix in [the phase 10 stabilization protocol](docs/phase-10-stabilization.md). Detailed completed and pending evidence is recorded in [the phase 10 results](docs/phase-10-results.md). Automated results must not be treated as a substitute for that manual evidence.
+A five-minute local-video run with built-in speakers also completed on Large v3 Turbo with automatic Slovak detection, readable dual-track audio, 155 ordered merged segments, and Markdown output. Speaker playback was audibly duplicated through the microphone track, documenting the expected echo behavior when headphones are not used.
+
+During a real sleep/wake run, ScreenCaptureKit reported that no display was available as the Mac entered sleep. MeetingScribe stopped safely, preserved both CAF tracks, offered recovery after wake, and completed dual-track Large v3 Turbo processing. Recovery prefers exact persisted capture timestamps after a safe stop and falls back to CAF timestamp inference only after a hard crash.
+
+AirPods connect/disconnect was also validated during active recording. Microphone capture automatically recreated its engine for the current route, resumed after each change, and limited gaps within the microphone timeline to approximately 2.43 seconds while system audio continued.
+
+An external USB-input change, meeting-application scenarios, real 60-minute recording, and production-model Czech and mixed CZ/SK quality acceptance still require the remaining hardware matrix in [the phase 10 stabilization protocol](docs/phase-10-stabilization.md). Detailed completed and pending evidence is recorded in [the phase 10 results](docs/phase-10-results.md). Automated results must not be treated as a substitute for that manual evidence.
 
 ## Optional AI analysis
 

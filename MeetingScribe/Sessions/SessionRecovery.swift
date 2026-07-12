@@ -222,7 +222,12 @@ struct RecoveredAudioInspector {
                 reason: "No recovered microphone file was found."
             )
         }
-        alignRecoveredTimeline(system: &system, microphone: &microphone)
+        alignRecoveredTimeline(
+            system: &system,
+            microphone: &microphone,
+            persistedSystem: session.metadata.systemAudio,
+            persistedMicrophone: session.metadata.microphoneAudio
+        )
         return CaptureSessionDiagnostics(systemAudio: system, microphone: microphone)
     }
 
@@ -269,8 +274,25 @@ struct RecoveredAudioInspector {
 
     private func alignRecoveredTimeline(
         system: inout AudioCaptureDiagnostics,
-        microphone: inout AudioCaptureDiagnostics
+        microphone: inout AudioCaptureDiagnostics,
+        persistedSystem: AudioTrackMetadata?,
+        persistedMicrophone: AudioTrackMetadata?
     ) {
+        if
+            microphone.failureReason == nil,
+            let systemStart = persistedSystem?.firstPresentationTimestamp,
+            let microphoneStart = persistedMicrophone?.firstPresentationTimestamp
+        {
+            let origin = min(systemStart, microphoneStart)
+            let systemOffset = max(0, systemStart - origin)
+            let microphoneOffset = max(0, microphoneStart - origin)
+            system.firstPresentationTimestamp = systemOffset
+            system.lastPresentationTimestamp = systemOffset
+            microphone.firstPresentationTimestamp = microphoneOffset
+            microphone.lastPresentationTimestamp = microphoneOffset
+            return
+        }
+
         system.firstPresentationTimestamp = 0
         system.lastPresentationTimestamp = 0
 
@@ -282,11 +304,12 @@ struct RecoveredAudioInspector {
             return
         }
 
-        // System capture is started before microphone capture. CAF does not
-        // preserve the original presentation timestamp after a hard crash, so
-        // infer the relative microphone start from each track's final write
-        // time and duration. Clamping protects against filesystem timestamp
-        // granularity making the microphone appear to start slightly earlier.
+        // When capture stopped safely, the manifest timestamps above are more
+        // precise than filesystem modification dates. A hard crash can leave
+        // those fields absent, so infer the relative microphone start from each
+        // track's final write time and duration. Clamping protects against
+        // filesystem timestamp granularity making the microphone appear to
+        // start slightly earlier.
         let microphoneOffset = max(
             0,
             microphoneStartedAt.timeIntervalSince(systemStartedAt)

@@ -52,6 +52,58 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(file.processingFormat.channelCount, 1)
     }
 
+    func testConvertsChangedMicrophoneFormatIntoOriginalCAFFormat() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeRouteChange-\(UUID().uuidString).caf")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let original = try makePCMBuffer(
+            sampleRate: 48_000,
+            channels: 1,
+            frameCount: 4_800
+        )
+        let changedRoute = try makePCMBuffer(
+            sampleRate: 24_000,
+            channels: 1,
+            frameCount: 2_400
+        )
+
+        let writer = AudioFileWriter(outputURL: outputURL)
+        let first = try writer.write(original)
+        let second = try writer.write(changedRoute)
+        writer.finish()
+
+        let file = try AVAudioFile(forReading: outputURL)
+        XCTAssertEqual(first.sampleRate, 48_000)
+        XCTAssertEqual(second.sampleRate, 48_000)
+        XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
+        XCTAssertEqual(file.processingFormat.channelCount, 1)
+        XCTAssertEqual(Double(file.length) / 48_000, 0.2, accuracy: 0.01)
+    }
+
+    private func makePCMBuffer(
+        sampleRate: Double,
+        channels: AVAudioChannelCount,
+        frameCount: AVAudioFrameCount
+    ) throws -> AVAudioPCMBuffer {
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: channels
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: frameCount
+        ))
+        buffer.frameLength = frameCount
+        for channelIndex in 0..<Int(channels) {
+            let samples = try XCTUnwrap(buffer.floatChannelData?[channelIndex])
+            for frameIndex in 0..<Int(frameCount) {
+                samples[frameIndex] = sin(Float(frameIndex) * 0.02) * 0.25
+            }
+        }
+        return buffer
+    }
+
     private func makeSampleBuffer(frameCount: Int) throws -> CMSampleBuffer {
         let channelCount = 2
         let bytesPerFrame = channelCount * MemoryLayout<Float>.size
