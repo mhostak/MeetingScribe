@@ -69,6 +69,11 @@
 		000000000000000000000160 /* AppStateResilienceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000262 /* AppStateResilienceTests.swift */; };
 		000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000263 /* LongSessionStabilityTests.swift */; };
 		000000000000000000000162 /* WhisperSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000264 /* WhisperSettingsStore.swift */; };
+		000000000000000000000163 /* ProcessingFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000266 /* ProcessingFileService.swift */; };
+		000000000000000000000164 /* AudioClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000267 /* AudioClockTests.swift */; };
+		000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */; };
+		000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000269 /* ProcessingFileServiceTests.swift */; };
+		000000000000000000000167 /* WhisperCancellationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000270 /* WhisperCancellationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -147,6 +152,11 @@
 		000000000000000000000263 /* LongSessionStabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LongSessionStabilityTests.swift; sourceTree = "<group>"; };
 		000000000000000000000264 /* WhisperSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperSettingsStore.swift; sourceTree = "<group>"; };
 		000000000000000000000265 /* MeetingScribe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeetingScribe.entitlements; sourceTree = "<group>"; };
+		000000000000000000000266 /* ProcessingFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileService.swift; sourceTree = "<group>"; };
+		000000000000000000000267 /* AudioClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioClockTests.swift; sourceTree = "<group>"; };
+		000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCaptureRecoveryTests.swift; sourceTree = "<group>"; };
+		000000000000000000000269 /* ProcessingFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileServiceTests.swift; sourceTree = "<group>"; };
+		000000000000000000000270 /* WhisperCancellationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCancellationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -219,6 +229,10 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				000000000000000000000267 /* AudioClockTests.swift */,
+				000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */,
+				000000000000000000000269 /* ProcessingFileServiceTests.swift */,
+				000000000000000000000270 /* WhisperCancellationTests.swift */,
 				000000000000000000000263 /* LongSessionStabilityTests.swift */,
 				000000000000000000000262 /* AppStateResilienceTests.swift */,
 				000000000000000000000261 /* SessionRecoveryTests.swift */,
@@ -294,6 +308,7 @@
 				000000000000000000000243 /* ObsidianService.swift */,
 				000000000000000000000241 /* OutputExporter.swift */,
 				000000000000000000000242 /* OutputFolderStore.swift */,
+				000000000000000000000266 /* ProcessingFileService.swift */,
 			);
 			path = Output;
 			sourceTree = "<group>";
@@ -416,6 +431,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000163 /* ProcessingFileService.swift in Sources */,
 				000000000000000000000162 /* WhisperSettingsStore.swift in Sources */,
 				000000000000000000000156 /* SessionRecovery.swift in Sources */,
 				000000000000000000000154 /* StorageGuard.swift in Sources */,
@@ -461,6 +477,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000164 /* AudioClockTests.swift in Sources */,
+				000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */,
+				000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */,
+				000000000000000000000167 /* WhisperCancellationTests.swift in Sources */,
 				000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */,
 				000000000000000000000160 /* AppStateResilienceTests.swift in Sources */,
 				000000000000000000000159 /* SessionRecoveryTests.swift in Sources */,
