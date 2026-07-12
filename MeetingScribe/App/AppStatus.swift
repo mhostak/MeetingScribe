@@ -58,7 +58,7 @@ struct AppStateMachine: Sendable {
         .idle: [.preparing, .failed],
         .preparing: [.recording, .failed],
         .recording: [.stopping, .failed],
-        .stopping: [.transcribing, .exporting, .completed, .failed],
+        .stopping: [.transcribing, .analyzing, .exporting, .completed, .failed],
         .transcribing: [.analyzing, .exporting, .failed],
         .analyzing: [.exporting, .failed],
         .exporting: [.completed, .failed],

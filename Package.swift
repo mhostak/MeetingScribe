@@ -21,6 +21,7 @@ let package = Package(
             ],
             path: "MeetingScribe",
             exclude: [
+                "MeetingScribe.entitlements",
                 "App/MeetingScribeApp.swift",
                 "App/MenuBarView.swift"
             ]

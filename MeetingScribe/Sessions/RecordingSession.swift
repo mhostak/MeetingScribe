@@ -8,6 +8,10 @@ struct RecordingSession: Equatable, Sendable {
         directoryURL.appendingPathComponent("session.json", isDirectory: false)
     }
 
+    var processingLogURL: URL {
+        directoryURL.appendingPathComponent("processing.log", isDirectory: false)
+    }
+
     var systemAudioURL: URL {
         directoryURL.appendingPathComponent(metadata.audioFiles.system, isDirectory: false)
     }

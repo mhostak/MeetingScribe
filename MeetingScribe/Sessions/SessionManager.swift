@@ -4,14 +4,20 @@ actor SessionManager {
     nonisolated let recordingsRoot: URL
 
     private let fileManager: FileManager
+    private let storageGuard: StorageGuard
+    private let recoveryScanner: SessionRecoveryScanner
     private var activeSession: RecordingSession?
 
     init(
         recordingsRoot: URL = SessionManager.defaultRecordingsRoot,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        storageGuard: StorageGuard = StorageGuard(),
+        recoveryScanner: SessionRecoveryScanner? = nil
     ) {
         self.recordingsRoot = recordingsRoot
         self.fileManager = fileManager
+        self.storageGuard = storageGuard
+        self.recoveryScanner = recoveryScanner ?? SessionRecoveryScanner(fileManager: fileManager)
     }
 
     static var defaultRecordingsRoot: URL {
@@ -34,6 +40,7 @@ actor SessionManager {
         }
 
         try prepareStorage()
+        try storageGuard.requireCapacity(at: recordingsRoot)
 
         let id = SessionIDGenerator.make(date: now)
         let directoryURL = recordingsRoot.appendingPathComponent(id, isDirectory: true)
@@ -75,6 +82,17 @@ actor SessionManager {
         session.metadata.transcription = transcription
         session.metadata.analysis = analysis
         session.metadata.output = output
+        if session.metadata.recovery?.status == .inProgress {
+            let recoveredSuccessfully = transcription?.status == .completed
+                && output?.status == .completed
+            session.metadata.recovery?.status = recoveredSuccessfully ? .completed : .failed
+            session.metadata.recovery?.completedAt = Date()
+            session.metadata.recovery?.failureReason = recoveredSuccessfully
+                ? nil
+                : transcription?.failureReason
+                    ?? output?.failureReason
+                    ?? "Recovery processing did not produce a completed Markdown output."
+        }
         try persist(session)
         activeSession = nil
         return session
@@ -95,6 +113,11 @@ actor SessionManager {
         session.metadata.systemAudio = systemAudio
         session.metadata.microphoneAudio = microphoneAudio
         session.metadata.failureReason = reason
+        if session.metadata.recovery?.status == .inProgress {
+            session.metadata.recovery?.status = .failed
+            session.metadata.recovery?.completedAt = now
+            session.metadata.recovery?.failureReason = reason
+        }
         try persist(session)
         activeSession = nil
         return session
@@ -102,6 +125,80 @@ actor SessionManager {
 
     func currentSession() -> RecordingSession? {
         activeSession
+    }
+
+    func storageStatus() throws -> StorageStatus {
+        try prepareStorage()
+        return try storageGuard.status(at: recordingsRoot)
+    }
+
+    func scanForRecovery(now: Date = Date()) throws -> SessionRecoveryScanResult {
+        try prepareStorage()
+        let result = recoveryScanner.scan(recordingsRoot: recordingsRoot, now: now)
+        guard let activeID = activeSession?.metadata.id else { return result }
+        return SessionRecoveryScanResult(
+            candidates: result.candidates.filter { $0.id != activeID },
+            issues: result.issues
+        )
+    }
+
+    func beginRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
+        guard activeSession == nil else {
+            throw SessionManagerError.sessionAlreadyActive
+        }
+        let result = try scanForRecovery(now: now)
+        guard let candidate = result.candidates.first(where: { $0.id == id }) else {
+            throw SessionRecoveryError.candidateNotFound
+        }
+        guard recoveryScanner.isRecoverable(candidate.session.metadata) else {
+            throw SessionRecoveryError.sessionNotRecoverable
+        }
+
+        var session = candidate.session
+        let originalStatus = session.metadata.recovery?.originalStatus ?? session.metadata.status
+        let attempts = session.metadata.recovery?.attemptCount ?? 0
+        session.metadata.status = .recording
+        session.metadata.recovery = SessionRecoveryMetadata(
+            status: .inProgress,
+            originalStatus: originalStatus,
+            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            startedAt: now,
+            completedAt: nil,
+            attemptCount: attempts + 1,
+            failureReason: nil
+        )
+        session.metadata.failureReason = nil
+        try persist(session)
+        activeSession = session
+        return session
+    }
+
+    func closeRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
+        guard activeSession == nil else {
+            throw SessionManagerError.sessionAlreadyActive
+        }
+        let result = try scanForRecovery(now: now)
+        guard let candidate = result.candidates.first(where: { $0.id == id }) else {
+            throw SessionRecoveryError.candidateNotFound
+        }
+
+        var session = candidate.session
+        let originalStatus = session.metadata.recovery?.originalStatus ?? session.metadata.status
+        let reason = "Recovery was closed by the user. Existing artifacts were preserved."
+        session.metadata.status = .failed
+        session.metadata.endedAt = session.metadata.endedAt ?? candidate.suggestedEndAt
+        session.metadata.recovery = SessionRecoveryMetadata(
+            status: .closed,
+            originalStatus: originalStatus,
+            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            startedAt: session.metadata.recovery?.startedAt,
+            completedAt: now,
+            attemptCount: session.metadata.recovery?.attemptCount ?? 0,
+            failureReason: reason
+        )
+        session.metadata.failureReason = reason
+        try persist(session)
+        return session
     }
 
     private func persist(_ session: RecordingSession) throws {

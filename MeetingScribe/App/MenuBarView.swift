@@ -87,6 +87,11 @@ struct MenuBarView: View {
 
     private var startControls: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let candidate = appState.recoveryCandidates.first {
+                recoveryControls(candidate)
+                Divider()
+            }
+
             TextField("Meeting title (optional)", text: $appState.meetingTitle)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -119,6 +124,7 @@ struct MenuBarView: View {
                 }
             }
             .onChange(of: appState.selectedWhisperModelID) {
+                appState.persistWhisperModelSelection()
                 Task {
                     await appState.refreshWhisperModelStatus()
                 }
@@ -208,6 +214,7 @@ struct MenuBarView: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!appState.recoveryCandidates.isEmpty || appState.isRecoveringSession)
 
             Text("Before recording, make sure you have the required permission or participant consent.")
                 .font(.caption2)
@@ -220,6 +227,64 @@ struct MenuBarView: View {
                 }
             }
         }
+    }
+
+    private func recoveryControls(_ candidate: SessionRecoveryCandidate) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Unfinished recording found", systemImage: "arrow.counterclockwise.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+
+            Text(candidate.session.metadata.title)
+                .font(.subheadline.weight(.semibold))
+
+            Text(candidate.reason.displayName)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(recoveryArtifactDescription(candidate.artifacts))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Recover and process") {
+                    Task {
+                        await appState.recoverSession(candidate)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(appState.isRecoveringSession)
+
+                Button("Reveal") {
+                    appState.revealRecovery(candidate)
+                }
+            }
+
+            Button("Close without deleting files") {
+                Task {
+                    await appState.closeRecovery(candidate)
+                }
+            }
+            .disabled(appState.isRecoveringSession)
+
+            if appState.recoveryCandidates.count > 1 {
+                Text("\(appState.recoveryCandidates.count - 1) more recoverable session(s) will appear next.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func recoveryArtifactDescription(_ artifacts: SessionRecoveryArtifacts) -> String {
+        var values: [String] = []
+        if artifacts.hasSystemAudio { values.append("system audio") }
+        if artifacts.hasMicrophoneAudio { values.append("microphone") }
+        if artifacts.hasMergedTranscript { values.append("transcript") }
+        if artifacts.hasAnalysis { values.append("analysis") }
+        return "Preserved: " + (values.isEmpty ? "session files" : values.joined(separator: ", "))
     }
 
     private var downloadModelButtonTitle: String {
