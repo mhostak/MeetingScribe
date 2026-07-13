@@ -25,6 +25,7 @@ final class AppState: ObservableObject {
     @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
     @Published private(set) var isRecoveringSession = false
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
+    @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
     @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
     @Published var openAIAPIKeyInput = ""
@@ -110,6 +111,7 @@ final class AppState: ObservableObject {
         selectedWhisperModelID = WhisperModelDescriptor.supported.contains {
             $0.id == storedWhisperModelID
         } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
+        selectedTranscriptionLanguage = whisperSettingsStore.selectedLanguage
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
         let storedModel = analysisSettingsStore.model
         selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
@@ -141,7 +143,10 @@ final class AppState: ObservableObject {
             storageCheckTick = 0
             stalledSystemAudioCheckTick = 0
 
-            let session = try await sessionManager.startSession(title: meetingTitle)
+            let session = try await sessionManager.startSession(
+                title: meetingTitle,
+                language: selectedTranscriptionLanguage
+            )
             currentSession = session
             try? await processingLogger.log(.sessionCreated, for: session)
 
@@ -404,6 +409,10 @@ final class AppState: ObservableObject {
         whisperSettingsStore.setSelectedModelID(selectedWhisperModelID)
     }
 
+    func persistTranscriptionLanguageSelection() {
+        whisperSettingsStore.setSelectedLanguage(selectedTranscriptionLanguage)
+    }
+
     var whisperModelStatusText: String {
         switch whisperModelStatus {
         case .missing:
@@ -526,13 +535,34 @@ final class AppState: ObservableObject {
     ) async {
         do {
             if transcription.metadata.status == .completed {
+                var attributes: [ProcessingLogAttribute] = [
+                    .model(transcription.metadata.model),
+                    .segmentCount(transcription.metadata.mergedSegmentCount ?? 0),
+                ]
+                if let performance = transcription.metadata.systemPerformance {
+                    attributes += [
+                        .systemAudioDurationSeconds(performance.audioDurationSeconds),
+                        .systemActiveDurationSeconds(performance.activeDurationSeconds),
+                        .systemSkippedDurationSeconds(performance.skippedDurationSeconds),
+                        .systemInferenceInputDurationSeconds(performance.inferenceInputDurationSeconds),
+                        .systemTranscriptionWallTimeSeconds(performance.wallTimeSeconds),
+                        .systemChunkCount(performance.chunkCount),
+                    ]
+                }
+                if let performance = transcription.metadata.microphonePerformance {
+                    attributes += [
+                        .microphoneAudioDurationSeconds(performance.audioDurationSeconds),
+                        .microphoneActiveDurationSeconds(performance.activeDurationSeconds),
+                        .microphoneSkippedDurationSeconds(performance.skippedDurationSeconds),
+                        .microphoneInferenceInputDurationSeconds(performance.inferenceInputDurationSeconds),
+                        .microphoneTranscriptionWallTimeSeconds(performance.wallTimeSeconds),
+                        .microphoneChunkCount(performance.chunkCount),
+                    ]
+                }
                 try? await processingLogger.log(
                     .transcriptionCompleted,
                     for: session,
-                    attributes: [
-                        .model(transcription.metadata.model),
-                        .segmentCount(transcription.metadata.mergedSegmentCount ?? 0),
-                    ]
+                    attributes: attributes
                 )
             } else {
                 try? await processingLogger.log(

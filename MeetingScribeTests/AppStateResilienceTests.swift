@@ -4,6 +4,37 @@ import XCTest
 
 @MainActor
 final class AppStateResilienceTests: XCTestCase {
+    func testSelectedLanguageIsRestoredAndStoredInNewSession() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        WhisperSettingsStore(defaults: fixture.defaults).setSelectedLanguage(.czech)
+
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        XCTAssertEqual(appState.selectedTranscriptionLanguage, .czech)
+
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        XCTAssertEqual(session.metadata.language, .czech)
+        XCTAssertEqual(try decodeMetadata(at: session.manifestURL).language, .czech)
+
+        await appState.stopRecording()
+        XCTAssertNotEqual(appState.status, .recording)
+    }
+
     func testPrepareStorageRunsInitializationOnlyOnce() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

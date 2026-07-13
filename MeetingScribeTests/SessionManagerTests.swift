@@ -21,7 +21,11 @@ final class SessionManagerTests: XCTestCase {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         let startedAt = Date(timeIntervalSince1970: 1_725_876_600)
 
-        let session = try await manager.startSession(title: "SOFA weekly", now: startedAt)
+        let session = try await manager.startSession(
+            title: "SOFA weekly",
+            language: .czech,
+            now: startedAt
+        )
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.directoryURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.manifestURL.path))
@@ -31,6 +35,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.title, "SOFA weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
+        XCTAssertEqual(metadata.language, .czech)
         XCTAssertEqual(metadata.schemaVersion, 7)
         XCTAssertEqual(metadata.audioFiles.system, "system.caf")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")

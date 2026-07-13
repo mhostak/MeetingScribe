@@ -127,6 +127,23 @@ struct MenuBarView: View {
                 }
             }
 
+            Picker(
+                "Transcription language",
+                selection: $appState.selectedTranscriptionLanguage
+            ) {
+                ForEach(TranscriptionLanguage.allCases) { language in
+                    Text(language.displayName).tag(language)
+                }
+            }
+            .onChange(of: appState.selectedTranscriptionLanguage) {
+                appState.persistTranscriptionLanguageSelection()
+            }
+
+            Text(appState.selectedTranscriptionLanguage.selectionHint)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             Label(
                 "Whisper: \(appState.whisperModelStatusText)",
                 systemImage: whisperModelIcon

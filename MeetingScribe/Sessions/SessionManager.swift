@@ -34,7 +34,11 @@ actor SessionManager {
         )
     }
 
-    func startSession(title: String, now: Date = Date()) throws -> RecordingSession {
+    func startSession(
+        title: String,
+        language: TranscriptionLanguage = .automatic,
+        now: Date = Date()
+    ) throws -> RecordingSession {
         guard activeSession == nil else {
             throw SessionManagerError.sessionAlreadyActive
         }
@@ -52,7 +56,8 @@ actor SessionManager {
             title: normalizedTitle.isEmpty ? SessionTitleGenerator.make(date: now) : normalizedTitle,
             status: .recording,
             createdAt: now,
-            startedAt: now
+            startedAt: now,
+            language: language
         )
         let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 

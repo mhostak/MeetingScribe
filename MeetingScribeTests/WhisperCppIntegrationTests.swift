@@ -4,6 +4,108 @@ import XCTest
 @testable import MeetingScribe
 
 final class WhisperCppIntegrationTests: XCTestCase {
+    func testReportsActivityPlanForExistingSessionWhenRequested() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let sessionPath = environment["MEETINGSCRIBE_BENCHMARK_SESSION"] else {
+            throw XCTSkip("Set MEETINGSCRIBE_BENCHMARK_SESSION for activity-plan diagnostics.")
+        }
+
+        let sessionURL = URL(fileURLWithPath: sessionPath, isDirectory: true)
+        for source in TranscriptSource.allCases {
+            let samples = try WhisperAudioReader().readSamples(
+                from: sessionURL.appendingPathComponent("\(source.rawValue)-16k.wav")
+            )
+            let plan = WhisperAudioActivityDetector().activityPlan(for: samples)
+            let batches = WhisperInferenceBatchPlanner().batches(for: plan.chunks)
+            print(
+                "WHISPER_ACTIVITY_PLAN "
+                    + "source=\(source.rawValue) "
+                    + "audio_seconds=\(plan.totalDurationSeconds) "
+                    + "active_seconds=\(plan.activeDurationSeconds) "
+                    + "skipped_seconds=\(plan.skippedDurationSeconds) "
+                    + "inference_input_seconds=\(plan.inferenceDurationSeconds) "
+                    + "activity_chunks=\(plan.chunks.count) "
+                    + "inference_batches=\(batches.count) "
+                    + "batched_input_seconds=\(Double(batches.reduce(0) { $0 + $1.inferenceSampleCount }) / WhisperAudioActivityDetector.sampleRate)"
+            )
+        }
+    }
+
+    func testBenchmarksExistingDualTrackSessionWhenRequested() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard
+            let modelPath = environment["MEETINGSCRIBE_WHISPER_MODEL"],
+            let sessionPath = environment["MEETINGSCRIBE_BENCHMARK_SESSION"]
+        else {
+            throw XCTSkip(
+                "Set MEETINGSCRIBE_WHISPER_MODEL and MEETINGSCRIBE_BENCHMARK_SESSION for a dual-track benchmark."
+            )
+        }
+
+        let service = WhisperCppService()
+        let sessionURL = URL(fileURLWithPath: sessionPath, isDirectory: true)
+        let modelURL = URL(fileURLWithPath: modelPath)
+        let language = environment["MEETINGSCRIBE_WHISPER_LANGUAGE"]
+            .flatMap(TranscriptionLanguage.init(rawValue:))
+            ?? .automatic
+
+        let requestedSources = environment["MEETINGSCRIBE_BENCHMARK_SOURCE"]
+            .flatMap(TranscriptSource.init(rawValue:))
+            .map { [$0] }
+            ?? TranscriptSource.allCases
+        var transcripts: [TrackTranscript] = []
+        for source in requestedSources {
+            transcripts.append(try await service.transcribe(
+                audioURL: sessionURL.appendingPathComponent("\(source.rawValue)-16k.wav"),
+                modelURL: modelURL,
+                options: TranscriptionOptions(
+                    language: language,
+                    source: source,
+                    speaker: source == .system ? "Other" : "Martin"
+                )
+            ))
+        }
+        await service.releaseResources()
+
+        for transcript in transcripts {
+            printBenchmarkSummary(transcript)
+            XCTAssertNotNil(transcript.performance)
+            XCTAssertTrue(transcript.segments.allSatisfy {
+                $0.start >= 0 && $0.end >= $0.start
+            })
+            XCTAssertTrue(zip(
+                transcript.segments,
+                transcript.segments.dropFirst()
+            ).allSatisfy { $0.start <= $1.start })
+        }
+    }
+
+    func testSuppressesLowEnergyHallucinationsWhenModelAndSilentSampleAreProvided() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard
+            let modelPath = environment["MEETINGSCRIBE_WHISPER_MODEL"],
+            let audioPath = environment["MEETINGSCRIBE_WHISPER_SILENT_AUDIO"]
+        else {
+            throw XCTSkip(
+                "Set MEETINGSCRIBE_WHISPER_MODEL and MEETINGSCRIBE_WHISPER_SILENT_AUDIO for silence filtering."
+            )
+        }
+
+        let transcript = try await WhisperCppService().transcribe(
+            audioURL: URL(fileURLWithPath: audioPath),
+            modelURL: URL(fileURLWithPath: modelPath),
+            options: TranscriptionOptions(
+                language: .czech,
+                source: .microphone,
+                speaker: "Martin"
+            )
+        )
+
+        XCTAssertEqual(transcript.requestedLanguage, .czech)
+        XCTAssertEqual(transcript.detectedLanguage, "cs")
+        XCTAssertTrue(transcript.segments.isEmpty)
+    }
+
     func testTranscribesRealAudioWhenModelAndSampleAreProvided() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard
@@ -35,6 +137,15 @@ final class WhisperCppIntegrationTests: XCTestCase {
         if let expectedLanguage = environment["MEETINGSCRIBE_EXPECTED_LANGUAGE"] {
             XCTAssertEqual(transcript.detectedLanguage, expectedLanguage)
         }
+        let textRepeatCounts = Dictionary(grouping: transcript.segments, by: \.text)
+            .values
+            .map(\.count)
+        print(
+            "WHISPER_TRANSCRIPT_SUMMARY "
+                + "segments=\(transcript.segments.count) "
+                + "unique=\(textRepeatCounts.count) "
+                + "max_repeat=\(textRepeatCounts.max() ?? 0)"
+        )
         XCTAssertTrue(transcript.segments.allSatisfy { segment in
             segment.source == .system
                 && segment.speaker == "Other"
@@ -99,5 +210,26 @@ final class WhisperCppIntegrationTests: XCTestCase {
             throw NSError(domain: NSMachErrorDomain, code: Int(status))
         }
         return UInt64(info.resident_size)
+    }
+
+    private func printBenchmarkSummary(_ transcript: TrackTranscript) {
+        let repetition = Dictionary(grouping: transcript.segments, by: \.text)
+            .values
+            .map(\.count)
+            .max() ?? 0
+        let performance = transcript.performance
+        print(
+            "WHISPER_BENCHMARK "
+                + "source=\(transcript.source.rawValue) "
+                + "segments=\(transcript.segments.count) "
+                + "unique=\(Set(transcript.segments.map(\.text)).count) "
+                + "max_repeat=\(repetition) "
+                + "audio_seconds=\(performance?.audioDurationSeconds ?? 0) "
+                + "active_seconds=\(performance?.activeDurationSeconds ?? 0) "
+                + "skipped_seconds=\(performance?.skippedDurationSeconds ?? 0) "
+                + "inference_input_seconds=\(performance?.inferenceInputDurationSeconds ?? 0) "
+                + "chunks=\(performance?.chunkCount ?? 0) "
+                + "wall_seconds=\(performance?.wallTimeSeconds ?? 0)"
+        )
     }
 }
