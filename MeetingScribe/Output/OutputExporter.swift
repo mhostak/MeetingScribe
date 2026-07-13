@@ -37,7 +37,9 @@ struct OutputExporter: Sendable {
         let startedAt = session.startedAt ?? session.createdAt
         let preferredName = filenameSanitizer.markdownFileName(
             title: session.title,
-            startedAt: startedAt
+            sessionID: session.id,
+            startedAt: startedAt,
+            template: session.resolvedOutputFileNameTemplate
         )
         let outputURL = try availableURL(
             preferredName: preferredName,

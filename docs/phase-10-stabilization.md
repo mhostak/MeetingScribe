@@ -33,7 +33,7 @@ Pass criteria:
 
 - no test failures or Swift concurrency warnings;
 - Xcode reports `TEST SUCCEEDED`;
-- the stress test creates a readable 3,600-second CAF and removes its temporary fixture;
+- the stress test creates a readable 3,600-second 16 kHz mono Int16 WAV and removes its temporary fixture;
 - `plutil -lint MeetingScribe.xcodeproj/project.pbxproj` and `git diff --check` succeed.
 
 ## Evidence to preserve for every manual session
@@ -42,7 +42,7 @@ Pass criteria:
 - session ID and meeting application;
 - audio input/output device names;
 - start/end timestamps and test duration;
-- `session.json`, `processing.log`, CAF/WAV sizes and Markdown path;
+- `session.json`, `processing.log`, PCM WAV sizes, any legacy CAF cleanup result, and Markdown path;
 - pass/fail result with a concise failure description;
 - Activity Monitor CPU and memory observations for tests longer than 30 minutes.
 
@@ -54,7 +54,7 @@ Run one Microsoft Teams desktop call of at least five minutes with remote speech
 
 | Scenario | Output route | Input route | Required evidence |
 | --- | --- | --- | --- |
-| Microsoft Teams desktop | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
+| Microsoft Teams desktop | built-in or headphones | built-in microphone | both direct PCM WAV tracks nonempty, timestamped Markdown |
 | Local video playback | built-in speakers | built-in microphone | system track nonempty, echo noted if present |
 
 Slack Huddle, Google Meet in Chrome or Safari, and Zoom may be tested later but are not required to complete phase 10.
@@ -104,7 +104,7 @@ Use a development build with stable signing permissions.
 4. Relaunch the same app binary without rebuilding it.
 5. Confirm the menu shows **Unfinished recording found** and blocks a new recording.
 6. Choose **Recover and process**.
-7. Confirm the original CAF files still exist, recovery attempt count is incremented, Markdown is produced, and `processing.log` contains recovery events without transcript text.
+7. Confirm both interrupted PCM WAV headers are repaired, the recovery attempt count is incremented, Markdown is produced, and `processing.log` contains recovery events without transcript text. For a legacy schema-7 fixture, confirm CAF files remain preserved unless the cleanup option is enabled and every downstream artifact succeeds validation.
 8. Repeat once and choose **Close without deleting files**; confirm the files remain and the prompt does not return.
 
 ## Long recording
@@ -113,14 +113,14 @@ Record a real meeting or controlled audio playback for at least 60 minutes.
 
 Session `2026-07-13T08-07-22Z_777771` completed the 60-minute Microsoft Teams capture, dual-track finalization, transcription, and export requirements. Both source and working audio files remained readable, more than 1 GB remained free, and all artifacts were preserved.
 
-Final resource validation used signed build commit `0d0add2` and session `2026-07-13T12-26-50Z_D5C621`. The controlled recording ran for 62 minutes 18 seconds. Across 58 one-minute samples, CPU averaged 4.06%, RSS stayed between approximately 34 and 48 MB, and physical footprint changed from 39 MB near the start to 40 MB near the end. Both CAF files grew continuously and approximately 8.9 GiB remained free. Finalization completed without warnings, all artifacts remained readable, and optimized Large v3 Turbo transcription completed in 11 minutes 19 seconds. This satisfies the remaining long-recording resource-stability evidence.
+The legacy-pipeline resource validation used signed build commit `0d0add2` and session `2026-07-13T12-26-50Z_D5C621`. The controlled recording ran for 62 minutes 18 seconds. Across 58 one-minute samples, CPU averaged 4.06%, RSS stayed between approximately 34 and 48 MB, and physical footprint changed from 39 MB near the start to 40 MB near the end. Both CAF files grew continuously and approximately 8.9 GiB remained free. Finalization completed without warnings, all artifacts remained readable, and optimized Large v3 Turbo transcription completed in 11 minutes 19 seconds. Repeat the same observation with the direct-PCM build before treating its capture path as manually accepted.
 
 Pass criteria:
 
 - buffer counters continue increasing;
 - memory does not grow continuously with recording duration;
 - free-space protection does not trigger when more than 1 GB remains;
-- both CAF files are readable after stop;
+- both direct PCM WAV files are readable after stop and report 16 kHz mono Int16;
 - processing completes or reports a recoverable model/provider failure;
 - no audio, transcript, or log file is silently deleted.
 

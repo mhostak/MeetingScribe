@@ -53,6 +53,10 @@ struct StorageGuard: Sendable {
             )
         }
     }
+
+    func withMinimumBytes(_ bytes: Int64) -> StorageGuard {
+        StorageGuard(provider: provider, minimumBytes: bytes)
+    }
 }
 
 enum StorageGuardError: Error, Equatable, LocalizedError {

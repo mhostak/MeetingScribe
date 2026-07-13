@@ -13,7 +13,7 @@ final class LongSessionStabilityTests: XCTestCase {
             .appendingPathComponent("MeetingScribeLongSession-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let outputURL = root.appendingPathComponent("one-hour.caf")
+        let outputURL = root.appendingPathComponent("one-hour.wav")
         let sampleRate = 8_000.0
         let seconds = 3_600
         let format = try XCTUnwrap(
@@ -42,11 +42,14 @@ final class LongSessionStabilityTests: XCTestCase {
         writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
-        XCTAssertEqual(file.length, AVAudioFramePosition(sampleRate * Double(seconds)))
+        XCTAssertEqual(
+            file.length,
+            AVAudioFramePosition(AudioFileWriter.targetSampleRate * Double(seconds))
+        )
         XCTAssertEqual(Double(file.length) / file.fileFormat.sampleRate, 3_600, accuracy: 0.001)
         let size = try XCTUnwrap(
             FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? NSNumber
         )
-        XCTAssertGreaterThan(size.int64Value, 50_000_000)
+        XCTAssertGreaterThan(size.int64Value, 110_000_000)
     }
 }

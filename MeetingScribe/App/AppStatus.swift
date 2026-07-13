@@ -12,15 +12,15 @@ enum AppStatus: String, Codable, CaseIterable, Sendable {
     case failed
 
     var menuBarSystemImage: String {
+        "waveform"
+    }
+
+    var isProcessing: Bool {
         switch self {
-        case .recording:
-            return "record.circle.fill"
         case .preparing, .stopping, .transcribing, .analyzing, .exporting:
-            return "clock.arrow.circlepath"
-        case .failed:
-            return "exclamationmark.triangle"
-        case .idle, .completed:
-            return "waveform"
+            return true
+        case .idle, .recording, .completed, .failed:
+            return false
         }
     }
 

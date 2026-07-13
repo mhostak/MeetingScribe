@@ -4,9 +4,9 @@ import XCTest
 @testable import MeetingScribe
 
 final class AudioFileWriterTests: XCTestCase {
-    func testWritesPCMBufferToReadableCAFFile() throws {
+    func testWritesPCMBufferToReadableWhisperWAVFile() throws {
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MeetingScribeAudioWriter-\(UUID().uuidString).caf")
+            .appendingPathComponent("MeetingScribeAudioWriter-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
 
         let writer = AudioFileWriter(outputURL: outputURL)
@@ -14,17 +14,18 @@ final class AudioFileWriterTests: XCTestCase {
         writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
-        XCTAssertEqual(result.frameCount, 480)
-        XCTAssertEqual(result.sampleRate, 48_000)
-        XCTAssertEqual(result.channelCount, 2)
-        XCTAssertEqual(file.length, 480)
-        XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
-        XCTAssertEqual(file.processingFormat.channelCount, 2)
+        XCTAssertGreaterThan(result.frameCount, 0)
+        XCTAssertEqual(result.sampleRate, 16_000)
+        XCTAssertEqual(result.channelCount, 1)
+        XCTAssertEqual(file.length, 160, accuracy: 2)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
+        XCTAssertEqual(file.fileFormat.channelCount, 1)
+        XCTAssertEqual(file.fileFormat.commonFormat, .pcmFormatInt16)
     }
 
-    func testWritesAVAudioPCMBufferToReadableCAFFile() throws {
+    func testWritesAVAudioPCMBufferToReadableWhisperWAVFile() throws {
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MeetingScribeMicrophoneWriter-\(UUID().uuidString).caf")
+            .appendingPathComponent("MeetingScribeMicrophoneWriter-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
 
         let format = try XCTUnwrap(AVAudioFormat(
@@ -46,15 +47,17 @@ final class AudioFileWriterTests: XCTestCase {
         writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
-        XCTAssertEqual(result.frameCount, 480)
+        XCTAssertGreaterThan(result.frameCount, 0)
+        XCTAssertEqual(result.sampleRate, 16_000)
         XCTAssertEqual(result.channelCount, 1)
-        XCTAssertEqual(file.length, 480)
+        XCTAssertEqual(file.length, 160, accuracy: 2)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
         XCTAssertEqual(file.processingFormat.channelCount, 1)
     }
 
-    func testConvertsChangedMicrophoneFormatIntoOriginalCAFFormat() throws {
+    func testConvertsChangedMicrophoneFormatIntoStableWhisperFormat() throws {
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MeetingScribeRouteChange-\(UUID().uuidString).caf")
+            .appendingPathComponent("MeetingScribeRouteChange-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
 
         let original = try makePCMBuffer(
@@ -74,16 +77,16 @@ final class AudioFileWriterTests: XCTestCase {
         writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
-        XCTAssertEqual(first.sampleRate, 48_000)
-        XCTAssertEqual(second.sampleRate, 48_000)
-        XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
+        XCTAssertEqual(first.sampleRate, 16_000)
+        XCTAssertEqual(second.sampleRate, 16_000)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
         XCTAssertEqual(file.processingFormat.channelCount, 1)
-        XCTAssertEqual(Double(file.length) / 48_000, 0.2, accuracy: 0.01)
+        XCTAssertEqual(Double(file.length) / 16_000, 0.2, accuracy: 0.01)
     }
 
-    func testConvertsChangedSystemSampleBufferFormatIntoOriginalCAFFormat() throws {
+    func testConvertsChangedSystemSampleBufferFormatIntoStableWhisperFormat() throws {
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MeetingScribeSystemRouteChange-\(UUID().uuidString).caf")
+            .appendingPathComponent("MeetingScribeSystemRouteChange-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
 
         let writer = AudioFileWriter(outputURL: outputURL)
@@ -100,13 +103,55 @@ final class AudioFileWriterTests: XCTestCase {
         writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
-        XCTAssertEqual(first.sampleRate, 48_000)
-        XCTAssertEqual(second.sampleRate, 48_000)
-        XCTAssertEqual(first.channelCount, 2)
-        XCTAssertEqual(second.channelCount, 2)
-        XCTAssertEqual(file.processingFormat.sampleRate, 48_000)
-        XCTAssertEqual(file.processingFormat.channelCount, 2)
-        XCTAssertEqual(Double(file.length) / 48_000, 0.2, accuracy: 0.01)
+        XCTAssertEqual(first.sampleRate, 16_000)
+        XCTAssertEqual(second.sampleRate, 16_000)
+        XCTAssertEqual(first.channelCount, 1)
+        XCTAssertEqual(second.channelCount, 1)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
+        XCTAssertEqual(file.fileFormat.channelCount, 1)
+        XCTAssertEqual(Double(file.length) / 16_000, 0.2, accuracy: 0.01)
+    }
+
+    func testCheckpointKeepsGrowingWAVReadableBeforeFinish() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeCheckpoint-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let writer = AudioFileWriter(outputURL: outputURL)
+
+        _ = try writer.write(makePCMBuffer(
+            sampleRate: 48_000,
+            channels: 2,
+            frameCount: 96_000
+        ))
+
+        let file = try AVAudioFile(forReading: outputURL)
+        XCTAssertGreaterThan(file.length, 31_000)
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
+        writer.finish()
+    }
+
+    func testRepairerRecoversPhysicalPCMBytesFromStaleHeader() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeRepair-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let writer = AudioFileWriter(outputURL: outputURL)
+        _ = try writer.write(makePCMBuffer(
+            sampleRate: 16_000,
+            channels: 1,
+            frameCount: 16_000
+        ))
+        writer.finish()
+
+        let handle = try FileHandle(forUpdating: outputURL)
+        try handle.seek(toOffset: 4)
+        try handle.write(contentsOf: Data(repeating: 0, count: 4))
+        try handle.seek(toOffset: 40)
+        try handle.write(contentsOf: Data(repeating: 0, count: 4))
+        try handle.close()
+        XCTAssertThrowsError(try AVAudioFile(forReading: outputURL))
+
+        XCTAssertTrue(try PCMRecordingFileRepairer().repairIfNeeded(at: outputURL))
+        XCTAssertEqual(try AVAudioFile(forReading: outputURL).length, 16_000)
     }
 
     private func makePCMBuffer(

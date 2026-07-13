@@ -282,6 +282,45 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertLessThan(elapsed, .seconds(1))
     }
 
+    func testRecoveredAudioInspectorRepairsInterruptedDirectPCMWAV() throws {
+        let session = try makeSession(
+            metadata: SessionMetadata(
+                id: "interrupted-direct-pcm",
+                title: "interrupted-direct-pcm",
+                status: .recording,
+                createdAt: Date(),
+                startedAt: Date()
+            )
+        )
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 1
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: 48_000
+        ))
+        buffer.frameLength = 48_000
+        buffer.floatChannelData?[0].initialize(repeating: 0.1, count: 48_000)
+        let writer = AudioFileWriter(outputURL: session.systemAudioURL)
+        _ = try writer.write(buffer)
+        writer.finish()
+
+        let handle = try FileHandle(forUpdating: session.systemAudioURL)
+        try handle.seek(toOffset: 4)
+        try handle.write(contentsOf: Data(repeating: 0, count: 4))
+        try handle.seek(toOffset: 40)
+        try handle.write(contentsOf: Data(repeating: 0, count: 4))
+        try handle.close()
+
+        let diagnostics = try RecoveredAudioInspector().inspect(session: session)
+
+        XCTAssertEqual(diagnostics.systemAudio.fileName, "system-16k.wav")
+        XCTAssertEqual(diagnostics.systemAudio.totalFrames, 16_000)
+        XCTAssertEqual(diagnostics.systemAudio.sampleRate, 16_000)
+        XCTAssertEqual(diagnostics.systemAudio.channelCount, 1)
+    }
+
     func testRecoveredAudioInspectorInfersMicrophoneTimelineOffset() throws {
         let session = try makeSession(id: "dual-track-audio", status: .recording)
         try writeAudio(to: session.systemAudioURL, frameCount: 9_600)
@@ -370,7 +409,13 @@ final class SessionRecoveryTests: XCTestCase {
                 title: id,
                 status: status,
                 createdAt: Date(),
-                startedAt: Date()
+                startedAt: Date(),
+                audioFiles: SessionAudioFiles(
+                    system: "system.caf",
+                    microphone: "microphone.caf",
+                    systemWorking: "system-16k.wav",
+                    microphoneWorking: "microphone-16k.wav"
+                )
             )
         )
     }
@@ -400,9 +445,13 @@ final class SessionRecoveryTests: XCTestCase {
                 samples[index] = sin(Float(index) * 0.03) * 0.1
             }
         }
-        let writer = AudioFileWriter(outputURL: url)
-        _ = try writer.write(buffer)
-        writer.finish()
+        let file = try AVAudioFile(
+            forWriting: url,
+            settings: format.settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
+        )
+        try file.write(from: buffer)
     }
 
     private func writeSparseWave(

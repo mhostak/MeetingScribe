@@ -66,6 +66,22 @@ final class WhisperModelManagerTests: XCTestCase {
         }
     }
 
+    func testRemoveModelDeletesInstalledAndPartialFiles() async throws {
+        let manager = WhisperModelManager(modelsRoot: temporaryRoot)
+        let descriptor = descriptor(expectedSHA1: String(repeating: "0", count: 40))
+        try await manager.prepareStorage()
+        let modelURL = manager.modelURL(for: descriptor)
+        let partialURL = manager.downloadPartialURL(for: descriptor)
+        try Data(repeating: 0x42, count: 4_096).write(to: modelURL)
+        try Data(repeating: 0x24, count: 256).write(to: partialURL)
+
+        try await manager.removeModel(descriptor)
+
+        let status = try await manager.status(for: descriptor)
+        XCTAssertEqual(status, .missing)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partialURL.path))
+    }
+
     func testDownloadUsesChecksumValidatedCachedModelWithoutNetworkRequest() async throws {
         let data = Data(repeating: 0x5a, count: 4_096)
         let descriptor = descriptor(expectedSHA1: sha1(of: data))

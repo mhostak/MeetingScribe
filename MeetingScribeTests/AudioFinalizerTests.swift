@@ -150,6 +150,37 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
+    func testFinalizerUsesDirectWhisperWAVWithoutCreatingDuplicateWorkingFile() async throws {
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "direct-pcm",
+                title: "Direct PCM",
+                status: .recording,
+                createdAt: Date(),
+                startedAt: Date()
+            ),
+            directoryURL: temporaryRoot
+        )
+        try writeWhisperWAV(to: session.systemAudioURL, duration: 1)
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: session.systemAudioURL.lastPathComponent,
+                    channelCount: 1,
+                    presentationTimestamp: 10
+                ),
+                microphone: .empty
+            )
+        )
+
+        XCTAssertEqual(metadata.system.fileName, "system-16k.wav")
+        XCTAssertEqual(metadata.system.sampleRate, 16_000)
+        XCTAssertEqual(metadata.system.channelCount, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+    }
+
     func testFinalizerPreservesRequiredSystemTrackWhenMicrophoneIsUnavailable() async throws {
         let session = makeSession()
         try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 0.5)
@@ -250,6 +281,44 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.systemWorkingAudioURL.path))
     }
 
+    func testSourceCleanerDeletesLegacyCAFOnlyAfterAllArtifactsAreVerified() throws {
+        let session = try makeCleanupSession(includeMicrophoneTranscript: true)
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let result = try XCTUnwrap(AudioSourceCleaner(now: { completedAt })
+            .cleanupSourceCAFIfEligible(session: session))
+
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(result.completedAt, completedAt)
+        XCTAssertEqual(result.deletedFiles, ["system.caf", "microphone.caf"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemWorkingAudioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
+    }
+
+    func testSourceCleanerPreservesEveryCAFWhenMicrophoneTranscriptIsMissing() throws {
+        let session = try makeCleanupSession(includeMicrophoneTranscript: false)
+
+        XCTAssertThrowsError(
+            try AudioSourceCleaner().cleanupSourceCAFIfEligible(session: session)
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
+    }
+
+    func testSourceCleanerDoesNothingWhenExportDidNotComplete() throws {
+        var session = try makeCleanupSession(includeMicrophoneTranscript: true)
+        session.metadata.output?.status = .failed
+
+        let result = try AudioSourceCleaner().cleanupSourceCAFIfEligible(session: session)
+
+        XCTAssertNil(result)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
+    }
+
     private func makeSession() -> RecordingSession {
         RecordingSession(
             metadata: SessionMetadata(
@@ -257,10 +326,93 @@ final class AudioFinalizerTests: XCTestCase {
                 title: "Test",
                 status: .recording,
                 createdAt: Date(),
-                startedAt: Date()
+                startedAt: Date(),
+                audioFiles: SessionAudioFiles(
+                    system: "system.caf",
+                    microphone: "microphone.caf",
+                    systemWorking: "system-16k.wav",
+                    microphoneWorking: "microphone-16k.wav"
+                )
             ),
             directoryURL: temporaryRoot
         )
+    }
+
+    private func makeCleanupSession(
+        includeMicrophoneTranscript: Bool
+    ) throws -> RecordingSession {
+        var session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+        let system = try WorkingAudioConverter().convert(
+            inputURL: session.systemAudioURL,
+            outputURL: session.systemWorkingAudioURL
+        )
+        let microphone = try WorkingAudioConverter().convert(
+            inputURL: session.microphoneAudioURL,
+            outputURL: session.microphoneWorkingAudioURL
+        )
+        try Data("system transcript".utf8).write(to: session.systemTrackTranscriptURL)
+        if includeMicrophoneTranscript {
+            try Data("microphone transcript".utf8).write(to: session.microphoneTrackTranscriptURL)
+        }
+        let markdownURL = session.directoryURL.appendingPathComponent("meeting.md")
+        try Data("# Meeting".utf8).write(to: markdownURL)
+        session.metadata.status = .recorded
+        session.metadata.audioFinalization = AudioFinalizationMetadata(
+            completedAt: Date(),
+            timelineOrigin: 0,
+            system: FinalizedAudioTrackMetadata(
+                fileName: session.systemWorkingAudioURL.lastPathComponent,
+                sampleRate: system.sampleRate,
+                channelCount: system.channelCount,
+                totalFrames: system.totalFrames,
+                durationSeconds: system.durationSeconds,
+                timelineOffsetSeconds: 0
+            ),
+            microphone: FinalizedAudioTrackMetadata(
+                fileName: session.microphoneWorkingAudioURL.lastPathComponent,
+                sampleRate: microphone.sampleRate,
+                channelCount: microphone.channelCount,
+                totalFrames: microphone.totalFrames,
+                durationSeconds: microphone.durationSeconds,
+                timelineOffsetSeconds: 0
+            ),
+            warnings: []
+        )
+        session.metadata.transcription = SessionTranscriptionMetadata(
+            status: .completed,
+            model: "test",
+            systemSegmentCount: 1,
+            microphoneSegmentCount: includeMicrophoneTranscript ? 1 : nil,
+            warnings: [],
+            failureReason: nil
+        )
+        session.metadata.output = SessionOutputMetadata(
+            status: .completed,
+            markdownFileName: markdownURL.lastPathComponent,
+            markdownPath: markdownURL.path,
+            exportedAt: Date(),
+            failureReason: nil
+        )
+        return session
+    }
+
+    private func writeWhisperWAV(to url: URL, duration: Double) throws {
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 1
+        ))
+        let frameCount = AVAudioFrameCount(48_000 * duration)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: frameCount
+        ))
+        buffer.frameLength = frameCount
+        buffer.floatChannelData?[0].initialize(repeating: 0.2, count: Int(frameCount))
+        let writer = AudioFileWriter(outputURL: url)
+        _ = try writer.write(buffer)
+        writer.finish()
     }
 
     private func diagnostics(

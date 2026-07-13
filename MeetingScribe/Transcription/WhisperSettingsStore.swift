@@ -36,3 +36,24 @@ final class WhisperSettingsStore {
         defaults.set(language.rawValue, forKey: Key.selectedLanguage)
     }
 }
+
+@MainActor
+final class AudioRetentionSettingsStore {
+    private enum Key {
+        static let automaticallyDeleteSourceCAF = "automaticallyDeleteSourceCAFAfterExport"
+    }
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var automaticallyDeleteSourceCAF: Bool {
+        defaults.bool(forKey: Key.automaticallyDeleteSourceCAF)
+    }
+
+    func setAutomaticallyDeleteSourceCAF(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Key.automaticallyDeleteSourceCAF)
+    }
+}

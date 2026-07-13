@@ -127,6 +127,16 @@ actor WhisperModelManager {
         return destinationURL
     }
 
+    func removeModel(_ descriptor: WhisperModelDescriptor) throws {
+        let urls = [
+            modelURL(for: descriptor),
+            downloadPartialURL(for: descriptor),
+        ]
+        for url in urls where fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
     func download(
         _ descriptor: WhisperModelDescriptor,
         progress: @escaping @Sendable (Double) -> Void = { _ in }

@@ -195,9 +195,14 @@ struct SessionRecoveryScanner {
 
 struct RecoveredAudioInspector {
     private let fileManager: FileManager
+    private let repairer: PCMRecordingFileRepairer
 
-    init(fileManager: FileManager = .default) {
+    init(
+        fileManager: FileManager = .default,
+        repairer: PCMRecordingFileRepairer = PCMRecordingFileRepairer()
+    ) {
         self.fileManager = fileManager
+        self.repairer = repairer
     }
 
     func inspect(session: RecordingSession, now: Date = Date()) throws -> CaptureSessionDiagnostics {
@@ -239,6 +244,14 @@ struct RecoveredAudioInspector {
         guard fileManager.fileExists(atPath: url.path) else {
             if required { throw SessionRecoveryError.requiredSystemAudioMissing }
             return failedOptionalTrack(fileName: url.lastPathComponent, reason: "Audio file is missing.")
+        }
+        do {
+            try repairer.repairIfNeeded(at: url)
+        } catch {
+            throw SessionRecoveryError.audioUnreadable(
+                fileName: url.lastPathComponent,
+                reason: error.localizedDescription
+            )
         }
         let file: AVAudioFile
         do {

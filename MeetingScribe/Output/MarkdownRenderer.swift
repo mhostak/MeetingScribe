@@ -12,6 +12,7 @@ struct MarkdownRenderer: Sendable {
         transcript: MergedTranscript,
         analysis: MeetingAnalysis? = nil
     ) -> String {
+        let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let startedAt = session.startedAt ?? session.createdAt
         let endedAt = session.endedAt ?? transcript.completedAt
         let durationSeconds = max(0, endedAt.timeIntervalSince(startedAt))
@@ -39,45 +40,56 @@ struct MarkdownRenderer: Sendable {
             "",
             "# \(markdownHeading(session.title))",
             "",
-            "## Súhrn",
+            "## \(vocabulary.summary)",
             "",
         ])
-        appendSummary(analysis, to: &lines)
+        appendSummary(analysis, vocabulary: vocabulary, to: &lines)
         appendReferences(
-            title: "Rozhodnutia",
+            title: vocabulary.decisions,
             values: analysis?.decisions,
             analysisAvailable: analysis != nil,
+            vocabulary: vocabulary,
             to: &lines
         )
-        appendActionItems(analysis?.actionItems, analysisAvailable: analysis != nil, to: &lines)
+        appendActionItems(
+            analysis?.actionItems,
+            analysisAvailable: analysis != nil,
+            vocabulary: vocabulary,
+            to: &lines
+        )
         appendReferences(
-            title: "Otvorené otázky",
+            title: vocabulary.openQuestions,
             values: analysis?.openQuestions,
             analysisAvailable: analysis != nil,
+            vocabulary: vocabulary,
             to: &lines
         )
         appendReferences(
-            title: "Riziká a blokery",
+            title: vocabulary.risksAndBlockers,
             values: analysis?.risksAndBlockers,
             analysisAvailable: analysis != nil,
+            vocabulary: vocabulary,
             to: &lines
         )
         appendReferences(
-            title: "Témy na ďalší meeting",
+            title: vocabulary.nextMeetingTopics,
             values: analysis?.nextMeetingTopics,
             analysisAvailable: analysis != nil,
+            vocabulary: vocabulary,
             to: &lines
         )
-        lines.append(contentsOf: ["## Transcript", ""])
+        lines.append(contentsOf: ["## \(vocabulary.transcript)", ""])
 
         if transcript.segments.isEmpty {
-            lines.append("_Transcript neobsahuje žiadne rozpoznané segmenty._")
+            lines.append("_\(vocabulary.emptyTranscript)_")
         } else {
             let overlappingIndices = TranscriptOverlapDetector().overlappingIndices(
                 in: transcript.segments
             )
             for (index, segment) in transcript.segments.enumerated() {
-                let overlap = overlappingIndices.contains(index) ? " *(prekrytie reči)*" : ""
+                let overlap = overlappingIndices.contains(index)
+                    ? " *(\(vocabulary.speechOverlap))*"
+                    : ""
                 lines.append(
                     "### \(elapsedTime(segment.start)) — \(markdownHeading(segment.speaker))\(overlap)"
                 )
@@ -90,13 +102,17 @@ struct MarkdownRenderer: Sendable {
         return lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
     }
 
-    private func appendSummary(_ analysis: MeetingAnalysis?, to lines: inout [String]) {
+    private func appendSummary(
+        _ analysis: MeetingAnalysis?,
+        vocabulary: MarkdownVocabulary,
+        to lines: inout [String]
+    ) {
         guard let analysis else {
-            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
             return
         }
         let summary = analysis.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        lines.append(summary.isEmpty ? "_Súhrn nebol identifikovaný._" : summary)
+        lines.append(summary.isEmpty ? "_\(vocabulary.summaryUnavailable)_" : summary)
         lines.append("")
     }
 
@@ -104,15 +120,16 @@ struct MarkdownRenderer: Sendable {
         title: String,
         values: [AnalysisReference]?,
         analysisAvailable: Bool,
+        vocabulary: MarkdownVocabulary,
         to lines: inout [String]
     ) {
         lines.append(contentsOf: ["## \(title)", ""])
         guard analysisAvailable else {
-            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
             return
         }
         guard let values, !values.isEmpty else {
-            lines.append(contentsOf: ["_Neboli identifikované._", ""])
+            lines.append(contentsOf: ["_\(vocabulary.noneIdentified)_", ""])
             return
         }
         lines.append(contentsOf: values.map { value in
@@ -124,21 +141,22 @@ struct MarkdownRenderer: Sendable {
     private func appendActionItems(
         _ values: [AnalysisActionItem]?,
         analysisAvailable: Bool,
+        vocabulary: MarkdownVocabulary,
         to lines: inout [String]
     ) {
-        lines.append(contentsOf: ["## Úlohy", ""])
+        lines.append(contentsOf: ["## \(vocabulary.actionItems)", ""])
         guard analysisAvailable else {
-            lines.append(contentsOf: ["<!-- AI analýza zatiaľ nebola vytvorená. -->", ""])
+            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
             return
         }
         guard let values, !values.isEmpty else {
-            lines.append(contentsOf: ["_Neboli identifikované._", ""])
+            lines.append(contentsOf: ["_\(vocabulary.noneIdentified)_", ""])
             return
         }
         lines.append(contentsOf: values.map { value in
-            let owner = nonEmpty(value.owner) ?? "Neurčené"
-            let dueDate = nonEmpty(value.dueDate) ?? "neurčený"
-            return "- [ ] \(owner) — \(singleLine(value.text)) — termín: \(dueDate)"
+            let owner = nonEmpty(value.owner) ?? vocabulary.unknownOwner
+            let dueDate = nonEmpty(value.dueDate) ?? vocabulary.unknownDueDate
+            return "- [ ] \(owner) — \(singleLine(value.text)) — \(vocabulary.dueDate): \(dueDate)"
                 + evidenceSuffix(value.timestampSeconds, value.segmentID)
         })
         lines.append("")
@@ -224,6 +242,117 @@ struct MarkdownRenderer: Sendable {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct MarkdownVocabulary {
+    let summary: String
+    let decisions: String
+    let actionItems: String
+    let openQuestions: String
+    let risksAndBlockers: String
+    let nextMeetingTopics: String
+    let transcript: String
+    let speechOverlap: String
+    let emptyTranscript: String
+    let analysisUnavailable: String
+    let summaryUnavailable: String
+    let noneIdentified: String
+    let unknownOwner: String
+    let unknownDueDate: String
+    let dueDate: String
+
+    init(language: OutputLanguage) {
+        switch language {
+        case .slovak:
+            self.init(
+                summary: "Súhrn",
+                decisions: "Rozhodnutia",
+                actionItems: "Úlohy",
+                openQuestions: "Otvorené otázky",
+                risksAndBlockers: "Riziká a blokery",
+                nextMeetingTopics: "Témy na ďalší meeting",
+                transcript: "Prepis",
+                speechOverlap: "prekrytie reči",
+                emptyTranscript: "Prepis neobsahuje žiadne rozpoznané segmenty.",
+                analysisUnavailable: "AI analýza zatiaľ nebola vytvorená.",
+                summaryUnavailable: "Súhrn nebol identifikovaný.",
+                noneIdentified: "Neboli identifikované.",
+                unknownOwner: "Neurčené",
+                unknownDueDate: "neurčený",
+                dueDate: "termín"
+            )
+        case .czech:
+            self.init(
+                summary: "Shrnutí",
+                decisions: "Rozhodnutí",
+                actionItems: "Úkoly",
+                openQuestions: "Otevřené otázky",
+                risksAndBlockers: "Rizika a blokátory",
+                nextMeetingTopics: "Témata na další schůzku",
+                transcript: "Přepis",
+                speechOverlap: "překryv řeči",
+                emptyTranscript: "Přepis neobsahuje žádné rozpoznané segmenty.",
+                analysisUnavailable: "AI analýza zatím nebyla vytvořena.",
+                summaryUnavailable: "Shrnutí nebylo identifikováno.",
+                noneIdentified: "Nebyly identifikovány.",
+                unknownOwner: "Neurčeno",
+                unknownDueDate: "neurčený",
+                dueDate: "termín"
+            )
+        case .english:
+            self.init(
+                summary: "Summary",
+                decisions: "Decisions",
+                actionItems: "Action items",
+                openQuestions: "Open questions",
+                risksAndBlockers: "Risks and blockers",
+                nextMeetingTopics: "Topics for the next meeting",
+                transcript: "Transcript",
+                speechOverlap: "overlapping speech",
+                emptyTranscript: "The transcript contains no recognized segments.",
+                analysisUnavailable: "AI analysis has not been created.",
+                summaryUnavailable: "No summary was identified.",
+                noneIdentified: "None identified.",
+                unknownOwner: "Unassigned",
+                unknownDueDate: "unspecified",
+                dueDate: "due"
+            )
+        }
+    }
+
+    private init(
+        summary: String,
+        decisions: String,
+        actionItems: String,
+        openQuestions: String,
+        risksAndBlockers: String,
+        nextMeetingTopics: String,
+        transcript: String,
+        speechOverlap: String,
+        emptyTranscript: String,
+        analysisUnavailable: String,
+        summaryUnavailable: String,
+        noneIdentified: String,
+        unknownOwner: String,
+        unknownDueDate: String,
+        dueDate: String
+    ) {
+        self.summary = summary
+        self.decisions = decisions
+        self.actionItems = actionItems
+        self.openQuestions = openQuestions
+        self.risksAndBlockers = risksAndBlockers
+        self.nextMeetingTopics = nextMeetingTopics
+        self.transcript = transcript
+        self.speechOverlap = speechOverlap
+        self.emptyTranscript = emptyTranscript
+        self.analysisUnavailable = analysisUnavailable
+        self.summaryUnavailable = summaryUnavailable
+        self.noneIdentified = noneIdentified
+        self.unknownOwner = unknownOwner
+        self.unknownDueDate = unknownDueDate
+        self.dueDate = dueDate
     }
 }
 

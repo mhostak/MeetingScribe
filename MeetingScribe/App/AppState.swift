@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import ServiceManagement
+import UniformTypeIdentifiers
 
 struct CaptureMonitoringConfiguration: Sendable {
     var interval: Duration = .seconds(1)
@@ -24,12 +26,20 @@ final class AppState: ObservableObject {
     @Published private(set) var recoveryCandidates: [SessionRecoveryCandidate] = []
     @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
     @Published private(set) var isRecoveringSession = false
+    @Published private(set) var processingSteps = ProcessingStep.initial
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
     @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
     @Published var openAIAPIKeyInput = ""
     @Published var meetingTitle = ""
+    @Published var automaticallyDeleteSourceCAF = false
+    @Published var selectedAppLanguage: AppLanguage = .system
+    @Published var selectedOutputLanguage: OutputLanguage = .slovak
+    @Published var markdownFileNameTemplate = MarkdownFileNameTemplate.defaultValue
+    @Published var minimumStorageBytes = StorageGuard.defaultMinimumBytes
+    @Published var selectedSettingsSection = "general"
+    @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
 
     private var stateMachine = AppStateMachine()
     private let sessionManager: SessionManager
@@ -43,6 +53,9 @@ final class AppState: ObservableObject {
     private let apiKeyStore: any APIKeyStoring
     private let analysisSettingsStore: AnalysisSettingsStore
     private let whisperSettingsStore: WhisperSettingsStore
+    private let audioRetentionSettingsStore: AudioRetentionSettingsStore
+    private let applicationSettingsStore: ApplicationSettingsStore
+    private let audioSourceCleaner: any AudioSourceCleaning
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
@@ -68,6 +81,9 @@ final class AppState: ObservableObject {
         apiKeyStore: (any APIKeyStoring)? = nil,
         analysisSettingsStore: AnalysisSettingsStore? = nil,
         whisperSettingsStore: WhisperSettingsStore? = nil,
+        audioRetentionSettingsStore: AudioRetentionSettingsStore? = nil,
+        applicationSettingsStore: ApplicationSettingsStore? = nil,
+        audioSourceCleaner: any AudioSourceCleaning = AudioSourceCleaner(),
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
@@ -85,6 +101,11 @@ final class AppState: ObservableObject {
         self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
         self.whisperSettingsStore = whisperSettingsStore ?? WhisperSettingsStore()
+        self.audioRetentionSettingsStore = audioRetentionSettingsStore
+            ?? AudioRetentionSettingsStore()
+        self.applicationSettingsStore = applicationSettingsStore
+            ?? ApplicationSettingsStore()
+        self.audioSourceCleaner = audioSourceCleaner
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
@@ -112,6 +133,13 @@ final class AppState: ObservableObject {
             $0.id == storedWhisperModelID
         } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
         selectedTranscriptionLanguage = whisperSettingsStore.selectedLanguage
+        selectedAppLanguage = applicationSettingsStore.appLanguage
+        selectedOutputLanguage = applicationSettingsStore.outputLanguage
+        markdownFileNameTemplate = applicationSettingsStore.markdownFileNameTemplate
+        minimumStorageBytes = applicationSettingsStore.minimumStorageBytes
+        await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
+        automaticallyDeleteSourceCAF = audioRetentionSettingsStore
+            .automaticallyDeleteSourceCAF
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
         let storedModel = analysisSettingsStore.model
         selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
@@ -132,6 +160,10 @@ final class AppState: ObservableObject {
 
     func startRecording() async {
         do {
+            if let markdownFileNameTemplateError {
+                lastError = markdownFileNameTemplateError
+                return
+            }
             guard recoveryCandidates.isEmpty else {
                 throw SessionRecoveryError.pendingRecoveryMustBeResolved
             }
@@ -145,7 +177,9 @@ final class AppState: ObservableObject {
 
             let session = try await sessionManager.startSession(
                 title: meetingTitle,
-                language: selectedTranscriptionLanguage
+                language: selectedTranscriptionLanguage,
+                outputLanguage: selectedOutputLanguage,
+                outputFileNameTemplate: markdownFileNameTemplate
             )
             currentSession = session
             try? await processingLogger.log(.sessionCreated, for: session)
@@ -181,6 +215,8 @@ final class AppState: ObservableObject {
     func stopRecording() async {
         do {
             try transition(to: .stopping)
+            resetProcessingProgress()
+            setProcessingStep(.preparingAudio, to: .active)
             let stoppedAt = Date()
             stopCaptureMonitoring()
 
@@ -220,6 +256,7 @@ final class AppState: ObservableObject {
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
+            resetProcessingProgress()
 
             let session = try await sessionManager.beginRecovery(id: candidate.id)
             currentSession = session
@@ -230,6 +267,7 @@ final class AppState: ObservableObject {
             if let recoveredArtifacts = await processingFileService.loadRecoveredArtifacts(
                 from: session
             ) {
+                setProcessingStep(.preparingAudio, to: .completed)
                 let diagnostics = recoveredMetadataDiagnostics(for: session)
                 captureDiagnostics = diagnostics
                 await completeProcessedSession(
@@ -290,6 +328,7 @@ final class AppState: ObservableObject {
             try transition(to: .idle)
             lastError = nil
             captureDiagnostics = .empty
+            resetProcessingProgress()
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
         } catch {
@@ -308,6 +347,14 @@ final class AppState: ObservableObject {
         }
 
         NSWorkspace.shared.activateFileViewerSelecting([session.manifestURL])
+    }
+
+    func revealLastProcessingLog() {
+        guard let session = lastCompletedSession ?? currentSession else {
+            openRecordingsFolder()
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([session.processingLogURL])
     }
 
     var outputFolderDescription: String {
@@ -405,12 +452,58 @@ final class AppState: ObservableObject {
             ?? .largeV3Turbo
     }
 
+    var canEditSessionConfiguration: Bool {
+        switch status {
+        case .idle, .completed, .failed:
+            return currentSession == nil
+        case .preparing, .recording, .stopping, .transcribing, .analyzing, .exporting:
+            return false
+        }
+    }
+
     func persistWhisperModelSelection() {
         whisperSettingsStore.setSelectedModelID(selectedWhisperModelID)
     }
 
     func persistTranscriptionLanguageSelection() {
         whisperSettingsStore.setSelectedLanguage(selectedTranscriptionLanguage)
+    }
+
+    func persistAudioRetentionSettings() {
+        audioRetentionSettingsStore.setAutomaticallyDeleteSourceCAF(
+            automaticallyDeleteSourceCAF
+        )
+    }
+
+    func persistApplicationSettings() async {
+        applicationSettingsStore.setAppLanguage(selectedAppLanguage)
+        applicationSettingsStore.setOutputLanguage(selectedOutputLanguage)
+        applicationSettingsStore.setMarkdownFileNameTemplate(markdownFileNameTemplate)
+        applicationSettingsStore.setMinimumStorageBytes(minimumStorageBytes)
+        await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
+    }
+
+    func setLaunchAtLoginEnabled(_ enabled: Bool) async {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try await SMAppService.mainApp.unregister()
+            }
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+            lastError = nil
+        } catch {
+            launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+            lastError = "Launch at login could not be updated: \(error.localizedDescription)"
+        }
+    }
+
+    var markdownFileNameTemplateError: String? {
+        let unsupported = MarkdownFileNameTemplate.unsupportedTokens(in: markdownFileNameTemplate)
+        guard unsupported.isEmpty else {
+            return "Unsupported token: \(unsupported.joined(separator: ", "))"
+        }
+        return nil
     }
 
     var whisperModelStatusText: String {
@@ -454,6 +547,42 @@ final class AppState: ObservableObject {
         }
     }
 
+    func importSelectedWhisperModel() async {
+        let panel = NSOpenPanel()
+        panel.title = "Import Whisper model"
+        panel.prompt = "Import"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.data]
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+        let hasSecurityAccess = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if hasSecurityAccess { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+
+        do {
+            _ = try await modelManager.importModel(from: sourceURL, as: selectedWhisperModel)
+            lastError = nil
+            await refreshWhisperModelStatus()
+        } catch {
+            lastError = "The Whisper model could not be imported: \(error.localizedDescription)"
+            await refreshWhisperModelStatus()
+        }
+    }
+
+    func deleteSelectedWhisperModel() async {
+        do {
+            try await modelManager.removeModel(selectedWhisperModel)
+            lastError = nil
+            await refreshWhisperModelStatus()
+        } catch {
+            lastError = "The Whisper model could not be deleted: \(error.localizedDescription)"
+            await refreshWhisperModelStatus()
+        }
+    }
+
     private func refreshRecoveryCandidates() async {
         do {
             let result = try await sessionManager.scanForRecovery()
@@ -478,6 +607,7 @@ final class AppState: ObservableObject {
         recordingEndedAt: Date
     ) async {
         let finalization: AudioFinalizationMetadata
+        setProcessingStep(.preparingAudio, to: .active)
         do {
             try? await processingLogger.log(.finalizationStarted, for: session)
             finalization = try await audioFinalizer.finalize(
@@ -489,7 +619,9 @@ final class AppState: ObservableObject {
                 for: session,
                 attributes: [.durationSeconds(finalization.system.durationSeconds)]
             )
+            setProcessingStep(.preparingAudio, to: .completed)
         } catch {
+            setProcessingStep(.preparingAudio, to: .failed)
             let failedSession = try? await sessionManager.failSession(
                 reason: error.localizedDescription,
                 now: recordingEndedAt,
@@ -534,6 +666,10 @@ final class AppState: ObservableObject {
         recoveredAnalysis: AnalysisOutcome? = nil
     ) async {
         do {
+            setProcessingStep(
+                .transcribing,
+                to: transcription.metadata.status == .completed ? .completed : .failed
+            )
             if transcription.metadata.status == .completed {
                 var attributes: [ProcessingLogAttribute] = [
                     .model(transcription.metadata.model),
@@ -585,6 +721,10 @@ final class AppState: ObservableObject {
                 )
             }
             if let metadata = analysis.metadata {
+                setProcessingStep(
+                    .analyzing,
+                    to: metadata.status == .completed ? .completed : .failed
+                )
                 try? await processingLogger.log(
                     metadata.status == .completed ? .analysisCompleted : .analysisFailed,
                     for: session,
@@ -594,7 +734,11 @@ final class AppState: ObservableObject {
                     ]
                 )
             }
+            if analysis.metadata == nil {
+                setProcessingStep(.analyzing, to: .skipped)
+            }
             try transition(to: .exporting)
+            setProcessingStep(.exporting, to: .active)
 
             var exportSession = session
             exportSession.metadata.endedAt = recordingEndedAt
@@ -604,14 +748,20 @@ final class AppState: ObservableObject {
                 analysis: analysis.analysis
             )
             if let output {
+                setProcessingStep(
+                    .exporting,
+                    to: output.status == .completed ? .completed : .failed
+                )
                 try? await processingLogger.log(
                     output.status == .completed ? .exportCompleted : .exportFailed,
                     for: session,
                     attributes: output.failureReason.map { [.reason($0)] } ?? []
                 )
+            } else {
+                setProcessingStep(.exporting, to: .skipped)
             }
 
-            let completedSession = try await sessionManager.stopSession(
+            var completedSession = try await sessionManager.stopSession(
                 now: recordingEndedAt,
                 systemAudio: diagnostics.systemAudio.sessionMetadata,
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
@@ -619,6 +769,9 @@ final class AppState: ObservableObject {
                 transcription: transcription.metadata,
                 analysis: analysis.metadata,
                 output: output
+            )
+            completedSession = await cleanupSourceAudioIfEnabled(
+                for: completedSession
             )
             currentSession = nil
             lastCompletedSession = completedSession
@@ -644,6 +797,50 @@ final class AppState: ObservableObject {
                 attributes: [.reason(error.localizedDescription)]
             )
             setFailure(error)
+        }
+    }
+
+    private func cleanupSourceAudioIfEnabled(
+        for session: RecordingSession
+    ) async -> RecordingSession {
+        guard automaticallyDeleteSourceCAF else { return session }
+        let cleaner = audioSourceCleaner
+        do {
+            let cleanupTask = Task.detached(priority: .utility) {
+                try cleaner.cleanupSourceCAFIfEligible(session: session)
+            }
+            guard let cleanup = try await cleanupTask.value else {
+                return session
+            }
+            let updated = try await sessionManager.recordAudioSourceCleanup(
+                cleanup,
+                for: session
+            )
+            try? await processingLogger.log(
+                .sourceAudioCleanupCompleted,
+                for: updated
+            )
+            return updated
+        } catch {
+            let cleanup = AudioSourceCleanupMetadata(
+                status: .failed,
+                completedAt: Date(),
+                deletedFiles: [],
+                failureReason: error.localizedDescription
+            )
+            let updated = (try? await sessionManager.recordAudioSourceCleanup(
+                cleanup,
+                for: session
+            )) ?? session
+            try? await processingLogger.log(
+                .sourceAudioCleanupFailed,
+                for: updated,
+                attributes: [.reason(error.localizedDescription)]
+            )
+            if lastError == nil {
+                lastError = "Processing completed, but source CAF files were preserved: \(error.localizedDescription)"
+            }
+            return updated
         }
     }
 
@@ -733,6 +930,7 @@ final class AppState: ObservableObject {
         session: RecordingSession,
         finalization: AudioFinalizationMetadata
     ) async -> TranscriptionOutcome {
+        setProcessingStep(.transcribing, to: .active)
         let descriptor = selectedWhisperModel
         let modelStatus: WhisperModelStatus
         do {
@@ -850,7 +1048,12 @@ final class AppState: ObservableObject {
         session: RecordingSession,
         transcript: MergedTranscript?
     ) async -> AnalysisOutcome {
-        guard aiAnalysisEnabled, let transcript else { return .none }
+        guard aiAnalysisEnabled, let transcript else {
+            setProcessingStep(.analyzing, to: .skipped)
+            return .none
+        }
+
+        setProcessingStep(.analyzing, to: .active)
 
         let startedAt = Date()
         do {
@@ -880,7 +1083,7 @@ final class AppState: ObservableObject {
             let run = try await MeetingAnalyzer(provider: provider).analyze(
                 session: session.metadata,
                 transcript: transcript,
-                preferredLanguage: "sk"
+                preferredLanguage: session.metadata.resolvedOutputLanguage.rawValue
             )
             try await processingFileService.persistAnalysis(
                 run.analysis,
@@ -920,6 +1123,9 @@ final class AppState: ObservableObject {
     private func setFailure(_ error: Error) {
         stopCaptureMonitoring()
         lastError = error.localizedDescription
+        if let activeStep = processingSteps.first(where: { $0.state == .active })?.id {
+            setProcessingStep(activeStep, to: .failed)
+        }
 
         if status != .failed {
             do {
@@ -929,6 +1135,18 @@ final class AppState: ObservableObject {
                 lastError = "\(lastError ?? "Unknown error") \(error.localizedDescription)"
             }
         }
+    }
+
+    private func resetProcessingProgress() {
+        processingSteps = ProcessingStep.initial
+    }
+
+    private func setProcessingStep(
+        _ id: ProcessingStepID,
+        to state: ProcessingStepState
+    ) {
+        guard let index = processingSteps.firstIndex(where: { $0.id == id }) else { return }
+        processingSteps[index].state = state
     }
 
     private func startCaptureMonitoring() {

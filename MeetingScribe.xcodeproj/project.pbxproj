@@ -74,6 +74,10 @@
 		000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */; };
 		000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000269 /* ProcessingFileServiceTests.swift */; };
 		000000000000000000000167 /* WhisperCancellationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000270 /* WhisperCancellationTests.swift */; };
+		000000000000000000000168 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000271 /* ApplicationSettings.swift */; };
+		000000000000000000000169 /* ProcessingProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000272 /* ProcessingProgress.swift */; };
+		000000000000000000000170 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000273 /* SettingsView.swift */; };
+		000000000000000000000171 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000274 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -157,6 +161,10 @@
 		000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCaptureRecoveryTests.swift; sourceTree = "<group>"; };
 		000000000000000000000269 /* ProcessingFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileServiceTests.swift; sourceTree = "<group>"; };
 		000000000000000000000270 /* WhisperCancellationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCancellationTests.swift; sourceTree = "<group>"; };
+		000000000000000000000271 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
+		000000000000000000000272 /* ProcessingProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingProgress.swift; sourceTree = "<group>"; };
+		000000000000000000000273 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		000000000000000000000274 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -193,6 +201,7 @@
 			children = (
 				000000000000000000000265 /* MeetingScribe.entitlements */,
 				000000000000000000000603 /* App */,
+				000000000000000000000611 /* Resources */,
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
 				000000000000000000000608 /* Transcription */,
@@ -208,9 +217,20 @@
 				000000000000000000000201 /* MeetingScribeApp.swift */,
 				000000000000000000000202 /* AppStatus.swift */,
 				000000000000000000000203 /* AppState.swift */,
+				000000000000000000000271 /* ApplicationSettings.swift */,
+				000000000000000000000272 /* ProcessingProgress.swift */,
+				000000000000000000000273 /* SettingsView.swift */,
 				000000000000000000000204 /* MenuBarView.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		000000000000000000000611 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000274 /* Localizable.xcstrings */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		000000000000000000000604 /* Sessions */ = {
@@ -414,6 +434,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000171 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -466,6 +487,9 @@
 				000000000000000000000101 /* MeetingScribeApp.swift in Sources */,
 				000000000000000000000102 /* AppStatus.swift in Sources */,
 				000000000000000000000103 /* AppState.swift in Sources */,
+				000000000000000000000168 /* ApplicationSettings.swift in Sources */,
+				000000000000000000000169 /* ProcessingProgress.swift in Sources */,
+				000000000000000000000170 /* SettingsView.swift in Sources */,
 				000000000000000000000104 /* MenuBarView.swift in Sources */,
 				000000000000000000000105 /* RecordingSession.swift in Sources */,
 				000000000000000000000106 /* SessionMetadata.swift in Sources */,

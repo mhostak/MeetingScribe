@@ -41,10 +41,10 @@ enum TranscriptionLanguage: String, Codable, CaseIterable, Hashable, Identifiabl
 }
 
 struct SessionAudioFiles: Codable, Equatable, Sendable {
-    var system = "system.caf"
-    var microphone = "microphone.caf"
-    var systemWorking: String? = "system-16k.wav"
-    var microphoneWorking: String? = "microphone-16k.wav"
+    var system = "system-16k.wav"
+    var microphone = "microphone-16k.wav"
+    var systemWorking: String? = nil
+    var microphoneWorking: String? = nil
     var mixed = "mixed.wav"
 }
 
@@ -82,6 +82,18 @@ struct AudioFinalizationMetadata: Codable, Equatable, Sendable {
     var system: FinalizedAudioTrackMetadata
     var microphone: FinalizedAudioTrackMetadata?
     var warnings: [String]
+}
+
+enum AudioSourceCleanupStatus: String, Codable, Equatable, Sendable {
+    case completed
+    case failed
+}
+
+struct AudioSourceCleanupMetadata: Codable, Equatable, Sendable {
+    var status: AudioSourceCleanupStatus
+    var completedAt: Date
+    var deletedFiles: [String]
+    var failureReason: String?
 }
 
 enum SessionTranscriptionStatus: String, Codable, Sendable {
@@ -160,11 +172,14 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var startedAt: Date?
     var endedAt: Date?
     var language: TranscriptionLanguage
+    var outputLanguage: OutputLanguage?
+    var outputFileNameTemplate: String?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
     var systemAudio: AudioTrackMetadata?
     var microphoneAudio: AudioTrackMetadata?
     var audioFinalization: AudioFinalizationMetadata?
+    var audioSourceCleanup: AudioSourceCleanupMetadata?
     var transcription: SessionTranscriptionMetadata?
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
@@ -172,7 +187,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 7,
+        schemaVersion: Int = 9,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -180,11 +195,14 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         startedAt: Date? = nil,
         endedAt: Date? = nil,
         language: TranscriptionLanguage = .automatic,
+        outputLanguage: OutputLanguage? = .slovak,
+        outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
         systemAudio: AudioTrackMetadata? = nil,
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
+        audioSourceCleanup: AudioSourceCleanupMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
@@ -199,16 +217,29 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.language = language
+        self.outputLanguage = outputLanguage
+        self.outputFileNameTemplate = outputFileNameTemplate
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
         self.systemAudio = systemAudio
         self.microphoneAudio = microphoneAudio
         self.audioFinalization = audioFinalization
+        self.audioSourceCleanup = audioSourceCleanup
         self.transcription = transcription
         self.analysis = analysis
         self.output = output
         self.recovery = recovery
         self.failureReason = failureReason
+    }
+
+    var resolvedOutputLanguage: OutputLanguage {
+        outputLanguage ?? .slovak
+    }
+
+    var resolvedOutputFileNameTemplate: String {
+        MarkdownFileNameTemplate.normalized(
+            outputFileNameTemplate ?? MarkdownFileNameTemplate.defaultValue
+        )
     }
 }
 
