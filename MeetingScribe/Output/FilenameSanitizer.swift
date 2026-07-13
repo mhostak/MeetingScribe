@@ -7,13 +7,32 @@ struct FilenameSanitizer: Sendable {
         self.timeZone = timeZone
     }
 
-    func markdownFileName(title: String, startedAt: Date) -> String {
+    func markdownFileName(
+        title: String,
+        sessionID: String = "meeting",
+        startedAt: Date,
+        template: String = MarkdownFileNameTemplate.defaultValue
+    ) -> String {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd HH-mm"
-        return "\(formatter.string(from: startedAt)) - \(sanitizedTitle(title)).md"
+        formatter.dateFormat = "yyyy-MM-dd"
+        let date = formatter.string(from: startedAt)
+        formatter.dateFormat = "HH-mm"
+        let time = formatter.string(from: startedAt)
+        let values = [
+            "{date}": date,
+            "{time}": time,
+            "{title}": sanitizedTitle(title),
+            "{id}": sanitizedTitle(sessionID),
+        ]
+        var rendered = MarkdownFileNameTemplate.normalized(template)
+        for (token, value) in values {
+            rendered = rendered.replacingOccurrences(of: token, with: value)
+        }
+        rendered = sanitizedTitle(rendered)
+        return "\(rendered).md"
     }
 
     func sanitizedTitle(_ title: String) -> String {

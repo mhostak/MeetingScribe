@@ -172,6 +172,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var startedAt: Date?
     var endedAt: Date?
     var language: TranscriptionLanguage
+    var outputLanguage: OutputLanguage?
+    var outputFileNameTemplate: String?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
     var systemAudio: AudioTrackMetadata?
@@ -185,7 +187,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 8,
+        schemaVersion: Int = 9,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -193,6 +195,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         startedAt: Date? = nil,
         endedAt: Date? = nil,
         language: TranscriptionLanguage = .automatic,
+        outputLanguage: OutputLanguage? = .slovak,
+        outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
         systemAudio: AudioTrackMetadata? = nil,
@@ -213,6 +217,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.language = language
+        self.outputLanguage = outputLanguage
+        self.outputFileNameTemplate = outputFileNameTemplate
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
         self.systemAudio = systemAudio
@@ -224,6 +230,16 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.output = output
         self.recovery = recovery
         self.failureReason = failureReason
+    }
+
+    var resolvedOutputLanguage: OutputLanguage {
+        outputLanguage ?? .slovak
+    }
+
+    var resolvedOutputFileNameTemplate: String {
+        MarkdownFileNameTemplate.normalized(
+            outputFileNameTemplate ?? MarkdownFileNameTemplate.defaultValue
+        )
     }
 }
 

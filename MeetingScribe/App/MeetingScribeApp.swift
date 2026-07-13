@@ -13,9 +13,18 @@ struct MeetingScribeApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("MeetingScribe", systemImage: appState.status.menuBarSystemImage) {
+        MenuBarExtra {
             MenuBarView(appState: appState)
+        } label: {
+            MenuBarStatusLabel(
+                status: appState.status,
+                hasRecovery: !appState.recoveryCandidates.isEmpty
+            )
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(appState: appState)
+        }
     }
 }

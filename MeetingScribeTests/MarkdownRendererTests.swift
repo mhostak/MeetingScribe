@@ -51,7 +51,7 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("  - \"cs\"\n  - \"sk\""))
         XCTAssertTrue(markdown.contains("  - \"Other\"\n  - \"Martin\""))
         XCTAssertTrue(markdown.contains("## Súhrn"))
-        XCTAssertTrue(markdown.contains("## Transcript"))
+        XCTAssertTrue(markdown.contains("## Prepis"))
         XCTAssertTrue(markdown.contains("### 00:00:04 — Other *(prekrytie reči)*"))
         XCTAssertTrue(markdown.contains("### 00:00:10 — Martin *(prekrytie reči)*"))
         XCTAssertTrue(markdown.hasSuffix("Začnime dnešným stavom.\n"))
@@ -73,7 +73,7 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("title: \"Line \\\"one\\\"\\nLine two\""))
         XCTAssertTrue(markdown.contains("languages:"))
         XCTAssertTrue(markdown.contains("participants: []"))
-        XCTAssertTrue(markdown.contains("_Transcript neobsahuje žiadne rozpoznané segmenty._"))
+        XCTAssertTrue(markdown.contains("_Prepis neobsahuje žiadne rozpoznané segmenty._"))
         XCTAssertFalse(markdown.contains("# Line \"one\"\nLine two"))
     }
 
@@ -257,10 +257,50 @@ final class MarkdownRendererTests: XCTestCase {
             to: outputDirectory
         )
 
-        XCTAssertTrue(markdown.contains("## Transcript"))
+        XCTAssertTrue(markdown.contains("## Prepis"))
         XCTAssertFalse(markdown.contains("[BLANK_AUDIO]"))
         XCTAssertTrue(merged.segments.allSatisfy { markdown.contains($0.text) })
         XCTAssertEqual(try String(contentsOf: result.fileURL, encoding: .utf8), markdown)
+    }
+
+    func testRenderUsesSelectedCzechOutputLanguage() {
+        let session = SessionMetadata(
+            id: "recording-cs",
+            title: "Porada",
+            status: .recorded,
+            createdAt: startedAt,
+            outputLanguage: .czech
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: [])
+        )
+
+        XCTAssertTrue(markdown.contains("## Shrnutí"))
+        XCTAssertTrue(markdown.contains("## Úkoly"))
+        XCTAssertTrue(markdown.contains("## Přepis"))
+        XCTAssertTrue(markdown.contains("Přepis neobsahuje žádné rozpoznané segmenty."))
+    }
+
+    func testRenderUsesSelectedEnglishOutputLanguage() {
+        let session = SessionMetadata(
+            id: "recording-en",
+            title: "Planning",
+            status: .recorded,
+            createdAt: startedAt,
+            outputLanguage: .english
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: [])
+        )
+
+        XCTAssertTrue(markdown.contains("## Summary"))
+        XCTAssertTrue(markdown.contains("## Action items"))
+        XCTAssertTrue(markdown.contains("## Transcript"))
+        XCTAssertTrue(markdown.contains("The transcript contains no recognized segments."))
     }
 
     private func makeTranscript(segments: [TranscriptSegment]) -> MergedTranscript {

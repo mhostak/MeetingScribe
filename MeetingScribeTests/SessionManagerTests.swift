@@ -24,6 +24,8 @@ final class SessionManagerTests: XCTestCase {
         let session = try await manager.startSession(
             title: "SOFA weekly",
             language: .czech,
+            outputLanguage: .english,
+            outputFileNameTemplate: "{date} - {title} - {id}",
             now: startedAt
         )
 
@@ -36,7 +38,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 8)
+        XCTAssertEqual(metadata.schemaVersion, 9)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
         XCTAssertNil(metadata.audioFiles.systemWorking)
@@ -45,6 +47,8 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.merged, "transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.analysis, "analysis.json")
+        XCTAssertEqual(metadata.resolvedOutputLanguage, .english)
+        XCTAssertEqual(metadata.resolvedOutputFileNameTemplate, "{date} - {title} - {id}")
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {
@@ -227,6 +231,36 @@ final class SessionManagerTests: XCTestCase {
 
         XCTAssertEqual(metadata.status, .completed)
         XCTAssertNil(metadata.mergedSegmentCount)
+    }
+
+    func testSessionMetadataDecodesSchemaEightWithoutOutputSettings() throws {
+        let legacy = SessionMetadata(
+            schemaVersion: 8,
+            id: "legacy-session",
+            title: "Legacy",
+            status: .recorded,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            outputLanguage: nil,
+            outputFileNameTemplate: nil
+        )
+        let encoded = try SessionJSONCoder.makeEncoder().encode(legacy)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "outputLanguage")
+        object.removeValue(forKey: "outputFileNameTemplate")
+
+        let decoded = try SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertEqual(decoded.schemaVersion, 8)
+        XCTAssertEqual(decoded.resolvedOutputLanguage, .slovak)
+        XCTAssertEqual(
+            decoded.resolvedOutputFileNameTemplate,
+            MarkdownFileNameTemplate.defaultValue
+        )
     }
 
     private func decodeMetadata(at url: URL) throws -> SessionMetadata {

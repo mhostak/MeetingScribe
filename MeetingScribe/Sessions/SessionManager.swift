@@ -4,7 +4,7 @@ actor SessionManager {
     nonisolated let recordingsRoot: URL
 
     private let fileManager: FileManager
-    private let storageGuard: StorageGuard
+    private var storageGuard: StorageGuard
     private let recoveryScanner: SessionRecoveryScanner
     private var activeSession: RecordingSession?
 
@@ -37,6 +37,8 @@ actor SessionManager {
     func startSession(
         title: String,
         language: TranscriptionLanguage = .automatic,
+        outputLanguage: OutputLanguage = .slovak,
+        outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
         now: Date = Date()
     ) throws -> RecordingSession {
         guard activeSession == nil else {
@@ -57,7 +59,9 @@ actor SessionManager {
             status: .recording,
             createdAt: now,
             startedAt: now,
-            language: language
+            language: language,
+            outputLanguage: outputLanguage,
+            outputFileNameTemplate: outputFileNameTemplate
         )
         let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 
@@ -145,6 +149,10 @@ actor SessionManager {
     func storageStatus() throws -> StorageStatus {
         try prepareStorage()
         return try storageGuard.status(at: recordingsRoot)
+    }
+
+    func setMinimumStorageBytes(_ bytes: Int64) {
+        storageGuard = storageGuard.withMinimumBytes(bytes)
     }
 
     func scanForRecovery(now: Date = Date()) throws -> SessionRecoveryScanResult {

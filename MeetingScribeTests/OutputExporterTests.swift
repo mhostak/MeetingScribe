@@ -31,6 +31,15 @@ final class OutputExporterTests: XCTestCase {
             "2026-07-10 10-30 - SOFA weekly API.md"
         )
         XCTAssertEqual(sanitizer.sanitizedTitle(" /:*? "), "Meeting")
+        XCTAssertEqual(
+            sanitizer.markdownFileName(
+                title: "SOFA weekly",
+                sessionID: "recording:1",
+                startedAt: startedAt,
+                template: "{title} - {id} - {date}"
+            ),
+            "SOFA weekly - recording 1 - 2026-07-10.md"
+        )
     }
 
     func testExporterWritesUTF8MarkdownWithoutOverwritingExistingFile() throws {
@@ -75,6 +84,21 @@ final class OutputExporterTests: XCTestCase {
                 .destinationIsNotDirectory(path: missing.path)
             )
         }
+    }
+
+    func testExporterUsesSessionFileNameTemplate() throws {
+        var session = makeSession()
+        session.outputFileNameTemplate = "{title} ({id})"
+
+        let result = try OutputExporter(
+            filenameSanitizer: FilenameSanitizer(timeZone: utc)
+        ).export(
+            session: session,
+            transcript: makeTranscript(),
+            to: temporaryRoot
+        )
+
+        XCTAssertEqual(result.fileURL.lastPathComponent, "SOFA weekly (recording-1).md")
     }
 
     private func makeSession() -> SessionMetadata {

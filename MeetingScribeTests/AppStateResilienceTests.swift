@@ -34,6 +34,9 @@ final class AppStateResilienceTests: XCTestCase {
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
         WhisperSettingsStore(defaults: fixture.defaults).setSelectedLanguage(.czech)
+        let applicationSettings = ApplicationSettingsStore(defaults: fixture.defaults)
+        applicationSettings.setOutputLanguage(.english)
+        applicationSettings.setMarkdownFileNameTemplate("{date} - {title} - {id}")
 
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
@@ -49,14 +52,26 @@ final class AppStateResilienceTests: XCTestCase {
 
         await appState.prepareStorage()
         XCTAssertEqual(appState.selectedTranscriptionLanguage, .czech)
+        XCTAssertEqual(appState.selectedOutputLanguage, .english)
+        XCTAssertEqual(appState.markdownFileNameTemplate, "{date} - {title} - {id}")
+        XCTAssertTrue(appState.canEditSessionConfiguration)
 
         await appState.startRecording()
         let session = try XCTUnwrap(appState.currentSession)
+        XCTAssertFalse(appState.canEditSessionConfiguration)
         XCTAssertEqual(session.metadata.language, .czech)
-        XCTAssertEqual(try decodeMetadata(at: session.manifestURL).language, .czech)
+        XCTAssertEqual(session.metadata.resolvedOutputLanguage, .english)
+        XCTAssertEqual(
+            session.metadata.resolvedOutputFileNameTemplate,
+            "{date} - {title} - {id}"
+        )
+        let persisted = try decodeMetadata(at: session.manifestURL)
+        XCTAssertEqual(persisted.language, .czech)
+        XCTAssertEqual(persisted.resolvedOutputLanguage, .english)
 
         await appState.stopRecording()
         XCTAssertNotEqual(appState.status, .recording)
+        XCTAssertTrue(appState.canEditSessionConfiguration)
     }
 
     func testPrepareStorageRunsInitializationOnlyOnce() async throws {
@@ -379,7 +394,9 @@ final class AppStateResilienceTests: XCTestCase {
         apiKeyStore: any APIKeyStoring = ResilienceAPIKeyStore(),
         defaults: UserDefaults
     ) -> AppState {
-        AppState(
+        let applicationSettingsStore = ApplicationSettingsStore(defaults: defaults)
+        applicationSettingsStore.setMinimumStorageBytes(1)
+        return AppState(
             sessionManager: sessionManager,
             captureCoordinator: captureCoordinator,
             audioFinalizer: audioFinalizer,
@@ -391,6 +408,7 @@ final class AppStateResilienceTests: XCTestCase {
             analysisSettingsStore: AnalysisSettingsStore(defaults: defaults),
             whisperSettingsStore: WhisperSettingsStore(defaults: defaults),
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
+            applicationSettingsStore: applicationSettingsStore,
             captureMonitoringConfiguration: monitoring,
             storageStatusProvider: storageStatusProvider
         )

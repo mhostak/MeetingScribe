@@ -1,6 +1,6 @@
 # MeetingScribe
 
-Native macOS menu-bar application for recording meeting audio and producing local transcripts.
+Native macOS menu-bar application for recording meeting audio and producing local transcripts. The popover is focused on the recording workflow, while configuration lives in a native Settings window with General, Transcription, AI, Output, and Advanced sections.
 
 ## Current scope
 
@@ -52,7 +52,7 @@ Recording sessions are stored under `~/Library/Application Support/MeetingScribe
 
 At startup, MeetingScribe scans recording manifests for interrupted capture, failed transcription, missing models, and incomplete Markdown export. The menu-bar UI requires each recoverable session to be either processed again or closed explicitly. Closing recovery marks the session as failed but does not delete any audio, transcript, analysis, or log file.
 
-Recovery reuses a valid `transcript.json` and `analysis.json` when available. Otherwise it repairs and inspects the directly captured `system-16k.wav` and resumes transcription and export without another conversion. Legacy schema-7 sessions with CAF inputs remain supported and are converted through the previous working-audio path. Recovery attempts, outcomes, and optional source-audio cleanup are recorded in session manifest schema 8.
+Recovery reuses a valid `transcript.json` and `analysis.json` when available. Otherwise it repairs and inspects the directly captured `system-16k.wav` and resumes transcription and export without another conversion. Legacy schema-7 sessions with CAF inputs remain supported and are converted through the previous working-audio path. Recovery attempts, outcomes, and optional source-audio cleanup are recorded in the session manifest. Schema 9 also snapshots the selected transcription language, output language, and Markdown file-name template so a recovered meeting is not changed by later preference edits.
 
 New recordings no longer create full-quality CAF files. The persisted **Delete legacy CAF after successful export** option applies to older recoverable sessions: it is disabled by default, requires explicit confirmation, and deletes CAF inputs only after the Markdown export, every available track transcript, and every 16 kHz finalized WAV have been verified. Failed or incomplete processing always preserves source audio.
 
@@ -62,7 +62,7 @@ Each session has a newline-delimited JSON `processing.log`. It contains only tec
 
 ## Stabilization testing
 
-The current standard SwiftPM baseline contains 142 tests, including focused coverage for streaming conversion, checkpointed and repaired WAV headers, direct-PCM finalization, legacy CAF cleanup gates, manifest compatibility, and interrupted-recording recovery. Hardware-, credential-, model-, session-, or fixture-dependent tests skip unless explicitly enabled. The Xcode app and test targets use Swift 6 with complete strict-concurrency checking. GitHub Actions runs both the SwiftPM suite and the shared Xcode scheme on a pinned `macos-26` runner, so the SwiftUI application layer cannot be skipped by a core-only build. The opt-in long-session test now generates one hour of 16 kHz mono Int16 output, approximately 115 MB per track. These automated counts describe the current working tree; release acceptance still requires the manual hardware matrix below.
+The current standard SwiftPM baseline contains 147 tests, including focused coverage for streaming conversion, checkpointed and repaired WAV headers, direct-PCM finalization, legacy CAF cleanup gates, manifest compatibility, localized Markdown, configurable file names, model management, and interrupted-recording recovery. Hardware-, credential-, model-, session-, or fixture-dependent tests skip unless explicitly enabled. The Xcode app and test targets use Swift 6 with complete strict-concurrency checking. GitHub Actions runs both the SwiftPM suite and the shared Xcode scheme on a pinned `macos-26` runner, so the SwiftUI application layer cannot be skipped by a core-only build. The opt-in long-session test now generates one hour of 16 kHz mono Int16 output, approximately 115 MB per track. These automated counts describe the current working tree; release acceptance still requires the manual hardware matrix below.
 
 AppState-level integration tests cover recovery from a preserved merged transcript and a safe automatic stop after required system-audio capture fails. These tests verify the resulting Markdown, manifest, processing log, preserved audio, and recovery status rather than only isolated model types.
 
@@ -92,7 +92,7 @@ A second 62-minute legacy-pipeline signed-build run validated the optimized tran
 
 AI analysis is opt-in and uses the OpenAI Responses API with strict structured output. Only the meeting title, recording identifier, preferred output language, and transcript text are sent; recorded audio remains local. Requests explicitly disable server-side response storage with `store: false`.
 
-The OpenAI API key is stored in the macOS Keychain and is never written to the session manifest or UserDefaults. The default model is `gpt-5.6-luna`; `gpt-5.6-terra` and `gpt-5.6` can be selected in the menu-bar UI. Long transcripts are split at segment boundaries and the partial analyses are consolidated in a final structured request.
+The OpenAI API key is stored in the macOS Keychain and is never written to the session manifest or UserDefaults. The default model is `gpt-5.6-luna`; `gpt-5.6-terra` and `gpt-5.6` can be selected in Settings. Long transcripts are split at segment boundaries and the partial analyses are consolidated in a final structured request.
 
 Successful output is persisted as `analysis.json` and fills the Markdown summary, decisions, action items, open questions, risks/blockers, and next-meeting topics. If no API key is configured or an analysis request fails, transcription and the base Markdown output still complete and the failure is recorded in the session manifest.
 
@@ -104,15 +104,15 @@ MEETINGSCRIBE_KEYCHAIN_TEST=1 swift test --filter APIKeyStoreTests
 
 ## Markdown and Obsidian output
 
-MeetingScribe always writes a Markdown result after successful transcription. By default it is stored in the recording's session directory. Use **Choose folder…** in the menu-bar UI to select an Obsidian folder or another destination. The selection is persisted as a security-scoped bookmark and can be reset to the default session folder.
+MeetingScribe always writes a Markdown result after successful transcription. By default it is stored in the recording's session directory. Use **Settings → Output → Choose folder…** to select an Obsidian folder or another destination. The selection is persisted as a security-scoped bookmark and can be reset to the default session folder.
 
-The file name follows `YYYY-MM-DD HH-mm - Meeting title.md`. Existing files are never overwritten; a numeric suffix is added on collision. When the selected folder is inside a directory containing `.obsidian`, the completed result can be opened through an `obsidian://open` URI. Finder reveal and normal file opening are also available.
+The default file name follows `YYYY-MM-DD HH-mm - Meeting title.md`. Settings can customize it with `{date}`, `{time}`, `{title}`, and `{id}` tokens. Existing files are never overwritten; a numeric suffix is added on collision. When the selected folder is inside a directory containing `.obsidian`, the completed result can be opened through an `obsidian://open` URI. Finder reveal and normal file opening are also available. Markdown headings and AI analysis follow the independently selected Slovak, Czech, or English output language.
 
 The Obsidian action is a best-effort handoff, not a vault sync or import API. MeetingScribe locates the nearest ancestor containing `.obsidian` and builds `obsidian://open` from the vault directory name plus the note's relative path. Obsidian must already know that local vault and be registered as the URI handler. Two registered vaults with the same directory name can be ambiguous, and MeetingScribe cannot confirm which one Obsidian selects; use normal file opening or Finder reveal in that case.
 
 ## Whisper models
 
-Models are not embedded in the app or committed to Git. MeetingScribe stores checksum-validated models under `~/Library/Application Support/MeetingScribe/Models/`. The menu-bar UI supports the multilingual `large-v3-turbo`, quantized `large-v3-turbo-q5_0`, `medium`, and a small `tiny` prototype model. The production default is `large-v3-turbo`.
+Models are not embedded in the app or committed to Git. MeetingScribe stores checksum-validated models under `~/Library/Application Support/MeetingScribe/Models/`. Settings supports downloading, checksum-validated file import, replacement, and deletion for the multilingual `large-v3-turbo`, quantized `large-v3-turbo-q5_0`, `medium`, and a small `tiny` prototype model. The production default is `large-v3-turbo`.
 
 The real inference test is optional and skips when no local model or sample is supplied:
 
