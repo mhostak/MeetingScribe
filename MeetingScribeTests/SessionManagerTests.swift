@@ -36,11 +36,11 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 7)
-        XCTAssertEqual(metadata.audioFiles.system, "system.caf")
-        XCTAssertEqual(metadata.audioFiles.microphone, "microphone.caf")
-        XCTAssertEqual(metadata.audioFiles.systemWorking, "system-16k.wav")
-        XCTAssertEqual(metadata.audioFiles.microphoneWorking, "microphone-16k.wav")
+        XCTAssertEqual(metadata.schemaVersion, 8)
+        XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
+        XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
+        XCTAssertNil(metadata.audioFiles.systemWorking)
+        XCTAssertNil(metadata.audioFiles.microphoneWorking)
         XCTAssertEqual(metadata.transcriptFiles?.systemTrack, "system-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.merged, "transcript.json")
@@ -150,6 +150,23 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.transcription, transcription)
         XCTAssertEqual(metadata.analysis, analysis)
         XCTAssertEqual(metadata.output, output)
+    }
+
+    func testRecordsSourceCleanupAuditAfterSessionCompletion() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        _ = try await manager.startSession(title: "Cleanup")
+        let stopped = try await manager.stopSession()
+        let cleanup = AudioSourceCleanupMetadata(
+            status: .completed,
+            completedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            deletedFiles: ["system.caf", "microphone.caf"],
+            failureReason: nil
+        )
+
+        let updated = try await manager.recordAudioSourceCleanup(cleanup, for: stopped)
+
+        XCTAssertEqual(updated.metadata.audioSourceCleanup, cleanup)
+        XCTAssertEqual(try decodeMetadata(at: stopped.manifestURL).audioSourceCleanup, cleanup)
     }
 
     func testCaptureFailureIsPersistedWithoutDeletingSession() async throws {

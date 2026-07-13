@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 protocol AudioFinalizing: Sendable {
@@ -18,13 +19,16 @@ struct AudioFinalizer: AudioFinalizing {
     static let maximumPlausibleTrackStartDifference: TimeInterval = 60
 
     private let converter: WorkingAudioConverter
+    private let repairer: PCMRecordingFileRepairer
     private let now: @Sendable () -> Date
 
     init(
         converter: WorkingAudioConverter = WorkingAudioConverter(),
+        repairer: PCMRecordingFileRepairer = PCMRecordingFileRepairer(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.converter = converter
+        self.repairer = repairer
         self.now = now
     }
 
@@ -120,14 +124,49 @@ struct AudioFinalizer: AudioFinalizing {
         startedAt: Double,
         timelineOrigin: Double
     ) throws -> FinalizedAudioTrackMetadata {
-        let converted = try converter.convert(inputURL: inputURL, outputURL: outputURL)
+        try repairer.repairIfNeeded(at: inputURL)
+        let converted: ConvertedAudioFile
+        let finalizedURL: URL
+        if let captured = try inspectWhisperReadyAudio(at: inputURL) {
+            converted = captured
+            finalizedURL = inputURL
+        } else {
+            converted = try converter.convert(inputURL: inputURL, outputURL: outputURL)
+            finalizedURL = outputURL
+        }
         return FinalizedAudioTrackMetadata(
-            fileName: outputURL.lastPathComponent,
+            fileName: finalizedURL.lastPathComponent,
             sampleRate: converted.sampleRate,
             channelCount: converted.channelCount,
             totalFrames: converted.totalFrames,
             durationSeconds: converted.durationSeconds,
             timelineOffsetSeconds: max(0, startedAt - timelineOrigin)
+        )
+    }
+
+    private func inspectWhisperReadyAudio(at url: URL) throws -> ConvertedAudioFile? {
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            throw AudioConversionError.unreadableInput(
+                fileName: url.lastPathComponent,
+                reason: error.localizedDescription
+            )
+        }
+        let format = file.fileFormat
+        guard abs(format.sampleRate - WorkingAudioConverter.targetSampleRate) < 0.5,
+              format.channelCount == WorkingAudioConverter.targetChannelCount,
+              format.commonFormat == .pcmFormatInt16 else {
+            return nil
+        }
+        guard file.length > 0 else {
+            throw AudioConversionError.emptyInput(fileName: url.lastPathComponent)
+        }
+        return ConvertedAudioFile(
+            sampleRate: format.sampleRate,
+            channelCount: Int(format.channelCount),
+            totalFrames: file.length
         )
     }
 }
@@ -145,6 +184,158 @@ enum AudioFinalizerError: Error, LocalizedError {
             return "\(trackName) track is empty. The original recording files were preserved."
         case let .missingTimeline(trackName):
             return "\(trackName) has no presentation timestamp. The original recording files were preserved."
+        }
+    }
+}
+
+protocol AudioSourceCleaning: Sendable {
+    func cleanupSourceCAFIfEligible(
+        session: RecordingSession
+    ) throws -> AudioSourceCleanupMetadata?
+}
+
+/// Deletes legacy full-quality CAF inputs only after every durable downstream
+/// artifact required for the session has been verified.
+struct AudioSourceCleaner: AudioSourceCleaning, @unchecked Sendable {
+    private struct Candidate {
+        let sourceURL: URL
+        let finalized: FinalizedAudioTrackMetadata
+        let transcriptURL: URL
+    }
+
+    private let fileManager: FileManager
+    private let now: @Sendable () -> Date
+
+    init(
+        fileManager: FileManager = .default,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.fileManager = fileManager
+        self.now = now
+    }
+
+    func cleanupSourceCAFIfEligible(
+        session: RecordingSession
+    ) throws -> AudioSourceCleanupMetadata? {
+        guard session.metadata.transcription?.status == .completed,
+              session.metadata.output?.status == .completed,
+              let finalization = session.metadata.audioFinalization else {
+            return nil
+        }
+        try validateExport(session.metadata.output)
+
+        var candidates: [Candidate] = []
+        if isExistingCAF(session.systemAudioURL) {
+            guard session.metadata.transcription?.systemSegmentCount != nil else {
+                throw AudioSourceCleanupError.trackWasNotTranscribed(
+                    fileName: session.systemAudioURL.lastPathComponent
+                )
+            }
+            candidates.append(Candidate(
+                sourceURL: session.systemAudioURL,
+                finalized: finalization.system,
+                transcriptURL: session.systemTrackTranscriptURL
+            ))
+        }
+        if isExistingCAF(session.microphoneAudioURL) {
+            guard let microphone = finalization.microphone,
+                  session.metadata.transcription?.microphoneSegmentCount != nil else {
+                throw AudioSourceCleanupError.trackWasNotTranscribed(
+                    fileName: session.microphoneAudioURL.lastPathComponent
+                )
+            }
+            candidates.append(Candidate(
+                sourceURL: session.microphoneAudioURL,
+                finalized: microphone,
+                transcriptURL: session.microphoneTrackTranscriptURL
+            ))
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        // Validate the complete set before deleting the first source file.
+        for candidate in candidates {
+            try validateNonemptyFile(candidate.transcriptURL)
+            let finalizedURL = session.directoryURL.appendingPathComponent(
+                candidate.finalized.fileName,
+                isDirectory: false
+            )
+            try validateWhisperAudio(finalizedURL, expected: candidate.finalized)
+        }
+
+        var deletedFiles: [String] = []
+        for candidate in candidates {
+            try fileManager.removeItem(at: candidate.sourceURL)
+            deletedFiles.append(candidate.sourceURL.lastPathComponent)
+        }
+        return AudioSourceCleanupMetadata(
+            status: .completed,
+            completedAt: now(),
+            deletedFiles: deletedFiles,
+            failureReason: nil
+        )
+    }
+
+    private func isExistingCAF(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "caf"
+            && fileManager.fileExists(atPath: url.path)
+    }
+
+    private func validateExport(_ output: SessionOutputMetadata?) throws {
+        guard let path = output?.markdownPath, !path.isEmpty else {
+            throw AudioSourceCleanupError.exportMissing
+        }
+        try validateNonemptyFile(URL(fileURLWithPath: path))
+    }
+
+    private func validateNonemptyFile(_ url: URL) throws {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let size = attributes[.size] as? NSNumber,
+              size.int64Value > 0 else {
+            throw AudioSourceCleanupError.artifactMissing(fileName: url.lastPathComponent)
+        }
+    }
+
+    private func validateWhisperAudio(
+        _ url: URL,
+        expected: FinalizedAudioTrackMetadata
+    ) throws {
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            throw AudioSourceCleanupError.artifactUnreadable(
+                fileName: url.lastPathComponent,
+                reason: error.localizedDescription
+            )
+        }
+        guard file.length > 0,
+              abs(file.fileFormat.sampleRate - 16_000) < 0.5,
+              file.fileFormat.channelCount == 1,
+              file.length == expected.totalFrames else {
+            throw AudioSourceCleanupError.artifactUnreadable(
+                fileName: url.lastPathComponent,
+                reason: "Audio metadata does not match the finalized track."
+            )
+        }
+    }
+}
+
+enum AudioSourceCleanupError: Error, LocalizedError {
+    case exportMissing
+    case trackWasNotTranscribed(fileName: String)
+    case artifactMissing(fileName: String)
+    case artifactUnreadable(fileName: String, reason: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .exportMissing:
+            return "The completed Markdown export could not be verified."
+        case let .trackWasNotTranscribed(fileName):
+            return "Source audio \(fileName) was preserved because its transcription is incomplete."
+        case let .artifactMissing(fileName):
+            return "Source audio was preserved because \(fileName) is missing or empty."
+        case let .artifactUnreadable(fileName, reason):
+            return "Source audio was preserved because \(fileName) is unreadable: \(reason)"
         }
     }
 }

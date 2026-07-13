@@ -4,6 +4,30 @@ import XCTest
 
 @MainActor
 final class AppStateResilienceTests: XCTestCase {
+    func testAudioRetentionSettingDefaultsOffAndPersistsOptIn() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let store = AudioRetentionSettingsStore(defaults: fixture.defaults)
+        XCTAssertFalse(store.automaticallyDeleteSourceCAF)
+        store.setAutomaticallyDeleteSourceCAF(true)
+
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            modelManager: WhisperModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+
+        XCTAssertTrue(appState.automaticallyDeleteSourceCAF)
+        appState.automaticallyDeleteSourceCAF = false
+        appState.persistAudioRetentionSettings()
+        XCTAssertFalse(store.automaticallyDeleteSourceCAF)
+    }
+
     func testSelectedLanguageIsRestoredAndStoredInNewSession() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -366,6 +390,7 @@ final class AppStateResilienceTests: XCTestCase {
             apiKeyStore: apiKeyStore,
             analysisSettingsStore: AnalysisSettingsStore(defaults: defaults),
             whisperSettingsStore: WhisperSettingsStore(defaults: defaults),
+            audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             captureMonitoringConfiguration: monitoring,
             storageStatusProvider: storageStatusProvider
         )

@@ -68,7 +68,10 @@ actor SessionTranscriber: SessionTranscribing {
         let startedAt = now()
         var warnings: [String] = []
         let systemTranscript = try await service.transcribe(
-            audioURL: session.systemWorkingAudioURL,
+            audioURL: session.directoryURL.appendingPathComponent(
+                finalization.system.fileName,
+                isDirectory: false
+            ),
             modelURL: modelURL,
             options: TranscriptionOptions(
                 language: language,
@@ -88,7 +91,10 @@ actor SessionTranscriber: SessionTranscribing {
             try Task.checkCancellation()
             do {
                 let transcript = try await service.transcribe(
-                    audioURL: session.microphoneWorkingAudioURL,
+                    audioURL: session.directoryURL.appendingPathComponent(
+                        microphone.fileName,
+                        isDirectory: false
+                    ),
                     modelURL: modelURL,
                     options: TranscriptionOptions(
                         language: language,

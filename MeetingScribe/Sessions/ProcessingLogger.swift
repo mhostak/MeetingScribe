@@ -15,6 +15,8 @@ enum ProcessingLogEvent: String, Codable, Sendable {
     case analysisFailed
     case exportCompleted
     case exportFailed
+    case sourceAudioCleanupCompleted
+    case sourceAudioCleanupFailed
     case recoveryDetected
     case recoveryStarted
     case recoveryCompleted

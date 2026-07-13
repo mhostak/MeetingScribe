@@ -50,6 +50,11 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(options.map(\.language), [.automatic, .automatic])
         XCTAssertEqual(options.map(\.timelineOffsetSeconds), [0, 0.25])
         XCTAssertEqual(options.map(\.speaker), ["Other", "Martin"])
+        let audioURLs = await service.receivedAudioURLs
+        XCTAssertEqual(
+            audioURLs.map(\.lastPathComponent),
+            ["system-16k.wav", "microphone-16k.wav"]
+        )
 
         let systemData = try Data(contentsOf: session.systemTrackTranscriptURL)
         let persisted = try TranscriptJSONCoder.makeDecoder().decode(
@@ -183,6 +188,7 @@ private actor MockTranscriptionService: TranscriptionService {
     let cancelAfterSystem: Bool
     let emptyMicrophone: Bool
     private(set) var receivedOptions: [TranscriptionOptions] = []
+    private(set) var receivedAudioURLs: [URL] = []
     private(set) var releaseCount = 0
 
     init(
@@ -200,6 +206,7 @@ private actor MockTranscriptionService: TranscriptionService {
         modelURL: URL,
         options: TranscriptionOptions
     ) async throws -> TrackTranscript {
+        receivedAudioURLs.append(audioURL)
         receivedOptions.append(options)
         if failMicrophone, options.source == .microphone {
             throw TranscriptionError.inferenceFailed(code: -1)

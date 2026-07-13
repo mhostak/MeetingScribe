@@ -132,6 +132,16 @@ actor SessionManager {
         activeSession
     }
 
+    func recordAudioSourceCleanup(
+        _ cleanup: AudioSourceCleanupMetadata,
+        for completedSession: RecordingSession
+    ) throws -> RecordingSession {
+        var session = completedSession
+        session.metadata.audioSourceCleanup = cleanup
+        try persist(session)
+        return session
+    }
+
     func storageStatus() throws -> StorageStatus {
         try prepareStorage()
         return try storageGuard.status(at: recordingsRoot)

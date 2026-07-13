@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
+    @State private var isShowingCAFDeletionWarning = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -63,6 +64,21 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 320)
+        .confirmationDialog(
+            "Delete original CAF recordings after successful processing?",
+            isPresented: $isShowingCAFDeletionWarning,
+            titleVisibility: .visible
+        ) {
+            Button("Enable automatic CAF deletion", role: .destructive) {
+                appState.automaticallyDeleteSourceCAF = true
+                appState.persistAudioRetentionSettings()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "After transcription and Markdown export are verified, legacy full-quality CAF files will be permanently deleted. Failed or incomplete sessions keep their source audio. New compact recordings already use 16 kHz mono WAV and do not create CAF files."
+            )
+        }
     }
 
     private var header: some View {
@@ -140,6 +156,26 @@ struct MenuBarView: View {
             }
 
             Text(appState.selectedTranscriptionLanguage.selectionHint)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Toggle(
+                "Delete legacy CAF after successful export",
+                isOn: Binding(
+                    get: { appState.automaticallyDeleteSourceCAF },
+                    set: { enabled in
+                        if enabled {
+                            isShowingCAFDeletionWarning = true
+                        } else {
+                            appState.automaticallyDeleteSourceCAF = false
+                            appState.persistAudioRetentionSettings()
+                        }
+                    }
+                )
+            )
+
+            Text("Failed or incomplete sessions always keep their source audio.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

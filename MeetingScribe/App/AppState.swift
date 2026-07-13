@@ -30,6 +30,7 @@ final class AppState: ObservableObject {
     @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
     @Published var openAIAPIKeyInput = ""
     @Published var meetingTitle = ""
+    @Published var automaticallyDeleteSourceCAF = false
 
     private var stateMachine = AppStateMachine()
     private let sessionManager: SessionManager
@@ -43,6 +44,8 @@ final class AppState: ObservableObject {
     private let apiKeyStore: any APIKeyStoring
     private let analysisSettingsStore: AnalysisSettingsStore
     private let whisperSettingsStore: WhisperSettingsStore
+    private let audioRetentionSettingsStore: AudioRetentionSettingsStore
+    private let audioSourceCleaner: any AudioSourceCleaning
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
@@ -68,6 +71,8 @@ final class AppState: ObservableObject {
         apiKeyStore: (any APIKeyStoring)? = nil,
         analysisSettingsStore: AnalysisSettingsStore? = nil,
         whisperSettingsStore: WhisperSettingsStore? = nil,
+        audioRetentionSettingsStore: AudioRetentionSettingsStore? = nil,
+        audioSourceCleaner: any AudioSourceCleaning = AudioSourceCleaner(),
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
@@ -85,6 +90,9 @@ final class AppState: ObservableObject {
         self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
         self.whisperSettingsStore = whisperSettingsStore ?? WhisperSettingsStore()
+        self.audioRetentionSettingsStore = audioRetentionSettingsStore
+            ?? AudioRetentionSettingsStore()
+        self.audioSourceCleaner = audioSourceCleaner
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
@@ -112,6 +120,8 @@ final class AppState: ObservableObject {
             $0.id == storedWhisperModelID
         } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
         selectedTranscriptionLanguage = whisperSettingsStore.selectedLanguage
+        automaticallyDeleteSourceCAF = audioRetentionSettingsStore
+            .automaticallyDeleteSourceCAF
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
         let storedModel = analysisSettingsStore.model
         selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
@@ -413,6 +423,12 @@ final class AppState: ObservableObject {
         whisperSettingsStore.setSelectedLanguage(selectedTranscriptionLanguage)
     }
 
+    func persistAudioRetentionSettings() {
+        audioRetentionSettingsStore.setAutomaticallyDeleteSourceCAF(
+            automaticallyDeleteSourceCAF
+        )
+    }
+
     var whisperModelStatusText: String {
         switch whisperModelStatus {
         case .missing:
@@ -611,7 +627,7 @@ final class AppState: ObservableObject {
                 )
             }
 
-            let completedSession = try await sessionManager.stopSession(
+            var completedSession = try await sessionManager.stopSession(
                 now: recordingEndedAt,
                 systemAudio: diagnostics.systemAudio.sessionMetadata,
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
@@ -619,6 +635,9 @@ final class AppState: ObservableObject {
                 transcription: transcription.metadata,
                 analysis: analysis.metadata,
                 output: output
+            )
+            completedSession = await cleanupSourceAudioIfEnabled(
+                for: completedSession
             )
             currentSession = nil
             lastCompletedSession = completedSession
@@ -644,6 +663,50 @@ final class AppState: ObservableObject {
                 attributes: [.reason(error.localizedDescription)]
             )
             setFailure(error)
+        }
+    }
+
+    private func cleanupSourceAudioIfEnabled(
+        for session: RecordingSession
+    ) async -> RecordingSession {
+        guard automaticallyDeleteSourceCAF else { return session }
+        let cleaner = audioSourceCleaner
+        do {
+            let cleanupTask = Task.detached(priority: .utility) {
+                try cleaner.cleanupSourceCAFIfEligible(session: session)
+            }
+            guard let cleanup = try await cleanupTask.value else {
+                return session
+            }
+            let updated = try await sessionManager.recordAudioSourceCleanup(
+                cleanup,
+                for: session
+            )
+            try? await processingLogger.log(
+                .sourceAudioCleanupCompleted,
+                for: updated
+            )
+            return updated
+        } catch {
+            let cleanup = AudioSourceCleanupMetadata(
+                status: .failed,
+                completedAt: Date(),
+                deletedFiles: [],
+                failureReason: error.localizedDescription
+            )
+            let updated = (try? await sessionManager.recordAudioSourceCleanup(
+                cleanup,
+                for: session
+            )) ?? session
+            try? await processingLogger.log(
+                .sourceAudioCleanupFailed,
+                for: updated,
+                attributes: [.reason(error.localizedDescription)]
+            )
+            if lastError == nil {
+                lastError = "Processing completed, but source CAF files were preserved: \(error.localizedDescription)"
+            }
+            return updated
         }
     }
 
