@@ -188,6 +188,27 @@ final class WhisperModelManagerTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testTranscriptionLanguageSelectionPersistsAndDefaultsSafely() throws {
+        let suiteName = "MeetingScribeWhisperLanguage-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = WhisperSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.selectedLanguage, .automatic)
+        store.setSelectedLanguage(.czech)
+        XCTAssertEqual(
+            WhisperSettingsStore(defaults: defaults).selectedLanguage,
+            .czech
+        )
+
+        defaults.set("unsupported", forKey: "selectedTranscriptionLanguage")
+        XCTAssertEqual(
+            WhisperSettingsStore(defaults: defaults).selectedLanguage,
+            .automatic
+        )
+    }
+
     private func descriptor(
         expectedSHA1: String,
         approximateSizeBytes: Int64 = 4_096

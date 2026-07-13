@@ -4,6 +4,8 @@ This report records completed evidence separately from the manual checks that st
 
 ## Automated regression
 
+- Current working tree after the audit fixes, transcription-language selector, and pre-inference activity batching: 133 SwiftPM tests executed, 124 passed, 9 optional hardware, credential, model, session, or fixture-dependent tests skipped, 0 failures.
+- Current complete signed Xcode app/test scheme: `TEST SUCCEEDED` on macOS arm64 using an Apple Development identity. This verifies the SwiftUI application target, including the new language picker, as well as the test bundle.
 - Standard SwiftPM suite: 72 tests executed, 67 passed, 5 optional hardware or fixture-dependent tests skipped, 0 failures.
 - Final full Xcode app/test scheme: 68 tests executed, 63 passed, 5 skipped, 0 failed; result `Passed` on macOS arm64.
 - After adding the entitlement, the signed Xcode app build succeeded and the embedded entitlement was verified. A redundant fresh-DerivedData Xcode test rerun emitted passcode-protected-device warnings and later Xcode builds stalled in `NSFileCoordinator` while opening the File Provider-managed project directory. Building an identical source mirror under `/private/tmp` succeeded with the stable Apple Development identity and verified audio-input entitlement. The complete SwiftPM suite passed 72/67/5/0 after the recovery-offset and device-route regressions were added.
@@ -187,7 +189,102 @@ Verified result:
 - Large v3 Turbo completed both track transcriptions and merged 25 segments;
 - finalization, transcription, merge, and Markdown export completed without warnings.
 
-AirPods connect/disconnect with automatic microphone recovery is accepted. A separate external USB-input test remains pending.
+AirPods connect/disconnect with automatic microphone recovery is accepted. The external USB-input test is recorded separately below.
+
+## External USB microphone route change
+
+Date: 2026-07-13
+
+Commit: `1e99ca1`
+
+Session: `2026-07-13T06-36-36Z_23463E`
+
+During one active recording, the system input was changed from the built-in microphone to an external USB microphone after approximately 30 seconds and then back to the built-in microphone after another approximately 30 seconds. Speech was recorded during all three phases.
+
+Verified result:
+
+- system audio: 93.18 seconds, 4,659 buffers, 4,472,640 frames, readable 48 kHz stereo CAF;
+- microphone: 90.10 seconds, 901 buffers, 4,324,800 frames, readable 48 kHz mono CAF;
+- microphone presentation timestamps span 91.84 seconds and continue to the end of the recording;
+- gaps within the microphone timeline during the two route changes total approximately 1.74 seconds;
+- both 16 kHz mono working WAV files were generated and are readable;
+- Large v3 Turbo automatically detected Slovak on the microphone track;
+- microphone transcription contains 8 segments in the initial built-in phase, 7 in the USB phase, and 11 after returning to the built-in microphone;
+- system transcription contains 4 segments, microphone transcription 26 segments, and the merged transcript 30 segments;
+- finalization, transcription, deterministic merge, and Markdown export completed without warnings;
+- all original and derived artifacts remained present.
+
+Built-in microphone → USB microphone → built-in microphone recovery is accepted.
+
+## Czech and mixed Czech/Slovak quality
+
+Date: 2026-07-13
+
+Model: Large v3 Turbo with automatic language detection
+
+### Czech sample
+
+Session: `2026-07-13T06-45-55Z_39DACD`
+
+A controlled Czech statement containing nonconfidential names, dates, times, counts, monetary values, decisions, risks, and action items was spoken into the microphone.
+
+Verified result:
+
+- system audio: 105.86 seconds; microphone: 105.80 seconds;
+- both CAF and both 16 kHz WAV files are readable;
+- microphone transcription: 17 segments; merged transcript: 21 segments;
+- finalization, transcription, merge, and Markdown export completed without warnings;
+- all test names were preserved;
+- dates, times, counts, prices, and the room identifier were preserved, with minor formatting differences;
+- the main decisions and action items remained understandable;
+- the detected language was `sk`, not Czech;
+- several Czech words were converted to Slovak forms, and a few phrases were substituted or garbled, most notably the sentence about two-factor authentication;
+- the content was not translated into English and no unrelated hallucinated passage appeared.
+
+The Czech sample demonstrates usable semantic and numeric retention but fails correct automatic Czech language identification.
+
+### Mixed Czech/Slovak sample
+
+Session: `2026-07-13T06-50-25Z_72566B`
+
+Six alternating Czech and Slovak blocks were spoken, producing five explicit language switches.
+
+Verified result:
+
+- system audio: 86.20 seconds; microphone: 86.10 seconds;
+- both CAF and both 16 kHz WAV files are readable;
+- microphone transcription: 16 segments; merged transcript: 19 segments;
+- finalization, transcription, merge, and Markdown export completed without warnings;
+- the sequence and meaning of all six source blocks remained recognizable;
+- names, dates, times, counts, prices, decisions, risks, and action items were substantially preserved;
+- the transcript remained Czech/Slovak and was not translated into English;
+- the track-level detected language was `sk`, and every segment was labelled `sk` even during Czech blocks;
+- Czech and Slovak word forms were mixed within several segments, with occasional word substitutions.
+
+The mixed sample passes content preservation and the no-English-translation requirement, but it does not provide per-segment language-switch detection. MeetingScribe currently stores one Whisper-detected language for the complete track and propagates it to all segments.
+
+### Explicit Czech sample
+
+Session: `2026-07-13T07-05-29Z_41C911`
+
+The test used Large v3 Turbo with the explicit **Čeština** selection during a real online meeting in the Microsoft Teams desktop application. It captured approximately 93 seconds of Czech meeting audio.
+
+Verified result:
+
+- the session manifest stored `language: cs`;
+- both the system and microphone track requests used `cs`, and both track results reported `cs`;
+- system audio: 92.66 seconds and 4,633 buffers; microphone: 92.50 seconds and 925 buffers;
+- both CAF and both 16 kHz WAV files are readable;
+- system transcription: 32 segments; microphone transcription: 4 segments; merged transcript: 36 segments;
+- finalization, transcription, deterministic merge, and Markdown export completed without warnings;
+- the system transcript remained predominantly intelligible Czech with consistent Czech word forms, while several proper names and short phrases were still imperfect;
+- the content was not translated into another language;
+- the microphone working track was very quiet (approximately -50.0 dB mean and -24.5 dB peak) and the original build repeated one unrelated phrase across four long segments. This was recorded as a low-energy-track hallucination, not as a failure of the language selector;
+- after adding the segment-level activity filter, an opt-in Large v3 Turbo regression using this exact microphone WAV produced zero microphone segments and passed.
+
+The explicit Czech selector and Czech language forwarding are accepted. Czech transcription quality is acceptable for the current prototype, with the documented limitations above.
+
+The product decision is implemented and validated: MeetingScribe offers a persisted **Auto / Čeština / Slovenčina / English** selector and stores the selected mode in each session manifest. Explicit modes are forwarded to both transcription tracks. Automatic mode intentionally remains track-level, so a mixed meeting can still receive one dominant language label for all segments.
 
 ## Additional real capture evidence
 
@@ -199,14 +296,115 @@ Session `2026-07-11T19-36-46Z_0D602C` recorded 21.48 seconds of system audio, fi
 - Relaunching the application could reset the selected Whisper model to Large. Model selection is now persisted and restored.
 - The app could be absent from the macOS Microphone privacy list because Hardened Runtime lacked `com.apple.security.device.audio-input`. The entitlement is now part of Debug and Release signing.
 - `AVAudioEngine` could report that it restarted after a Bluetooth route change while producing no microphone buffers. Route recovery now requires observed buffers and recreates the engine against the current hardware when necessary.
+- A nearly silent microphone track could produce repeated Whisper text instead of no segments. Transcription now checks each proposed segment against 64 ms audio-energy windows and discards segments with insufficient active audio. The original low-energy WAV is covered by an opt-in real-model regression, while synthetic tests cover silence, low-level noise, sparse noise, valid speech-like activity, and track-local time ranges. Empty microphone transcripts are preserved with a `No speech was detected in microphone audio.` warning.
 
 The deterministic defects have automated regression coverage; hardware route recovery is additionally covered by the real AirPods run above.
 
-## Remaining manual acceptance
+## Planned remaining acceptance — 2026-07-13
 
-- Teams, Slack, Chrome/Safari Meet, and Zoom rows;
-- an external USB-input-device change;
-- a real recording of at least 60 minutes with CPU, memory, and free-space observations;
-- Czech and mixed CZ/SK quality evaluation with the production Whisper model.
+Use commit `cf871c9` or a later commit containing the same audio-route recovery. Use a stably signed build and Large v3 Turbo. Select the language mode specified by each test. For every manual recording, preserve the session ID, input/output routes, duration, `session.json`, `processing.log`, CAF/WAV metadata, Markdown path, and a concise pass/fail result. Do not copy confidential transcript text into this report.
 
-Phase 10 remains in progress until the required hardware matrix in `phase-10-stabilization.md` is recorded.
+### Meeting applications
+
+Run one Microsoft Teams desktop call of at least five minutes with remote speech and local microphone speech:
+
+- [x] Microsoft Teams desktop — accepted in session `2026-07-13T07-29-43Z_3A940D`.
+
+Slack Huddle, Google Meet in Chrome or Safari, and Zoom are explicitly outside the phase 10 acceptance scope.
+
+Pass criteria for each row:
+
+- system and microphone buffer counters continue increasing;
+- both source CAF files are nonempty and readable;
+- both 16 kHz working WAV files are produced;
+- the transcript contains timestamped segments from both available tracks;
+- Markdown export completes, or any provider/model failure is explicit and recoverable;
+- no session artifact is silently deleted.
+
+Verified Microsoft Teams result:
+
+- real online meeting duration: 920.58 seconds (15 minutes 20.58 seconds);
+- system audio: 46,029 buffers, 44,187,840 frames, readable 48 kHz stereo CAF;
+- microphone audio: 9,204 buffers, 44,179,200 frames, readable 48 kHz mono CAF;
+- both 16 kHz mono working WAV files are readable and span the complete meeting;
+- Large v3 Turbo completed both tracks in Auto mode without warnings;
+- system track: 264 segments, detected language `pl`; microphone track: 429 segments, detected language `sk`;
+- merged transcript: 693 segments, both sources present, no negative or reversed timestamps, and final timestamp 920.538 seconds;
+- session JSON, both track transcripts, merged transcript, processing log, and 44 KB Markdown output are valid and present;
+- finalization, transcription, deterministic merge, and Markdown export completed normally;
+- approximately 15 GB remained available when the artifacts were inspected, above the 1 GB storage threshold.
+
+The recording was created by the already-running build from before the low-energy filter was relaunched. Its persisted microphone transcript contained one repeated phrase 187 times. The same preserved microphone WAV was therefore transcribed offline with the current filter and the local Large v3 Turbo model:
+
+- the opt-in real-audio integration test completed successfully in 276.12 seconds;
+- Auto detected `sk`;
+- the filtered result contained 217 segments and 174 unique texts;
+- the maximum repetition fell from 187 to 14;
+- the validation did not modify the original session or its exported artifacts.
+
+The Microsoft Teams meeting-application row is accepted. Capture, dual-track finalization, and export passed in the recorded session, while offline reprocessing confirms that the current low-energy filter materially cleans its microphone transcript. The earlier 93-second explicit-Czech Teams session remains useful language evidence but is no longer needed for the Teams duration criterion.
+
+### External input device
+
+- [x] During an active recording, switch from the built-in microphone to an external USB microphone after at least 30 seconds.
+- [x] Confirm that microphone buffers resume and continue for at least 30 seconds.
+- [x] Switch back from USB to the built-in microphone and confirm another successful recovery.
+- [x] Stop normally and verify both CAF files, both WAV files, the manifest, and Markdown output.
+
+The USB and AirPods route-change paths are accepted and do not need to be repeated unless a regression appears.
+
+### Czech and mixed CZ/SK quality
+
+- [x] Record approximately two minutes of Czech speech containing nonconfidential names, dates, times, numbers, monetary values, and action items.
+- [x] Record a mixed Czech/Slovak exchange with at least four explicit language switches.
+- [x] Document automatic-mode behavior. Timestamp order and source labels passed, but standalone Czech and all mixed segments were labelled `sk` because language detection is track-level.
+- [x] Repeat the Czech sample with the explicit **Čeština** mode and confirm that the manifest and both transcription tracks use `cs`.
+- [x] Compare the explicit-Czech result with the automatic sample. Czech word forms were more consistent and overall intelligibility was acceptable, with several proper-name and short-phrase errors documented above.
+- [x] Confirm that the mixed recording is not translated into English.
+- [x] Record only summarized word-error and hallucination patterns; do not paste transcript text into the report.
+
+The Slovak and explicit-Czech Large v3 Turbo quality rows are accepted. Mixed Auto behavior is documented and accepted as a track-level limitation. The low-energy microphone hallucination is fixed and covered by synthetic and real-model regression tests.
+
+### Real long recording
+
+- [x] Record a real meeting or controlled playback for at least 60 minutes.
+- [ ] Note Activity Monitor CPU and memory near the start, around 30 minutes, and near the end.
+- [ ] Confirm that memory does not grow continuously with duration and buffer counters keep increasing.
+- [x] Confirm that more than 1 GB remains free and the storage guard does not trigger incorrectly.
+- [x] Stop normally and verify that both CAF files are readable and processing completes or fails recoverably.
+- [x] Confirm that no audio, transcript, Markdown, manifest, or log file is silently deleted.
+
+Verified long-session result:
+
+- date: 2026-07-13;
+- session: `2026-07-13T08-07-22Z_777771`;
+- real Microsoft Teams meeting with mixed Czech/Slovak speech; approximately the final six minutes were controlled online-video playback to reach the one-hour threshold;
+- wall-clock recording span: 60 minutes 17 seconds;
+- system audio: 180,644 buffers, 173,418,240 frames, 3,614.8 captured seconds; readable 48 kHz stereo CAF and 3,612.88-second 16 kHz mono WAV;
+- microphone audio: 36,132 buffers, 173,433,600 frames, 3,614.13 captured seconds; readable 48 kHz mono CAF and 3,613.2-second 16 kHz mono WAV;
+- finalization completed in approximately two seconds without warnings;
+- original Large v3 Turbo transcription ran from 09:07:41Z to 09:36:05Z, or 28 minutes 24 seconds: system completed after 11 minutes 20 seconds and microphone required another 17 minutes 4 seconds;
+- original system result: 986 segments, 828 unique texts, maximum identical repetition 36, detected `cs`;
+- original microphone result: 389 segments, 33 unique texts, maximum identical repetition 338, detected `en`; this exposed the limitation of filtering only after full-track inference;
+- Markdown export, both track transcripts, merged transcript, manifest, and processing log completed without warnings or missing artifacts;
+- approximately 13 GB remained free during post-test inspection, above the 1 GB guard threshold.
+
+The preserved microphone WAV was then processed offline without modifying the session artifacts. The final pre-inference implementation measured:
+
+- 3,613.2 seconds of source audio;
+- 792.824 seconds of active audio and 2,820.376 seconds skipped before Whisper;
+- 99 activity islands compacted into three bounded inference batches with 250 ms separators;
+- 816.824 seconds of actual inference input;
+- 186.01 seconds wall time, compared with the original 1,024 seconds;
+- 195 segments, 183 unique texts, maximum identical repetition 5, and detected language `sk`;
+- all returned timestamps remained finite, nonnegative, ordered, and mapped to the original track timeline.
+
+The highly active system track is intentionally kept as one full-track batch. Using its already measured 680-second time gives a projected optimized dual-track wall time of approximately 866 seconds, or 14 minutes 26 seconds, instead of 28 minutes 24 seconds. This is a 49% projected reduction; a future end-to-end run will persist the new metrics directly in `session.json` and `processing.log`.
+
+Capture continuity, finalization, storage, artifact preservation, and the complete real pipeline are accepted. Activity Monitor CPU and memory snapshots were not taken during this session, so the resource-growth observation remains the only unchecked long-recording evidence.
+
+### Final automated release check
+
+- [x] Run the current full Xcode app/test scheme from commit `1e99ca1` or later and record the result. The signed scheme completed with `TEST SUCCEEDED`; the current SwiftPM baseline is 133 executed, 124 passed, 9 optional tests skipped, and 0 failed.
+
+Phase 10 hardware and application scenarios are otherwise complete. It remains in progress only because the required start/middle/end Activity Monitor observations were not recorded during the one-hour session.

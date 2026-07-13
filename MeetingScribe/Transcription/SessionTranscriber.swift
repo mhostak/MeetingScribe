@@ -66,6 +66,7 @@ actor SessionTranscriber: SessionTranscribing {
     ) async throws -> SessionTranscriptionResult {
         try Task.checkCancellation()
         let startedAt = now()
+        var warnings: [String] = []
         let systemTranscript = try await service.transcribe(
             audioURL: session.systemWorkingAudioURL,
             modelURL: modelURL,
@@ -78,8 +79,10 @@ actor SessionTranscriber: SessionTranscribing {
         )
         try Task.checkCancellation()
         try persist(systemTranscript, to: session.systemTrackTranscriptURL)
+        if systemTranscript.segments.isEmpty {
+            warnings.append("No speech was detected in system audio.")
+        }
 
-        var warnings: [String] = []
         var microphoneTranscript: TrackTranscript?
         if let microphone = finalization.microphone {
             try Task.checkCancellation()
@@ -97,6 +100,9 @@ actor SessionTranscriber: SessionTranscribing {
                 try Task.checkCancellation()
                 try persist(transcript, to: session.microphoneTrackTranscriptURL)
                 microphoneTranscript = transcript
+                if transcript.segments.isEmpty {
+                    warnings.append("No speech was detected in microphone audio.")
+                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -126,6 +132,8 @@ actor SessionTranscriber: SessionTranscribing {
             systemSegmentCount: systemTranscript.segments.count,
             microphoneSegmentCount: microphoneTranscript?.segments.count,
             mergedSegmentCount: mergedTranscript.segments.count,
+            systemPerformance: systemTranscript.performance,
+            microphonePerformance: microphoneTranscript?.performance,
             warnings: warnings,
             failureReason: nil
         )

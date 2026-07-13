@@ -16,6 +16,15 @@ struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
     let confidence: Double?
 }
 
+struct TrackTranscriptionPerformance: Codable, Equatable, Sendable {
+    let audioDurationSeconds: Double
+    let activeDurationSeconds: Double
+    let skippedDurationSeconds: Double
+    let inferenceInputDurationSeconds: Double
+    let chunkCount: Int
+    let wallTimeSeconds: Double
+}
+
 struct TrackTranscript: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let source: TranscriptSource
@@ -24,15 +33,17 @@ struct TrackTranscript: Codable, Equatable, Sendable {
     let detectedLanguage: String
     let completedAt: Date
     let segments: [TranscriptSegment]
+    let performance: TrackTranscriptionPerformance?
 
     init(
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 2,
         source: TranscriptSource,
         model: String,
         requestedLanguage: TranscriptionLanguage,
         detectedLanguage: String,
         completedAt: Date,
-        segments: [TranscriptSegment]
+        segments: [TranscriptSegment],
+        performance: TrackTranscriptionPerformance? = nil
     ) {
         self.schemaVersion = schemaVersion
         self.source = source
@@ -41,6 +52,7 @@ struct TrackTranscript: Codable, Equatable, Sendable {
         self.detectedLanguage = detectedLanguage
         self.completedAt = completedAt
         self.segments = segments
+        self.performance = performance
     }
 }
 

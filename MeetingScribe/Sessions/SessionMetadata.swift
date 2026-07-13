@@ -5,11 +5,39 @@ enum RecordingSessionStatus: String, Codable, Sendable {
     case recorded
     case failed
 }
-enum TranscriptionLanguage: String, Codable, Sendable {
+enum TranscriptionLanguage: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case automatic = "auto"
-    case slovak = "sk"
     case czech = "cs"
+    case slovak = "sk"
     case english = "en"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .automatic:
+            return "Auto"
+        case .czech:
+            return "Čeština"
+        case .slovak:
+            return "Slovenčina"
+        case .english:
+            return "English"
+        }
+    }
+
+    var selectionHint: String {
+        switch self {
+        case .automatic:
+            return "Best for mixed-language meetings. Whisper selects one dominant language per audio track."
+        case .czech:
+            return "Force Czech transcription for meetings spoken primarily in Czech."
+        case .slovak:
+            return "Force Slovak transcription for meetings spoken primarily in Slovak."
+        case .english:
+            return "Force English transcription for meetings spoken primarily in English."
+        }
+    }
 }
 
 struct SessionAudioFiles: Codable, Equatable, Sendable {
@@ -70,6 +98,8 @@ struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
     var systemSegmentCount: Int?
     var microphoneSegmentCount: Int?
     var mergedSegmentCount: Int? = nil
+    var systemPerformance: TrackTranscriptionPerformance? = nil
+    var microphonePerformance: TrackTranscriptionPerformance? = nil
     var warnings: [String]
     var failureReason: String?
 }

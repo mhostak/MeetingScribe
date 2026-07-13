@@ -50,28 +50,29 @@ Never paste transcript text or API keys into the test report.
 
 ## Meeting application matrix
 
-Repeat a five-minute call with remote speech and local microphone speech for each row.
+Run one Microsoft Teams desktop call of at least five minutes with remote speech and local microphone speech. Other meeting applications are outside the phase 10 acceptance scope.
 
 | Scenario | Output route | Input route | Required evidence |
 | --- | --- | --- | --- |
 | Microsoft Teams desktop | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
-| Slack Huddle | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
-| Google Meet in Chrome | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
-| Google Meet in Safari | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
-| Zoom desktop | built-in or headphones | built-in microphone | both CAF tracks nonempty, timestamped Markdown |
 | Local video playback | built-in speakers | built-in microphone | system track nonempty, echo noted if present |
 
-For at least one row, repeat with an external USB microphone. For at least one row, use speakers without headphones and record whether duplicated/echoed speech appears.
+Slack Huddle, Google Meet in Chrome or Safari, and Zoom may be tested later but are not required to complete phase 10.
+
+The external USB microphone and speakers-without-headphones variants have already been validated separately.
+
+Microsoft Teams is accepted in `phase-10-results.md`: session `2026-07-13T07-29-43Z_3A940D` successfully captured and processed both tracks for 15 minutes 20.58 seconds. The earlier 93-second Czech Teams session remains additional language evidence.
 
 ## CZ/SK quality matrix
 
 Use `large-v3-turbo`, not `tiny`.
 
-1. Record a two-minute Slovak sample containing names, dates, numbers, and action items.
-2. Record a two-minute Czech sample with the same structure.
-3. Record a mixed CZ/SK exchange with at least four language switches.
-4. Confirm detected languages, timestamp order, speaker/source labels, and that the mixed sample is not translated to English.
-5. Record obvious word error patterns and hallucinations without copying confidential meeting text.
+1. Record a two-minute Slovak sample containing names, dates, numbers, and action items using either Auto or explicit Slovenčina.
+2. Record a two-minute Czech sample with the same structure in Auto mode.
+3. Repeat a Czech sample with explicit Čeština and confirm `cs` is stored and forwarded to both tracks.
+4. Record a mixed CZ/SK exchange with at least four language switches in Auto mode.
+5. Confirm track languages, timestamp order, speaker/source labels, and that the mixed sample is not translated to English. Auto language detection is track-level, not per segment.
+6. Record obvious word error patterns, low-energy-track hallucinations, and other anomalies without copying confidential meeting text.
 
 ## Sleep and wake
 
@@ -109,6 +110,8 @@ Use a development build with stable signing permissions.
 ## Long recording
 
 Record a real meeting or controlled audio playback for at least 60 minutes.
+
+Session `2026-07-13T08-07-22Z_777771` completed the 60-minute Microsoft Teams capture, dual-track finalization, transcription, and export requirements. Both source and working audio files remained readable, more than 1 GB remained free, and all artifacts were preserved. The only missing evidence is the start/middle/end Activity Monitor sampling, so CPU and memory growth across the recording cannot yet be accepted from this run alone.
 
 Pass criteria:
 

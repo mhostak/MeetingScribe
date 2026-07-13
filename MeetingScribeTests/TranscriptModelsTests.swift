@@ -32,7 +32,15 @@ final class TranscriptModelsTests: XCTestCase {
                     text: "Mali by sme to dokončiť do konca týždňa.",
                     confidence: nil
                 )
-            ]
+            ],
+            performance: TrackTranscriptionPerformance(
+                audioDurationSeconds: 60,
+                activeDurationSeconds: 20,
+                skippedDurationSeconds: 40,
+                inferenceInputDurationSeconds: 21,
+                chunkCount: 2,
+                wallTimeSeconds: 4
+            )
         )
 
         let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)

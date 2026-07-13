@@ -38,6 +38,8 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(result.metadata.systemSegmentCount, 1)
         XCTAssertEqual(result.metadata.microphoneSegmentCount, 1)
         XCTAssertEqual(result.metadata.mergedSegmentCount, 2)
+        XCTAssertEqual(result.metadata.systemPerformance?.chunkCount, 2)
+        XCTAssertEqual(result.metadata.microphonePerformance?.chunkCount, 1)
         XCTAssertTrue(result.metadata.warnings.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
@@ -45,6 +47,7 @@ final class SessionTranscriberTests: XCTestCase {
 
         let options = await service.receivedOptions
         XCTAssertEqual(options.map(\.source), [.system, .microphone])
+        XCTAssertEqual(options.map(\.language), [.automatic, .automatic])
         XCTAssertEqual(options.map(\.timelineOffsetSeconds), [0, 0.25])
         XCTAssertEqual(options.map(\.speaker), ["Other", "Martin"])
 
@@ -89,6 +92,26 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(result.mergedTranscript.segments.map(\.source), [.system])
         let releaseCount = await service.releaseCount
         XCTAssertEqual(releaseCount, 1)
+    }
+
+    func testEmptyMicrophoneTranscriptIsPersistedAndReportedAsNoSpeech() async throws {
+        let service = MockTranscriptionService(emptyMicrophone: true)
+        let session = makeSession()
+        let transcriber = SessionTranscriber(service: service)
+
+        let result = try await transcriber.transcribe(
+            session: session,
+            finalization: finalization(),
+            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            language: .czech
+        )
+
+        XCTAssertEqual(result.metadata.systemSegmentCount, 1)
+        XCTAssertEqual(result.metadata.microphoneSegmentCount, 0)
+        XCTAssertEqual(result.metadata.mergedSegmentCount, 1)
+        XCTAssertEqual(result.metadata.warnings, ["No speech was detected in microphone audio."])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
+        XCTAssertTrue(result.microphoneTranscript?.segments.isEmpty == true)
     }
 
     func testCancellationAfterSystemTrackPreventsPersistenceAndMicrophoneWork() async throws {
@@ -158,12 +181,18 @@ final class SessionTranscriberTests: XCTestCase {
 private actor MockTranscriptionService: TranscriptionService {
     let failMicrophone: Bool
     let cancelAfterSystem: Bool
+    let emptyMicrophone: Bool
     private(set) var receivedOptions: [TranscriptionOptions] = []
     private(set) var releaseCount = 0
 
-    init(failMicrophone: Bool = false, cancelAfterSystem: Bool = false) {
+    init(
+        failMicrophone: Bool = false,
+        cancelAfterSystem: Bool = false,
+        emptyMicrophone: Bool = false
+    ) {
         self.failMicrophone = failMicrophone
         self.cancelAfterSystem = cancelAfterSystem
+        self.emptyMicrophone = emptyMicrophone
     }
 
     func transcribe(
@@ -175,24 +204,33 @@ private actor MockTranscriptionService: TranscriptionService {
         if failMicrophone, options.source == .microphone {
             throw TranscriptionError.inferenceFailed(code: -1)
         }
+        let segments = emptyMicrophone && options.source == .microphone ? [] : [
+            TranscriptSegment(
+                id: "\(options.source.rawValue)-000000",
+                source: options.source,
+                speaker: options.speaker,
+                start: options.timelineOffsetSeconds,
+                end: options.timelineOffsetSeconds + 1,
+                language: "sk",
+                text: "Test",
+                confidence: nil
+            )
+        ]
         let transcript = TrackTranscript(
             source: options.source,
             model: modelURL.lastPathComponent,
             requestedLanguage: options.language,
             detectedLanguage: options.language == .automatic ? "sk" : options.language.rawValue,
             completedAt: Date(),
-            segments: [
-                TranscriptSegment(
-                    id: "\(options.source.rawValue)-000000",
-                    source: options.source,
-                    speaker: options.speaker,
-                    start: options.timelineOffsetSeconds,
-                    end: options.timelineOffsetSeconds + 1,
-                    language: "sk",
-                    text: "Test",
-                    confidence: nil
-                )
-            ]
+            segments: segments,
+            performance: TrackTranscriptionPerformance(
+                audioDurationSeconds: 60,
+                activeDurationSeconds: options.source == .system ? 45 : 10,
+                skippedDurationSeconds: options.source == .system ? 15 : 50,
+                inferenceInputDurationSeconds: options.source == .system ? 46 : 10,
+                chunkCount: options.source == .system ? 2 : 1,
+                wallTimeSeconds: options.source == .system ? 8 : 2
+            )
         )
         if cancelAfterSystem, options.source == .system {
             withUnsafeCurrentTask { task in
