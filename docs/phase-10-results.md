@@ -1,6 +1,6 @@
 # Phase 10 stabilization results
 
-This report records completed evidence separately from the manual checks that still remain. It intentionally excludes transcript text, meeting content, API credentials, and other sensitive values.
+This report records the completed phase 10 stabilization evidence. It intentionally excludes transcript text, meeting content, API credentials, and other sensitive values.
 
 ## Automated regression
 
@@ -300,9 +300,9 @@ Session `2026-07-11T19-36-46Z_0D602C` recorded 21.48 seconds of system audio, fi
 
 The deterministic defects have automated regression coverage; hardware route recovery is additionally covered by the real AirPods run above.
 
-## Planned remaining acceptance — 2026-07-13
+## Final acceptance — 2026-07-13
 
-Use commit `cf871c9` or a later commit containing the same audio-route recovery. Use a stably signed build and Large v3 Turbo. Select the language mode specified by each test. For every manual recording, preserve the session ID, input/output routes, duration, `session.json`, `processing.log`, CAF/WAV metadata, Markdown path, and a concise pass/fail result. Do not copy confidential transcript text into this report.
+Final acceptance used stably signed builds from audio-route recovery commit `cf871c9` through optimized transcription commit `0d0add2`, with Large v3 Turbo for quality and long-session validation. For every manual recording, the session ID, input/output routes, duration, `session.json`, `processing.log`, CAF/WAV metadata, Markdown path, and a concise pass/fail result were preserved without copying confidential transcript text into this report.
 
 ### Meeting applications
 
@@ -368,8 +368,8 @@ The Slovak and explicit-Czech Large v3 Turbo quality rows are accepted. Mixed Au
 ### Real long recording
 
 - [x] Record a real meeting or controlled playback for at least 60 minutes.
-- [ ] Note Activity Monitor CPU and memory near the start, around 30 minutes, and near the end.
-- [ ] Confirm that memory does not grow continuously with duration and buffer counters keep increasing.
+- [x] Note CPU and memory near the start, around 30 minutes, and near the end using Activity Monitor-equivalent `ps` RSS/CPU sampling plus `footprint` snapshots.
+- [x] Confirm that memory does not grow continuously with duration and buffer counters keep increasing.
 - [x] Confirm that more than 1 GB remains free and the storage guard does not trigger incorrectly.
 - [x] Stop normally and verify that both CAF files are readable and processing completes or fails recoverably.
 - [x] Confirm that no audio, transcript, Markdown, manifest, or log file is silently deleted.
@@ -399,12 +399,29 @@ The preserved microphone WAV was then processed offline without modifying the se
 - 195 segments, 183 unique texts, maximum identical repetition 5, and detected language `sk`;
 - all returned timestamps remained finite, nonnegative, ordered, and mapped to the original track timeline.
 
-The highly active system track is intentionally kept as one full-track batch. Using its already measured 680-second time gives a projected optimized dual-track wall time of approximately 866 seconds, or 14 minutes 26 seconds, instead of 28 minutes 24 seconds. This is a 49% projected reduction; a future end-to-end run will persist the new metrics directly in `session.json` and `processing.log`.
+The highly active system track is intentionally kept as one full-track batch. Using its already measured 680-second time originally gave a projected optimized dual-track wall time of approximately 866 seconds, or 14 minutes 26 seconds, instead of 28 minutes 24 seconds.
 
-Capture continuity, finalization, storage, artifact preservation, and the complete real pipeline are accepted. Activity Monitor CPU and memory snapshots were not taken during this session, so the resource-growth observation remains the only unchecked long-recording evidence.
+Final resource and optimized end-to-end validation used signed build commit `0d0add2` and session `2026-07-13T12-26-50Z_D5C621`:
+
+- controlled recording span: 62 minutes 18 seconds, with no sleep or audio-route changes;
+- 58 one-minute resource samples from approximately minute 5 through minute 62;
+- CPU: 2.4% near the start, 7.2% around recording minute 30, and 4.8% near the end; 4.06% average and 1.8-11.0% observed range;
+- RSS: 47.9 MB near the start, 40.9 MB around minute 30, and 41.1 MB near the end; approximately 34-48 MB observed range;
+- physical footprint: 39 MB near the start and 40 MB near the end, with a 43 MB process-lifetime peak;
+- free disk: approximately 11.0 GiB at the first sample and 8.9 GiB near the end, always above the 1 GB guard threshold;
+- `system.caf` grew from 107,024,896 to 1,421,287,936 bytes during sampling; `microphone.caf` grew from 53,456,896 to 710,922,496 bytes;
+- final readable system CAF/WAV duration: 3,735.46 seconds; final readable microphone CAF/WAV duration: 3,736.9 seconds;
+- finalization completed in nine seconds without warnings;
+- explicit Czech Large v3 Turbo processing completed in 11 minutes 19 seconds without warnings: system 487.05 seconds, microphone 191.15 seconds;
+- the system track remained one full inference batch; the microphone track used four batches, processed 975.552 seconds of input, and skipped 2,781.348 inactive seconds;
+- 2,515 ordered merged segments, both track transcripts, merged JSON, Markdown, manifest, processing log, both CAF files, and both WAV files were preserved;
+- performance metrics were persisted in both track transcripts, `session.json`, and `processing.log` as designed.
+- the complete minute-by-minute resource series is preserved in [`evidence/phase-10-long-recording-resources-2026-07-13.csv`](evidence/phase-10-long-recording-resources-2026-07-13.csv).
+
+The actual optimized dual-track result is approximately 60% faster than the original 28-minute-24-second run. CPU stayed low, RSS and physical footprint remained flat rather than growing with recording duration, and both track files grew continuously. Capture continuity, finalization, storage protection, resource stability, artifact preservation, and the complete real pipeline are accepted.
 
 ### Final automated release check
 
 - [x] Run the current full Xcode app/test scheme from commit `1e99ca1` or later and record the result. The signed scheme completed with `TEST SUCCEEDED`; the current SwiftPM baseline is 133 executed, 124 passed, 9 optional tests skipped, and 0 failed.
 
-Phase 10 hardware and application scenarios are otherwise complete. It remains in progress only because the required start/middle/end Activity Monitor observations were not recorded during the one-hour session.
+Phase 10 is complete. Every required automated, hardware, meeting-application, recovery, audio-route, language-quality, long-recording, resource-stability, finalization, transcription, and artifact-preservation row has recorded passing evidence.

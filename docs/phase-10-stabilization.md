@@ -111,7 +111,9 @@ Use a development build with stable signing permissions.
 
 Record a real meeting or controlled audio playback for at least 60 minutes.
 
-Session `2026-07-13T08-07-22Z_777771` completed the 60-minute Microsoft Teams capture, dual-track finalization, transcription, and export requirements. Both source and working audio files remained readable, more than 1 GB remained free, and all artifacts were preserved. The only missing evidence is the start/middle/end Activity Monitor sampling, so CPU and memory growth across the recording cannot yet be accepted from this run alone.
+Session `2026-07-13T08-07-22Z_777771` completed the 60-minute Microsoft Teams capture, dual-track finalization, transcription, and export requirements. Both source and working audio files remained readable, more than 1 GB remained free, and all artifacts were preserved.
+
+Final resource validation used signed build commit `0d0add2` and session `2026-07-13T12-26-50Z_D5C621`. The controlled recording ran for 62 minutes 18 seconds. Across 58 one-minute samples, CPU averaged 4.06%, RSS stayed between approximately 34 and 48 MB, and physical footprint changed from 39 MB near the start to 40 MB near the end. Both CAF files grew continuously and approximately 8.9 GiB remained free. Finalization completed without warnings, all artifacts remained readable, and optimized Large v3 Turbo transcription completed in 11 minutes 19 seconds. This satisfies the remaining long-recording resource-stability evidence.
 
 Pass criteria:
 
@@ -124,4 +126,4 @@ Pass criteria:
 
 ## Release decision
 
-Phase 10 is fully accepted only after every required matrix row has a recorded result. Automated tests establish code-level readiness; they do not substitute for ScreenCaptureKit, sleep/wake, Bluetooth, and meeting-application validation on real hardware.
+Phase 10 is fully accepted. Every required matrix row has a recorded passing result, including ScreenCaptureKit capture, Microsoft Teams, sleep/wake, Bluetooth and USB route changes, crash recovery, CZ/SK transcription, a recording longer than one hour, resource stability, and complete artifact preservation on real hardware.
