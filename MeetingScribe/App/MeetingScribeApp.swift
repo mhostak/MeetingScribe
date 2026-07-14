@@ -23,6 +23,11 @@ struct MeetingScribeApp: App {
         }
         .menuBarExtraStyle(.window)
 
+        Window("Recordings", id: "recordings") {
+            RecordingsWindow(appState: appState)
+        }
+        .defaultSize(width: 900, height: 620)
+
         Settings {
             SettingsView(appState: appState)
         }

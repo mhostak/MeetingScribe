@@ -78,6 +78,10 @@
 		000000000000000000000169 /* ProcessingProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000272 /* ProcessingProgress.swift */; };
 		000000000000000000000170 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000273 /* SettingsView.swift */; };
 		000000000000000000000171 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000274 /* Localizable.xcstrings */; };
+		000000000000000000000172 /* SessionCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000275 /* SessionCatalog.swift */; };
+		000000000000000000000173 /* RecordingsWindowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000276 /* RecordingsWindowModel.swift */; };
+		000000000000000000000174 /* RecordingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000277 /* RecordingsWindow.swift */; };
+		000000000000000000000175 /* SessionCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000278 /* SessionCatalogTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -165,6 +169,10 @@
 		000000000000000000000272 /* ProcessingProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingProgress.swift; sourceTree = "<group>"; };
 		000000000000000000000273 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		000000000000000000000274 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		000000000000000000000275 /* SessionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalog.swift; sourceTree = "<group>"; };
+		000000000000000000000276 /* RecordingsWindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindowModel.swift; sourceTree = "<group>"; };
+		000000000000000000000277 /* RecordingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindow.swift; sourceTree = "<group>"; };
+		000000000000000000000278 /* SessionCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalogTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -221,6 +229,8 @@
 				000000000000000000000272 /* ProcessingProgress.swift */,
 				000000000000000000000273 /* SettingsView.swift */,
 				000000000000000000000204 /* MenuBarView.swift */,
+				000000000000000000000276 /* RecordingsWindowModel.swift */,
+				000000000000000000000277 /* RecordingsWindow.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -242,6 +252,7 @@
 				000000000000000000000258 /* SessionRecovery.swift */,
 				000000000000000000000256 /* StorageGuard.swift */,
 				000000000000000000000257 /* ProcessingLogger.swift */,
+				000000000000000000000275 /* SessionCatalog.swift */,
 			);
 			path = Sessions;
 			sourceTree = "<group>";
@@ -276,6 +287,7 @@
 				000000000000000000000222 /* CaptureCoordinatorTests.swift */,
 				000000000000000000000208 /* AppStateMachineTests.swift */,
 				000000000000000000000209 /* SessionManagerTests.swift */,
+				000000000000000000000278 /* SessionCatalogTests.swift */,
 			);
 			path = MeetingScribeTests;
 			sourceTree = "<group>";
@@ -457,6 +469,7 @@
 				000000000000000000000156 /* SessionRecovery.swift in Sources */,
 				000000000000000000000154 /* StorageGuard.swift in Sources */,
 				000000000000000000000155 /* ProcessingLogger.swift in Sources */,
+				000000000000000000000172 /* SessionCatalog.swift in Sources */,
 				000000000000000000000145 /* AnalysisModels.swift in Sources */,
 				000000000000000000000146 /* AnalysisProvider.swift in Sources */,
 				000000000000000000000147 /* OpenAIAnalysisProvider.swift in Sources */,
@@ -491,6 +504,8 @@
 				000000000000000000000169 /* ProcessingProgress.swift in Sources */,
 				000000000000000000000170 /* SettingsView.swift in Sources */,
 				000000000000000000000104 /* MenuBarView.swift in Sources */,
+				000000000000000000000173 /* RecordingsWindowModel.swift in Sources */,
+				000000000000000000000174 /* RecordingsWindow.swift in Sources */,
 				000000000000000000000105 /* RecordingSession.swift in Sources */,
 				000000000000000000000106 /* SessionMetadata.swift in Sources */,
 				000000000000000000000107 /* SessionManager.swift in Sources */,
@@ -501,6 +516,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				000000000000000000000175 /* SessionCatalogTests.swift in Sources */,
 				000000000000000000000164 /* AudioClockTests.swift in Sources */,
 				000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */,
 				000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */,

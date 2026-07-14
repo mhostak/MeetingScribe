@@ -4,6 +4,7 @@ import SwiftUI
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -265,9 +266,9 @@ struct MenuBarView: View {
             Divider()
             HStack {
                 Button {
-                    appState.openRecordingsFolder()
+                    openWindow(id: "recordings")
                 } label: {
-                    Label("Recordings", systemImage: "folder")
+                    Label("Recordings", systemImage: "list.bullet.rectangle")
                 }
                 .buttonStyle(.plain)
 
