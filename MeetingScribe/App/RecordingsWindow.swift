@@ -160,7 +160,7 @@ private struct RecordingSessionRow: View {
     }
 
     private var statusBadge: some View {
-        Text(statusTitle)
+        Text(LocalizedStringKey(statusTitle))
             .font(.caption.weight(.medium))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -266,7 +266,7 @@ private struct ArtifactBadge: View {
         }
     }
 
-    private var help: String {
+    private var help: LocalizedStringKey {
         switch state {
         case .available: return "Available"
         case .missing: return "Expected file is missing"

@@ -110,6 +110,36 @@ final class SessionCatalogTests: XCTestCase {
         XCTAssertEqual(entry.markdown, .notProduced)
     }
 
+    func testDetectsPersistedWorkingAudioWhenLegacySourceIsMissing() async throws {
+        let metadata = SessionMetadata(
+            id: "legacy-working-audio",
+            title: "Legacy working audio",
+            status: .recorded,
+            createdAt: Date(timeIntervalSince1970: 100),
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 190),
+            audioFiles: SessionAudioFiles(
+                system: "system.caf",
+                microphone: "microphone.caf",
+                systemWorking: "system-working.wav",
+                microphoneWorking: nil,
+                mixed: "mixed.wav"
+            )
+        )
+        let directory = try write(metadata: metadata)
+        let workingAudioURL = directory.appendingPathComponent("system-working.wav")
+        try Data([1]).write(to: workingAudioURL)
+
+        let snapshot = try await SessionCatalog(recordingsRoot: root).load()
+        let entry = try XCTUnwrap(snapshot.entries.first)
+
+        XCTAssertTrue(entry.audio.isAvailable)
+        XCTAssertEqual(
+            entry.audio.url?.resolvingSymlinksInPath(),
+            workingAudioURL.resolvingSymlinksInPath()
+        )
+    }
+
     private func writeCompletedSession(
         id: String,
         title: String,

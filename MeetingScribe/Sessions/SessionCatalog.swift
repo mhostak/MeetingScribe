@@ -201,6 +201,10 @@ actor SessionCatalog {
     private func audioArtifact(for session: RecordingSession) -> SessionArtifactState {
         let metadata = session.metadata
         var names = [metadata.audioFiles.system, metadata.audioFiles.microphone]
+        names.append(contentsOf: [
+            metadata.audioFiles.systemWorking,
+            metadata.audioFiles.microphoneWorking,
+        ].compactMap { $0 })
         if let finalization = metadata.audioFinalization {
             names.append(finalization.system.fileName)
             if let microphone = finalization.microphone {
