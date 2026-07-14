@@ -55,6 +55,10 @@ struct SettingsView: View {
                 }
                 .onChange(of: appState.selectedAppLanguage) { persistApplicationSettings() }
 
+                Text("Controls the app interface, status messages, errors, notifications, and permission guidance.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("Launch MeetingScribe at login", isOn: Binding(
                     get: { appState.launchAtLoginEnabled },
                     set: { enabled in
@@ -73,12 +77,20 @@ struct SettingsView: View {
                     appState.persistTranscriptionLanguageSelection()
                 }
 
+                Text("Controls the language Whisper expects in the recorded audio. Auto is best for mixed-language meetings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Picker("Output language", selection: $appState.selectedOutputLanguage) {
                     ForEach(OutputLanguage.allCases) { language in
                         Text(LocalizedStringKey(language.displayName)).tag(language)
                     }
                 }
                 .onChange(of: appState.selectedOutputLanguage) { persistApplicationSettings() }
+
+                Text("Controls the language of the Markdown summary and action items. It does not change transcription.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .disabled(!appState.canEditSessionConfiguration)
         }
@@ -201,7 +213,7 @@ struct SettingsView: View {
         settingsForm {
             Section("Markdown destination") {
                 LabeledContent("Folder") {
-                    Text(appState.outputFolderDescription)
+                    Text(LocalizedStringKey(appState.outputFolderDescription))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .truncationMode(.middle)
@@ -289,7 +301,19 @@ struct SettingsView: View {
     private func settingsForm<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        Form(content: content)
+        Form {
+            if !appState.canEditSessionConfiguration {
+                Section {
+                    Label(
+                        "Session settings are locked while recording or processing.",
+                        systemImage: "lock.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+            content()
+        }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
     }

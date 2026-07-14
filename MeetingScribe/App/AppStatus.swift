@@ -39,6 +39,34 @@ enum AppStatus: String, Codable, CaseIterable, Sendable {
     }
 }
 
+enum MenuBarIconState: String, Equatable, Sendable {
+    case idle
+    case recording
+    case processing
+    case attention
+
+    init(status: AppStatus, hasRecovery: Bool) {
+        if status == .recording {
+            self = .recording
+        } else if status.isProcessing {
+            self = .processing
+        } else if status == .failed || hasRecovery {
+            self = .attention
+        } else {
+            self = .idle
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .idle: return "MeetingScribe ready"
+        case .recording: return "MeetingScribe recording"
+        case .processing: return "MeetingScribe processing"
+        case .attention: return "MeetingScribe needs attention"
+        }
+    }
+}
+
 struct AppStateMachine: Sendable {
     private(set) var status: AppStatus
 
