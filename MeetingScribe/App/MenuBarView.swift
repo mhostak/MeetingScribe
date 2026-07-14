@@ -5,6 +5,9 @@ struct MenuBarView: View {
     @ObservedObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
+    @State private var isEditingMeetingTitle = false
+    @State private var meetingTitleDraft = ""
+    @FocusState private var isMeetingTitleFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -27,6 +30,9 @@ struct MenuBarView: View {
         .padding(18)
         .frame(width: 360)
         .environment(\.locale, appState.selectedAppLanguage.locale)
+        .onChange(of: appState.currentSession?.metadata.id) {
+            cancelMeetingTitleEditing()
+        }
     }
 
     @ViewBuilder
@@ -82,6 +88,16 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .help("Settings")
             .accessibilityLabel("Settings")
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut("q")
+            .help("Quit MeetingScribe")
+            .accessibilityLabel("Quit MeetingScribe")
         }
     }
 
@@ -128,6 +144,8 @@ struct MenuBarView: View {
 
     private var recordingContent: some View {
         VStack(spacing: 14) {
+            recordingTitleEditor
+
             if let startedAt = appState.currentSession?.metadata.startedAt {
                 RecordingDurationView(startedAt: startedAt)
             }
@@ -163,6 +181,77 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private var recordingTitleEditor: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "text.quote")
+                .foregroundStyle(.secondary)
+
+            if isEditingMeetingTitle {
+                TextField("Meeting title (optional)", text: $meetingTitleDraft)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline.weight(.semibold))
+                    .focused($isMeetingTitleFocused)
+                    .onSubmit { saveMeetingTitle() }
+
+                Button(action: saveMeetingTitle) {
+                    Image(systemName: "checkmark")
+                }
+                .buttonStyle(.plain)
+                .disabled(
+                    meetingTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+                .help("Save meeting title")
+                .accessibilityLabel("Save meeting title")
+
+                Button(action: cancelMeetingTitleEditing) {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .help("Cancel")
+                .accessibilityLabel("Cancel")
+            } else {
+                Text(appState.currentSession?.metadata.title ?? appState.meetingTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                Spacer(minLength: 4)
+
+                Button(action: beginMeetingTitleEditing) {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.plain)
+                .help("Edit meeting title")
+                .accessibilityLabel("Edit meeting title")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func beginMeetingTitleEditing() {
+        meetingTitleDraft = appState.currentSession?.metadata.title ?? appState.meetingTitle
+        isEditingMeetingTitle = true
+        DispatchQueue.main.async {
+            isMeetingTitleFocused = true
+        }
+    }
+
+    private func saveMeetingTitle() {
+        let normalizedTitle = meetingTitleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else { return }
+        isMeetingTitleFocused = false
+        isEditingMeetingTitle = false
+        Task { await appState.renameCurrentSession(to: normalizedTitle) }
+    }
+
+    private func cancelMeetingTitleEditing() {
+        isMeetingTitleFocused = false
+        isEditingMeetingTitle = false
     }
 
     private var processingContent: some View {
@@ -268,27 +357,11 @@ struct MenuBarView: View {
                 Button {
                     openWindow(id: "recordings")
                 } label: {
-                    Label("Recordings", systemImage: "list.bullet.rectangle")
+                    Label("Recordings overview", systemImage: "list.bullet.rectangle")
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
-
-                Button {
-                    openSettings()
-                } label: {
-                    Label("Settings", systemImage: "gearshape")
-                }
-                .buttonStyle(.plain)
-
-                Menu {
-                    Button("Quit MeetingScribe") { NSApplication.shared.terminate(nil) }
-                        .keyboardShortcut("q")
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
             }
             .font(.caption)
         }

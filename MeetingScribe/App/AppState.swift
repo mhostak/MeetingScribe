@@ -248,6 +248,24 @@ final class AppState: ObservableObject {
         }
     }
 
+    func renameCurrentSession(to title: String) async {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty,
+              normalizedTitle != currentSession?.metadata.title else {
+            return
+        }
+
+        do {
+            let renamedSession = try await sessionManager.renameActiveSession(
+                to: normalizedTitle
+            )
+            currentSession = renamedSession
+            meetingTitle = renamedSession.metadata.title
+        } catch {
+            lastError = "The meeting title could not be updated: \(error.localizedDescription)"
+        }
+    }
+
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {
         guard !isRecoveringSession else { return }
         isRecoveringSession = true
