@@ -10,6 +10,7 @@ struct WhisperModelDescriptor: Codable, Equatable, Identifiable, Sendable {
 
     var displayName: String {
         switch id {
+        case "silero-vad-v6.2.0": return "Silero VAD 6.2.0"
         case "large-v3-turbo": return "Large v3 Turbo"
         case "large-v3-turbo-q5_0": return "Large v3 Turbo Q5"
         case "medium": return "Medium"
@@ -48,6 +49,16 @@ struct WhisperModelDescriptor: Codable, Equatable, Identifiable, Sendable {
         downloadURL: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin")!,
         expectedSHA1: "e050f7970618a659205450ad97eb95a18d69c9ee",
         approximateSizeBytes: 547 * 1_024 * 1_024
+    )
+
+    static let sileroVAD = WhisperModelDescriptor(
+        id: "silero-vad-v6.2.0",
+        fileName: "ggml-silero-v6.2.0.bin",
+        downloadURL: URL(
+            string: "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin"
+        )!,
+        expectedSHA1: "470e5d9d094ddba2f0a512cecc3732a252188abd",
+        approximateSizeBytes: 865 * 1_024
     )
 
     static let supported: [WhisperModelDescriptor] = [

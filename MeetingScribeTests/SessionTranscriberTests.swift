@@ -119,6 +119,26 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertTrue(result.microphoneTranscript?.segments.isEmpty == true)
     }
 
+    func testRecordsWarningWhenForcedLanguageUsesAutomaticFallback() async throws {
+        let service = MockTranscriptionService(forcedDetectedLanguage: "sk")
+        let session = makeSession()
+        let transcriber = SessionTranscriber(service: service)
+
+        let result = try await transcriber.transcribe(
+            session: session,
+            finalization: finalization(),
+            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            language: .czech
+        )
+
+        XCTAssertEqual(result.systemTranscript.requestedLanguage, .czech)
+        XCTAssertEqual(result.systemTranscript.detectedLanguage, "sk")
+        XCTAssertEqual(result.metadata.warnings.count, 2)
+        XCTAssertTrue(result.metadata.warnings.allSatisfy {
+            $0.contains("automatic language detection (sk)")
+        })
+    }
+
     func testCancellationAfterSystemTrackPreventsPersistenceAndMicrophoneWork() async throws {
         let service = MockTranscriptionService(cancelAfterSystem: true)
         let session = makeSession()
@@ -187,6 +207,7 @@ private actor MockTranscriptionService: TranscriptionService {
     let failMicrophone: Bool
     let cancelAfterSystem: Bool
     let emptyMicrophone: Bool
+    let forcedDetectedLanguage: String?
     private(set) var receivedOptions: [TranscriptionOptions] = []
     private(set) var receivedAudioURLs: [URL] = []
     private(set) var releaseCount = 0
@@ -194,11 +215,13 @@ private actor MockTranscriptionService: TranscriptionService {
     init(
         failMicrophone: Bool = false,
         cancelAfterSystem: Bool = false,
-        emptyMicrophone: Bool = false
+        emptyMicrophone: Bool = false,
+        forcedDetectedLanguage: String? = nil
     ) {
         self.failMicrophone = failMicrophone
         self.cancelAfterSystem = cancelAfterSystem
         self.emptyMicrophone = emptyMicrophone
+        self.forcedDetectedLanguage = forcedDetectedLanguage
     }
 
     func transcribe(
@@ -227,7 +250,8 @@ private actor MockTranscriptionService: TranscriptionService {
             source: options.source,
             model: modelURL.lastPathComponent,
             requestedLanguage: options.language,
-            detectedLanguage: options.language == .automatic ? "sk" : options.language.rawValue,
+            detectedLanguage: forcedDetectedLanguage
+                ?? (options.language == .automatic ? "sk" : options.language.rawValue),
             completedAt: Date(),
             segments: segments,
             performance: TrackTranscriptionPerformance(

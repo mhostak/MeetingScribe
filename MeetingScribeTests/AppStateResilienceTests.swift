@@ -410,7 +410,8 @@ final class AppStateResilienceTests: XCTestCase {
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
             captureMonitoringConfiguration: monitoring,
-            storageStatusProvider: storageStatusProvider
+            storageStatusProvider: storageStatusProvider,
+            automaticallyManageVADModel: false
         )
     }
 
