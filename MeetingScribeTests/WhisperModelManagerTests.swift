@@ -4,6 +4,15 @@ import XCTest
 @testable import MeetingScribe
 
 final class WhisperModelManagerTests: XCTestCase {
+    func testSileroVADDescriptorIsManagedAsAnInternalAuxiliaryModel() {
+        let descriptor = WhisperModelDescriptor.sileroVAD
+
+        XCTAssertEqual(descriptor.fileName, "ggml-silero-v6.2.0.bin")
+        XCTAssertEqual(descriptor.expectedSHA1, "470e5d9d094ddba2f0a512cecc3732a252188abd")
+        XCTAssertEqual(descriptor.downloadURL.host, "huggingface.co")
+        XCTAssertFalse(WhisperModelDescriptor.supported.contains(descriptor))
+    }
+
     private var temporaryRoot: URL!
 
     override func setUpWithError() throws {

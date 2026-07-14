@@ -60,6 +60,7 @@ final class AppState: ObservableObject {
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
     private let storageStatusProvider: @Sendable () async throws -> StorageStatus
+    private let automaticallyManageVADModel: Bool
     private var captureMonitorTask: Task<Void, Never>?
     private var storageCheckTick = 0
     private var stalledSystemAudioCheckTick = 0
@@ -87,7 +88,8 @@ final class AppState: ObservableObject {
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
-        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil
+        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
+        automaticallyManageVADModel: Bool = true
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
@@ -109,6 +111,7 @@ final class AppState: ObservableObject {
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
+        self.automaticallyManageVADModel = automaticallyManageVADModel
         self.storageStatusProvider = storageStatusProvider ?? {
             try await sessionManager.storageStatus()
         }
@@ -975,6 +978,29 @@ final class AppState: ObservableObject {
                 ),
                 mergedTranscript: nil
             )
+        }
+
+        if automaticallyManageVADModel {
+            do {
+                _ = try await modelManager.download(.sileroVAD)
+            } catch {
+                let reason = "The voice activity detection model could not be prepared: "
+                    + error.localizedDescription
+                lastError = "Recording saved. \(reason)"
+                return TranscriptionOutcome(
+                    metadata: SessionTranscriptionMetadata(
+                        status: .failed,
+                        model: descriptor.fileName,
+                        startedAt: nil,
+                        completedAt: Date(),
+                        systemSegmentCount: nil,
+                        microphoneSegmentCount: nil,
+                        warnings: [],
+                        failureReason: reason
+                    ),
+                    mergedTranscript: nil
+                )
+            }
         }
 
         do {

@@ -16,6 +16,48 @@ enum WhisperTranscriptSanitizer {
     }
 }
 
+enum WhisperHallucinationDetector {
+    private static let minimumSegmentCount = 6
+
+    static func isStronglyRepetitive(_ transcript: TrackTranscript) -> Bool {
+        let texts = normalizedTexts(in: transcript)
+        guard texts.count >= minimumSegmentCount else { return false }
+
+        let counts = Dictionary(texts.map { ($0, 1) }, uniquingKeysWith: +)
+        let dominantCount = counts.values.max() ?? 0
+        let dominantRatio = Double(dominantCount) / Double(texts.count)
+
+        return (dominantCount >= 4 && dominantRatio >= 0.5)
+            || (texts.count >= 10 && counts.count <= max(2, texts.count / 5))
+    }
+
+    static func shouldUseAutomaticFallback(
+        original: TrackTranscript,
+        fallback: TrackTranscript
+    ) -> Bool {
+        guard isStronglyRepetitive(original) else { return false }
+        guard !fallback.segments.isEmpty else { return false }
+        guard !isStronglyRepetitive(fallback) else { return false }
+
+        return uniqueTextCount(in: fallback) > uniqueTextCount(in: original)
+    }
+
+    private static func uniqueTextCount(in transcript: TrackTranscript) -> Int {
+        Set(normalizedTexts(in: transcript)).count
+    }
+
+    private static func normalizedTexts(in transcript: TrackTranscript) -> [String] {
+        transcript.segments.compactMap { segment in
+            let words = segment.text
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+            let normalized = words.joined(separator: " ")
+            return normalized.isEmpty ? nil : normalized
+        }
+    }
+}
+
 private final class WhisperContextHandle: @unchecked Sendable {
     let pointer: OpaquePointer
 
@@ -171,6 +213,17 @@ final class WhisperCppService: TranscriptionService, @unchecked Sendable {
             .passUnretained(cancellationToken)
             .toOpaque()
 
+        let vadModelURL = modelURL.deletingLastPathComponent().appendingPathComponent(
+            WhisperModelDescriptor.sileroVAD.fileName,
+            isDirectory: false
+        )
+        let vadModelPath = FileManager.default.fileExists(atPath: vadModelURL.path)
+            ? strdup(vadModelURL.path)
+            : nil
+        defer { free(vadModelPath) }
+        parameters.vad = vadModelPath != nil
+        parameters.vad_model_path = vadModelPath.map { UnsafePointer($0) }
+
         let result: TrackTranscript
         if let initialPrompt = options.initialPrompt, !initialPrompt.isEmpty {
             result = try initialPrompt.withCString { promptPointer in
@@ -201,7 +254,45 @@ final class WhisperCppService: TranscriptionService, @unchecked Sendable {
                 cancellationToken: cancellationToken
             )
         }
-        return result
+        guard options.language != .automatic,
+              WhisperHallucinationDetector.isStronglyRepetitive(result) else {
+            return result
+        }
+
+        guard !cancellationToken.isCancelled else { throw CancellationError() }
+        var fallbackOptions = options
+        fallbackOptions.language = .automatic
+        fallbackOptions.initialPrompt = nil
+        var fallbackParameters = parameters
+        fallbackParameters.initial_prompt = nil
+        let fallback = try runInference(
+            context: context.pointer,
+            parameters: fallbackParameters,
+            samples: samples,
+            options: fallbackOptions,
+            modelURL: modelURL,
+            activityPlan: activityPlan,
+            inferenceBatches: inferenceBatches,
+            wallTimeStartedAt: wallTimeStartedAt,
+            cancellationToken: cancellationToken
+        )
+        guard WhisperHallucinationDetector.shouldUseAutomaticFallback(
+            original: result,
+            fallback: fallback
+        ) else {
+            return result
+        }
+
+        return TrackTranscript(
+            schemaVersion: fallback.schemaVersion,
+            source: fallback.source,
+            model: fallback.model,
+            requestedLanguage: options.language,
+            detectedLanguage: fallback.detectedLanguage,
+            completedAt: fallback.completedAt,
+            segments: fallback.segments,
+            performance: fallback.performance
+        )
     }
 
     private func loadContext(modelURL: URL) throws -> WhisperContextHandle {
