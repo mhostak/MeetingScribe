@@ -263,6 +263,8 @@ enum AppLocalization {
                 return pick("A recording session is already active.", "Nahrávacia relácia už prebieha.", "Nahrávací relace již probíhá.", language)
             case .noActiveSession:
                 return pick("There is no active recording session to stop.", "Nie je aktívna žiadna nahrávacia relácia, ktorú by bolo možné zastaviť.", "Není aktivní žádná nahrávací relace, kterou by bylo možné zastavit.", language)
+            case .emptyTitle:
+                return pick("The meeting title cannot be empty.", "Názov stretnutia nemôže byť prázdny.", "Název setkání nemůže být prázdný.", language)
             }
         case let error as SessionRecoveryError:
             return recoveryError(error, language: language)

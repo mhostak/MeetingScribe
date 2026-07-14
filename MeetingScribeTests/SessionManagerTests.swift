@@ -156,6 +156,38 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.output, output)
     }
 
+    func testRenameActiveSessionUpdatesMemoryAndManifest() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Original title")
+
+        let renamed = try await manager.renameActiveSession(to: "  Updated title  ")
+        let active = await manager.currentSession()
+
+        XCTAssertEqual(renamed.metadata.title, "Updated title")
+        XCTAssertEqual(active?.metadata.title, "Updated title")
+        XCTAssertEqual(
+            try decodeMetadata(at: started.manifestURL).title,
+            "Updated title"
+        )
+    }
+
+    func testRenameActiveSessionRejectsEmptyTitle() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Original title")
+
+        do {
+            _ = try await manager.renameActiveSession(to: "  \n ")
+            XCTFail("Expected an empty title to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? SessionManagerError, .emptyTitle)
+        }
+
+        XCTAssertEqual(
+            try decodeMetadata(at: started.manifestURL).title,
+            "Original title"
+        )
+    }
+
     func testRecordsSourceCleanupAuditAfterSessionCompletion() async throws {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         _ = try await manager.startSession(title: "Cleanup")

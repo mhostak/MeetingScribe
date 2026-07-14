@@ -25,7 +25,9 @@ let package = Package(
                 "Resources",
                 "App/MeetingScribeApp.swift",
                 "App/MenuBarView.swift",
-                "App/SettingsView.swift"
+                "App/SettingsView.swift",
+                "App/RecordingsWindow.swift",
+                "App/RecordingsWindowModel.swift"
             ]
         ),
         .testTarget(

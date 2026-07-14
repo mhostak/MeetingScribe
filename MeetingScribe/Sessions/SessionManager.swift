@@ -136,6 +136,22 @@ actor SessionManager {
         activeSession
     }
 
+    func renameActiveSession(to title: String) throws -> RecordingSession {
+        guard var session = activeSession else {
+            throw SessionManagerError.noActiveSession
+        }
+
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else {
+            throw SessionManagerError.emptyTitle
+        }
+
+        session.metadata.title = normalizedTitle
+        try persist(session)
+        activeSession = session
+        return session
+    }
+
     func recordAudioSourceCleanup(
         _ cleanup: AudioSourceCleanupMetadata,
         for completedSession: RecordingSession
@@ -232,6 +248,7 @@ actor SessionManager {
 enum SessionManagerError: Error, Equatable, LocalizedError {
     case sessionAlreadyActive
     case noActiveSession
+    case emptyTitle
 
     var errorDescription: String? {
         switch self {
@@ -239,6 +256,8 @@ enum SessionManagerError: Error, Equatable, LocalizedError {
             return "A recording session is already active."
         case .noActiveSession:
             return "There is no active recording session to stop."
+        case .emptyTitle:
+            return "The meeting title cannot be empty."
         }
     }
 }
