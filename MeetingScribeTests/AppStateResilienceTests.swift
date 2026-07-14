@@ -4,6 +4,38 @@ import XCTest
 
 @MainActor
 final class AppStateResilienceTests: XCTestCase {
+    func testUserFacingErrorsAreLocalizedForExplicitApplicationLanguage() {
+        XCTAssertEqual(
+            AppLocalization.error(AnalysisError.missingAPIKey, language: .slovak),
+            "Pred zapnutím AI analýzy pridajte kľúč OpenAI API."
+        )
+        XCTAssertEqual(
+            AppLocalization.error(
+                SessionRecoveryError.pendingRecoveryMustBeResolved,
+                language: .czech
+            ),
+            "Před spuštěním nové nahrávky obnovte nebo zavřete nedokončenou nahrávku."
+        )
+        XCTAssertEqual(
+            AppLocalization.message(
+                .recordingSavedTranscription("detail-42"),
+                language: .slovak
+            ),
+            "Nahrávka bola uložená. Prepis zlyhal: detail-42"
+        )
+        XCTAssertEqual(
+            AppLocalization.message(.captureStalledSafeStop, language: .czech),
+            "Nahrávání bylo bezpečně zastaveno, protože zachytávání systémového zvuku přestalo přijímat data. Existující audio zůstalo zachované."
+        )
+    }
+
+    func testAllApplicationLanguagesResolveToAConcreteLocalization() {
+        XCTAssertEqual(AppLanguage.slovak.resolved, .slovak)
+        XCTAssertEqual(AppLanguage.czech.resolved, .czech)
+        XCTAssertEqual(AppLanguage.english.resolved, .english)
+        XCTAssertNotEqual(AppLanguage.system.resolved, .system)
+    }
+
     func testAudioRetentionSettingDefaultsOffAndPersistsOptIn() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -100,6 +132,7 @@ final class AppStateResilienceTests: XCTestCase {
     func testPrepareStorageTreatsKeychainFailureAsNonfatal() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
+        ApplicationSettingsStore(defaults: fixture.defaults).setAppLanguage(.czech)
         let appState = makeAppState(
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
@@ -114,7 +147,7 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.prepareStorage()
 
         XCTAssertEqual(appState.status, .idle)
-        XCTAssertTrue(appState.lastError?.contains("API key could not be loaded") == true)
+        XCTAssertTrue(appState.lastError?.contains("Klíč OpenAI API se nepodařilo načíst") == true)
         XCTAssertFalse(appState.hasOpenAIAPIKey)
     }
 
@@ -244,7 +277,13 @@ final class AppStateResilienceTests: XCTestCase {
         try await waitUntil { appState.status == .completed || appState.status == .failed }
 
         XCTAssertEqual(appState.status, .completed)
-        XCTAssertTrue(appState.lastError?.contains("stopped safely") == true)
+        XCTAssertEqual(
+            appState.lastError,
+            AppLocalization.message(
+                .captureFailedSafeStop,
+                language: appState.selectedAppLanguage
+            )
+        )
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
         let persisted = try decodeMetadata(at: session.manifestURL)
         XCTAssertEqual(persisted.systemAudio?.failureReason, "Simulated required capture failure")
@@ -367,7 +406,13 @@ final class AppStateResilienceTests: XCTestCase {
         try await waitUntil { appState.status == .completed || appState.status == .failed }
 
         XCTAssertEqual(appState.status, .completed)
-        XCTAssertTrue(appState.lastError?.contains("system audio capture stalled") == true)
+        XCTAssertEqual(
+            appState.lastError,
+            AppLocalization.message(
+                .captureStalledSafeStop,
+                language: appState.selectedAppLanguage
+            )
+        )
         let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
         XCTAssertTrue(log.contains("System audio capture stopped producing buffers."))
     }
@@ -410,7 +455,8 @@ final class AppStateResilienceTests: XCTestCase {
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
             captureMonitoringConfiguration: monitoring,
-            storageStatusProvider: storageStatusProvider
+            storageStatusProvider: storageStatusProvider,
+            automaticallyManageVADModel: false
         )
     }
 

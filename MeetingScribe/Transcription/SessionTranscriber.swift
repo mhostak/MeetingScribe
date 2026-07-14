@@ -85,6 +85,11 @@ actor SessionTranscriber: SessionTranscribing {
         if systemTranscript.segments.isEmpty {
             warnings.append("No speech was detected in system audio.")
         }
+        appendAutomaticLanguageFallbackWarning(
+            for: systemTranscript,
+            requestedLanguage: language,
+            warnings: &warnings
+        )
 
         var microphoneTranscript: TrackTranscript?
         if let microphone = finalization.microphone {
@@ -109,6 +114,11 @@ actor SessionTranscriber: SessionTranscribing {
                 if transcript.segments.isEmpty {
                     warnings.append("No speech was detected in microphone audio.")
                 }
+                appendAutomaticLanguageFallbackWarning(
+                    for: transcript,
+                    requestedLanguage: language,
+                    warnings: &warnings
+                )
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -159,5 +169,20 @@ actor SessionTranscriber: SessionTranscribing {
     private func persist(_ transcript: MergedTranscript, to url: URL) throws {
         let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)
         try data.write(to: url, options: .atomic)
+    }
+
+    private func appendAutomaticLanguageFallbackWarning(
+        for transcript: TrackTranscript,
+        requestedLanguage: TranscriptionLanguage,
+        warnings: inout [String]
+    ) {
+        guard requestedLanguage != .automatic,
+              transcript.detectedLanguage != requestedLanguage.rawValue else {
+            return
+        }
+        warnings.append(
+            "Strongly repetitive output for the selected language was replaced "
+                + "using automatic language detection (\(transcript.detectedLanguage))."
+        )
     }
 }
