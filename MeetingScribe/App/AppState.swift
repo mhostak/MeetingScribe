@@ -160,7 +160,7 @@ final class AppState: ObservableObject {
             hasOpenAIAPIKey = try await apiKeyStore.load() != nil
         } catch {
             hasOpenAIAPIKey = false
-            lastError = "The OpenAI API key could not be loaded: \(error.localizedDescription)"
+            lastError = localized(.openAIKeyLoad(localized(error)))
         }
 
         await refreshWhisperModelStatus()
@@ -341,7 +341,7 @@ final class AppState: ObservableObject {
             await refreshRecoveryCandidates()
             lastError = nil
         } catch {
-            lastError = error.localizedDescription
+            lastError = localized(error)
         }
     }
 
@@ -404,8 +404,8 @@ final class AppState: ObservableObject {
 
     func chooseOutputFolder() {
         let panel = NSOpenPanel()
-        panel.title = "Choose Markdown output folder"
-        panel.prompt = "Choose"
+        panel.title = localized(.chooseOutputFolderTitle)
+        panel.prompt = localized(.choose)
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -418,7 +418,7 @@ final class AppState: ObservableObject {
             outputFolderURL = url.standardizedFileURL
             lastError = nil
         } catch {
-            lastError = "The output folder could not be saved: \(error.localizedDescription)"
+            lastError = localized(.outputFolderSave(localized(error)))
         }
     }
 
@@ -454,7 +454,7 @@ final class AppState: ObservableObject {
         guard !isSavingOpenAIAPIKey else { return }
         let normalized = openAIAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else {
-            lastError = AnalysisError.missingAPIKey.localizedDescription
+            lastError = localized(AnalysisError.missingAPIKey)
             return
         }
 
@@ -466,7 +466,7 @@ final class AppState: ObservableObject {
             hasOpenAIAPIKey = true
             lastError = nil
         } catch {
-            lastError = "The OpenAI API key could not be saved: \(error.localizedDescription)"
+            lastError = localized(.openAIKeySave(localized(error)))
         }
     }
 
@@ -479,7 +479,7 @@ final class AppState: ObservableObject {
             persistAnalysisSettings()
             lastError = nil
         } catch {
-            lastError = "The OpenAI API key could not be removed: \(error.localizedDescription)"
+            lastError = localized(.openAIKeyRemove(localized(error)))
         }
     }
 
@@ -530,34 +530,28 @@ final class AppState: ObservableObject {
             lastError = nil
         } catch {
             launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
-            lastError = "Launch at login could not be updated: \(error.localizedDescription)"
+            lastError = localized(.launchAtLogin(localized(error)))
         }
     }
 
     var markdownFileNameTemplateError: String? {
         let unsupported = MarkdownFileNameTemplate.unsupportedTokens(in: markdownFileNameTemplate)
         guard unsupported.isEmpty else {
-            return "Unsupported token: \(unsupported.joined(separator: ", "))"
+            return localized(.unsupportedToken(unsupported.joined(separator: ", ")))
         }
         return nil
     }
 
-    var whisperModelStatusText: String {
-        switch whisperModelStatus {
-        case .missing:
-            return "Missing"
-        case let .ready(_, sizeBytes):
-            return "Ready (\(ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)))"
-        case let .invalid(reason):
-            return "Invalid: \(reason)"
-        }
-    }
-
     func refreshWhisperModelStatus() async {
         do {
-            whisperModelStatus = try await modelManager.status(for: selectedWhisperModel)
+            let status = try await modelManager.status(for: selectedWhisperModel)
+            if case .invalid = status {
+                whisperModelStatus = .invalid(reason: localized(.whisperModelInvalidFile))
+            } else {
+                whisperModelStatus = status
+            }
         } catch {
-            whisperModelStatus = .invalid(reason: error.localizedDescription)
+            whisperModelStatus = .invalid(reason: localized(error))
         }
     }
 
@@ -578,15 +572,15 @@ final class AppState: ObservableObject {
             }
             await refreshWhisperModelStatus()
         } catch {
-            lastError = error.localizedDescription
+            lastError = localized(.whisperModelDownload(localized(error)))
             await refreshWhisperModelStatus()
         }
     }
 
     func importSelectedWhisperModel() async {
         let panel = NSOpenPanel()
-        panel.title = "Import Whisper model"
-        panel.prompt = "Import"
+        panel.title = localized(.importWhisperModelTitle)
+        panel.prompt = localized(.importAction)
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -603,7 +597,7 @@ final class AppState: ObservableObject {
             lastError = nil
             await refreshWhisperModelStatus()
         } catch {
-            lastError = "The Whisper model could not be imported: \(error.localizedDescription)"
+            lastError = localized(.whisperModelImport(localized(error)))
             await refreshWhisperModelStatus()
         }
     }
@@ -614,7 +608,7 @@ final class AppState: ObservableObject {
             lastError = nil
             await refreshWhisperModelStatus()
         } catch {
-            lastError = "The Whisper model could not be deleted: \(error.localizedDescription)"
+            lastError = localized(.whisperModelDelete(localized(error)))
             await refreshWhisperModelStatus()
         }
     }
@@ -628,12 +622,12 @@ final class AppState: ObservableObject {
                 try? await processingLogger.log(.recoveryDetected, for: candidate.session)
             }
             if !result.issues.isEmpty, lastError == nil {
-                lastError = "Some recording folders could not be recovered. Open the recordings folder for details."
+                lastError = localized(.recoveryIssues)
             }
         } catch {
             recoveryCandidates = []
             recoveryIssues = []
-            lastError = "Recovery scan failed: \(error.localizedDescription)"
+            lastError = localized(.recoveryScan(localized(error)))
         }
     }
 
@@ -875,7 +869,7 @@ final class AppState: ObservableObject {
                 attributes: [.reason(error.localizedDescription)]
             )
             if lastError == nil {
-                lastError = "Processing completed, but source CAF files were preserved: \(error.localizedDescription)"
+                lastError = localized(.sourceCAFPreserved(localized(error)))
             }
             return updated
         }
@@ -974,7 +968,7 @@ final class AppState: ObservableObject {
             modelStatus = try await modelManager.status(for: descriptor)
             whisperModelStatus = modelStatus
         } catch {
-            lastError = "Recording saved. Whisper model check failed: \(error.localizedDescription)"
+            lastError = localized(.recordingSavedModelCheck(localized(error)))
             return TranscriptionOutcome(
                 metadata: SessionTranscriptionMetadata(
                     status: .failed,
@@ -997,7 +991,13 @@ final class AppState: ObservableObject {
             } else {
                 reason = "Download or import the selected Whisper model to transcribe this recording."
             }
-            lastError = "Recording saved. \(reason)"
+            if case .invalid = modelStatus {
+                lastError = localized(
+                    .recordingSaved(localized(.whisperModelInvalidFile))
+                )
+            } else {
+                lastError = localized(.whisperModelRequired)
+            }
             return TranscriptionOutcome(
                 metadata: SessionTranscriptionMetadata(
                     status: .modelMissing,
@@ -1019,7 +1019,8 @@ final class AppState: ObservableObject {
             } catch {
                 let reason = "The voice activity detection model could not be prepared: "
                     + error.localizedDescription
-                lastError = "Recording saved. \(reason)"
+                let localizedReason = localized(.vadModelPreparation(localized(error)))
+                lastError = localized(.recordingSaved(localizedReason))
                 return TranscriptionOutcome(
                     metadata: SessionTranscriptionMetadata(
                         status: .failed,
@@ -1049,7 +1050,7 @@ final class AppState: ObservableObject {
                 mergedTranscript: result.mergedTranscript
             )
         } catch {
-            lastError = "Recording saved. Transcription failed: \(error.localizedDescription)"
+            lastError = localized(.recordingSavedTranscription(localized(error)))
             return TranscriptionOutcome(
                 metadata: SessionTranscriptionMetadata(
                     status: .failed,
@@ -1093,7 +1094,7 @@ final class AppState: ObservableObject {
                 failureReason: nil
             )
         } catch {
-            lastError = "Transcript saved. Markdown export failed: \(error.localizedDescription)"
+            lastError = localized(.transcriptSavedMarkdown(localized(error)))
             return SessionOutputMetadata(
                 status: .failed,
                 markdownFileName: nil,
@@ -1120,7 +1121,7 @@ final class AppState: ObservableObject {
             try transition(to: .analyzing)
             guard let apiKey = try await apiKeyStore.load(), !apiKey.isEmpty else {
                 let error = AnalysisError.missingAPIKey
-                lastError = "Transcript saved. AI analysis skipped: \(error.localizedDescription)"
+                lastError = localized(.transcriptSavedAnalysisSkipped(localized(error)))
                 return AnalysisOutcome(
                     metadata: SessionAnalysisMetadata(
                         status: .missingAPIKey,
@@ -1163,7 +1164,7 @@ final class AppState: ObservableObject {
                 analysis: run.analysis
             )
         } catch {
-            lastError = "Transcript saved. AI analysis failed: \(error.localizedDescription)"
+            lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
             return AnalysisOutcome(
                 metadata: SessionAnalysisMetadata(
                     status: .failed,
@@ -1182,7 +1183,7 @@ final class AppState: ObservableObject {
 
     private func setFailure(_ error: Error) {
         stopCaptureMonitoring()
-        lastError = error.localizedDescription
+        lastError = localized(error)
         if let activeStep = processingSteps.first(where: { $0.state == .active })?.id {
             setProcessingStep(activeStep, to: .failed)
         }
@@ -1192,9 +1193,17 @@ final class AppState: ObservableObject {
                 try stateMachine.transition(to: .failed)
                 status = stateMachine.status
             } catch {
-                lastError = "\(lastError ?? "Unknown error") \(error.localizedDescription)"
+                lastError = "\(lastError ?? localized(.unknownError)) \(localized(error))"
             }
         }
+    }
+
+    private func localized(_ message: AppUserMessage) -> String {
+        AppLocalization.message(message, language: selectedAppLanguage)
+    }
+
+    private func localized(_ error: Error) -> String {
+        AppLocalization.error(error, language: selectedAppLanguage)
     }
 
     private func resetProcessingProgress() {
@@ -1236,7 +1245,7 @@ final class AppState: ObservableObject {
                         ?? "System audio capture failed."
                     if await self.stopRecordingForCaptureFailure(
                         reason: reason,
-                        message: "Recording was stopped safely because system audio capture failed: \(reason) Existing audio was preserved."
+                        message: self.localized(.captureFailedSafeStop)
                     ) {
                         break
                     }
@@ -1251,7 +1260,7 @@ final class AppState: ObservableObject {
                     let reason = "System audio capture stopped producing buffers."
                     if await self.stopRecordingForCaptureFailure(
                         reason: reason,
-                        message: "Recording was stopped safely because system audio capture stalled. Existing audio was preserved."
+                        message: self.localized(.captureStalledSafeStop)
                     ) {
                         break
                     }
@@ -1284,7 +1293,7 @@ final class AppState: ObservableObject {
                         ]
                     )
                 }
-                let message = "Recording was stopped safely because free disk space became critically low. Existing audio was preserved."
+                let message = self.localized(.lowStorageSafeStop)
                 self.lastError = message
                 await self.stopRecording()
                 self.lastError = message

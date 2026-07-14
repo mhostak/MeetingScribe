@@ -115,6 +115,8 @@ Session `2026-07-13T08-07-22Z_777771` completed the 60-minute Microsoft Teams ca
 
 The legacy-pipeline resource validation used signed build commit `0d0add2` and session `2026-07-13T12-26-50Z_D5C621`. The controlled recording ran for 62 minutes 18 seconds. Across 58 one-minute samples, CPU averaged 4.06%, RSS stayed between approximately 34 and 48 MB, and physical footprint changed from 39 MB near the start to 40 MB near the end. Both CAF files grew continuously and approximately 8.9 GiB remained free. Finalization completed without warnings, all artifacts remained readable, and optimized Large v3 Turbo transcription completed in 11 minutes 19 seconds. Repeat the same observation with the direct-PCM build before treating its capture path as manually accepted.
 
+The direct-PCM implementation has passed targeted real-hardware functional validation. Session `2026-07-14T07-21-37Z_5F729F` captured readable dual-track 16 kHz mono Int16 WAV files for approximately 122 seconds, transcribed both tracks without warnings, and exported Markdown. Session `2026-07-14T09-11-34Z_34A0C1` repeated direct dual-track capture for approximately 193 seconds and completed the same pipeline. The opt-in synthetic one-hour writer test also passed. These results accept the feature implementation but do not satisfy this section's 60-minute real resource-observation requirement because the existing direct-PCM sessions are short and do not persist the application commit.
+
 Pass criteria:
 
 - buffer counters continue increasing;

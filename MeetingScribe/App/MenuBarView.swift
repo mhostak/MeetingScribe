@@ -88,7 +88,6 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .help("Settings")
             .accessibilityLabel("Settings")
-
             Button {
                 NSApplication.shared.terminate(nil)
             } label: {
