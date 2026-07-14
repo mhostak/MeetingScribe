@@ -285,38 +285,7 @@ struct MenuBarView: View {
 
     private var completedContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            messageBanner(
-                "Meeting processed successfully",
-                color: .green,
-                icon: "checkmark.circle.fill"
-            )
-
-            sessionSummary(appState.lastCompletedSession, includesSegments: true)
-
-            if appState.canOpenLastMarkdownInObsidian {
-                Button {
-                    appState.openLastMarkdownInObsidian()
-                } label: {
-                    Label("Open in Obsidian", systemImage: "arrow.up.forward.app")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
-
-            HStack {
-                Button {
-                    appState.openLastMarkdown()
-                } label: {
-                    Label("Open Markdown", systemImage: "doc.text")
-                }
-                .disabled(appState.lastMarkdownURL == nil)
-
-                Spacer()
-
-                Button("Show in Finder") { appState.revealLastMarkdown() }
-                    .disabled(appState.lastMarkdownURL == nil)
-            }
+            completedBanner
 
             Divider()
 
@@ -331,6 +300,31 @@ struct MenuBarView: View {
             }
             .buttonStyle(.borderedProminent)
         }
+    }
+
+    private var completedBanner: some View {
+        Button {
+            guard let session = appState.lastCompletedSession else { return }
+            appState.requestRecordingsOverview(for: session)
+            openWindow(id: "recordings")
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark.circle.fill")
+                Text("Meeting processed successfully")
+                Spacer()
+                Image(systemName: "chevron.right")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.green)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.green.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(appState.lastCompletedSession == nil)
+        .help("Show completed recording")
+        .accessibilityLabel("Show completed recording")
     }
 
     private var failedContent: some View {

@@ -4,6 +4,7 @@ import SwiftUI
 struct RecordingsWindow: View {
     @ObservedObject var appState: AppState
     @StateObject private var model: RecordingsWindowModel
+    @State private var focusedSessionID: String?
 
     init(appState: AppState) {
         self.appState = appState
@@ -34,17 +35,27 @@ struct RecordingsWindow: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(model.entriesForSelectedDate) { entry in
-                            RecordingSessionRow(
-                                entry: entry,
-                                liveStatus: liveStatus(for: entry)
-                            )
-                            Divider()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(model.entriesForSelectedDate) { entry in
+                                RecordingSessionRow(
+                                    entry: entry,
+                                    liveStatus: liveStatus(for: entry),
+                                    isFocused: entry.id == focusedSessionID
+                                )
+                                .id(entry.id)
+                            }
+                        }
+                        .padding()
+                    }
+                    .task(id: focusedSessionID) {
+                        guard let focusedSessionID else { return }
+                        await Task.yield()
+                        withAnimation {
+                            proxy.scrollTo(focusedSessionID, anchor: .center)
                         }
                     }
-                    .padding(.horizontal)
                 }
             }
 
@@ -54,12 +65,25 @@ struct RecordingsWindow: View {
         }
         .frame(minWidth: 760, minHeight: 460)
         .environment(\.locale, appState.selectedAppLanguage.locale)
-        .task { await model.reload() }
+        .task {
+            if let request = appState.recordingsNavigationRequest {
+                await focus(request)
+            } else {
+                await model.reload()
+            }
+        }
         .onChange(of: appState.status) { _, _ in
             Task { await model.reload() }
         }
         .onChange(of: appState.lastCompletedSession?.metadata.id) { _, _ in
             Task { await model.reload() }
+        }
+        .onChange(of: appState.recordingsNavigationRequest) { _, request in
+            guard let request else { return }
+            Task { await focus(request) }
+        }
+        .onChange(of: model.selectedDate) { _, _ in
+            focusedSessionID = nil
         }
     }
 
@@ -99,6 +123,15 @@ struct RecordingsWindow: View {
         return appState.status
     }
 
+    private func focus(_ request: RecordingsNavigationRequest) async {
+        model.selectDate(containing: request.occurredAt)
+        await model.reload()
+        guard model.entriesForSelectedDate.contains(where: { $0.id == request.sessionID }) else {
+            return
+        }
+        focusedSessionID = request.sessionID
+    }
+
     private var issuesFooter: some View {
         VStack(alignment: .leading, spacing: 4) {
             Label("Some session folders could not be read.", systemImage: "exclamationmark.triangle.fill")
@@ -118,45 +151,119 @@ struct RecordingsWindow: View {
 private struct RecordingSessionRow: View {
     let entry: SessionCatalogEntry
     let liveStatus: AppStatus?
+    let isFocused: Bool
 
     private let obsidianService = ObsidianService()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(entry.session.metadata.title)
                     .font(.headline)
-                Text(timeAndDuration)
+
+                Spacer(minLength: 12)
+
+                statusBadge
+            }
+
+            HStack(spacing: 16) {
+                Label(timeText, systemImage: "clock")
+
+                if let durationText {
+                    Label(durationText, systemImage: "timer")
+                }
+
+                if let segmentCount = entry.session.metadata.transcription?.mergedSegmentCount {
+                    Label {
+                        Text(verbatim: "\(segmentCount) ") + Text("segments")
+                    } icon: {
+                        Image(systemName: "text.bubble")
+                    }
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+
+            if let markdownFileName {
+                Label(markdownFileName, systemImage: "doc.text")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                if let message {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(statusColor)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            Spacer(minLength: 16)
+            if let message {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(statusColor)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-            VStack(alignment: .trailing, spacing: 8) {
-                statusBadge
-                HStack(spacing: 6) {
-                    ArtifactBadge(title: "Audio", state: entry.audio)
-                    ArtifactBadge(title: "Transcript", state: entry.transcript)
-                    ArtifactBadge(title: "Markdown", state: entry.markdown)
+            HStack(spacing: 6) {
+                ArtifactBadge(title: "Audio", state: entry.audio)
+                ArtifactBadge(title: "Transcript", state: entry.transcript)
+                ArtifactBadge(title: "Markdown", state: entry.markdown)
+            }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Button {
+                    if let obsidianURL {
+                        NSWorkspace.shared.open(obsidianURL)
+                    }
+                } label: {
+                    Label("Open in Obsidian", systemImage: "arrow.up.forward.app")
                 }
-                actionMenu
+                .buttonStyle(.borderedProminent)
+                .disabled(obsidianURL == nil)
+
+                Button {
+                    if let markdownURL {
+                        NSWorkspace.shared.open(markdownURL)
+                    }
+                } label: {
+                    Label("Open Markdown", systemImage: "doc.text")
+                }
+                .disabled(markdownURL == nil)
+
+                Spacer()
+
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([finderTarget])
+                } label: {
+                    Label("Show in Finder", systemImage: "folder")
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(14)
+        .background(
+            isFocused ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay {
+            if isFocused {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.accentColor.opacity(0.65), lineWidth: 1)
             }
         }
-        .padding(.vertical, 14)
         .contextMenu { actionItems }
     }
 
-    private var timeAndDuration: String {
-        let time = entry.occurredAt.formatted(date: .omitted, time: .shortened)
-        guard let duration = entry.duration else { return time }
-        return "\(time) · \(Duration.seconds(duration).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated)))"
+    private var timeText: String {
+        entry.occurredAt.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var durationText: String? {
+        guard let duration = entry.duration else { return nil }
+        let elapsed = max(0, Int(duration))
+        return String(
+            format: "%02d:%02d:%02d",
+            elapsed / 3_600,
+            (elapsed % 3_600) / 60,
+            elapsed % 60
+        )
     }
 
     private var statusBadge: some View {
@@ -168,15 +275,21 @@ private struct RecordingSessionRow: View {
             .background(statusColor.opacity(0.14), in: Capsule())
     }
 
-    @ViewBuilder
-    private var actionMenu: some View {
-        Menu {
-            actionItems
-        } label: {
-            Label("Actions", systemImage: "ellipsis.circle")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
+    private var markdownURL: URL? {
+        guard case let .available(url) = entry.markdown else { return nil }
+        return url
+    }
+
+    private var obsidianURL: URL? {
+        markdownURL.flatMap(obsidianService.openURL(for:))
+    }
+
+    private var markdownFileName: String? {
+        markdownURL?.lastPathComponent ?? entry.session.metadata.output?.markdownFileName
+    }
+
+    private var finderTarget: URL {
+        markdownURL ?? entry.session.manifestURL
     }
 
     @ViewBuilder
@@ -185,11 +298,11 @@ private struct RecordingSessionRow: View {
             NSWorkspace.shared.activateFileViewerSelecting([entry.session.manifestURL])
         }
 
-        if case let .available(markdownURL) = entry.markdown {
+        if let markdownURL {
             Button("Open Markdown") {
                 NSWorkspace.shared.open(markdownURL)
             }
-            if let obsidianURL = obsidianService.openURL(for: markdownURL) {
+            if let obsidianURL {
                 Button("Open in Obsidian") {
                     NSWorkspace.shared.open(obsidianURL)
                 }

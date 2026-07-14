@@ -36,6 +36,10 @@ final class RecordingsWindowModel: ObservableObject {
         selectedDate = calendar.startOfDay(for: Date())
     }
 
+    func selectDate(containing date: Date) {
+        selectedDate = calendar.startOfDay(for: date)
+    }
+
     func reload() async {
         guard !isLoading else { return }
         isLoading = true

@@ -9,6 +9,12 @@ struct CaptureMonitoringConfiguration: Sendable {
     var stalledSystemAudioCheckCount = 3
 }
 
+struct RecordingsNavigationRequest: Equatable, Sendable {
+    let requestID: UUID
+    let sessionID: String
+    let occurredAt: Date
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var status: AppStatus = .idle
@@ -25,6 +31,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isSavingOpenAIAPIKey = false
     @Published private(set) var recoveryCandidates: [SessionRecoveryCandidate] = []
     @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
+    @Published private(set) var recordingsNavigationRequest: RecordingsNavigationRequest?
     @Published private(set) var isRecoveringSession = false
     @Published private(set) var processingSteps = ProcessingStep.initial
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
@@ -340,6 +347,14 @@ final class AppState: ObservableObject {
 
     func revealRecovery(_ candidate: SessionRecoveryCandidate) {
         NSWorkspace.shared.activateFileViewerSelecting([candidate.session.manifestURL])
+    }
+
+    func requestRecordingsOverview(for session: RecordingSession) {
+        recordingsNavigationRequest = RecordingsNavigationRequest(
+            requestID: UUID(),
+            sessionID: session.metadata.id,
+            occurredAt: session.metadata.startedAt ?? session.metadata.createdAt
+        )
     }
 
     func reset() {
