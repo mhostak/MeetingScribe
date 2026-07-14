@@ -1,6 +1,6 @@
 # MeetingScribe
 
-Native macOS menu-bar application for recording meeting audio and producing local transcripts. The popover is focused on the recording workflow, while configuration lives in a native Settings window with General, Transcription, AI, Output, and Advanced sections.
+Native macOS menu-bar application for recording meeting audio and producing local transcripts. The popover is focused on the recording workflow, while configuration lives in a native Settings window with General, Transcription, AI, Output, and Advanced sections. The interface can follow the system language or explicitly use Slovak, Czech, or English; app-owned dynamic errors and native file-picker prompts follow the same selection, while provider and operating-system diagnostic details remain verbatim for troubleshooting.
 
 ## Current scope
 
@@ -62,7 +62,7 @@ Each session has a newline-delimited JSON `processing.log`. It contains only tec
 
 ## Stabilization testing
 
-The current standard SwiftPM baseline contains 147 tests, including focused coverage for streaming conversion, checkpointed and repaired WAV headers, direct-PCM finalization, legacy CAF cleanup gates, manifest compatibility, localized Markdown, configurable file names, model management, and interrupted-recording recovery. Hardware-, credential-, model-, session-, or fixture-dependent tests skip unless explicitly enabled. The Xcode app and test targets use Swift 6 with complete strict-concurrency checking. GitHub Actions runs both the SwiftPM suite and the shared Xcode scheme on a pinned `macos-26` runner, so the SwiftUI application layer cannot be skipped by a core-only build. The opt-in long-session test now generates one hour of 16 kHz mono Int16 output, approximately 115 MB per track. These automated counts describe the current working tree; release acceptance still requires the manual hardware matrix below.
+The current standard SwiftPM baseline contains 156 tests, with 9 hardware-, credential-, model-, session-, stress-, or fixture-dependent tests skipped unless explicitly enabled and 0 failures. Coverage includes streaming conversion, checkpointed and repaired WAV headers, direct-PCM finalization, legacy CAF cleanup gates, manifest compatibility, localized UI errors and Markdown, configurable file names, model management, and interrupted-recording recovery. The Xcode app and test targets use Swift 6 with complete strict-concurrency checking. GitHub Actions runs both the SwiftPM suite and the shared Xcode scheme on a pinned `macos-26` runner, so the SwiftUI application layer cannot be skipped by a core-only build. The opt-in long-session test generates one hour of 16 kHz mono Int16 output, approximately 115 MB per track; it passed on 2026-07-14. These automated counts describe the current working tree; release acceptance still requires the manual hardware matrix below.
 
 AppState-level integration tests cover recovery from a preserved merged transcript and a safe automatic stop after required system-audio capture fails. These tests verify the resulting Markdown, manifest, processing log, preserved audio, and recovery status rather than only isolated model types.
 

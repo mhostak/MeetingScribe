@@ -425,3 +425,17 @@ The actual optimized dual-track result is approximately 60% faster than the orig
 - [x] Run the current full Xcode app/test scheme from commit `1e99ca1` or later and record the result. The signed scheme completed with `TEST SUCCEEDED`; the current SwiftPM baseline is 133 executed, 124 passed, 9 optional tests skipped, and 0 failed.
 
 Phase 10 is complete. Every required automated, hardware, meeting-application, recovery, audio-route, language-quality, long-recording, resource-stability, finalization, transcription, and artifact-preservation row has recorded passing evidence.
+
+## Direct-PCM follow-up — 2026-07-14
+
+The direct 16 kHz mono Int16 capture path has additional real-hardware functional evidence after the legacy-pipeline phase 10 acceptance:
+
+- session `2026-07-14T07-21-37Z_5F729F` recorded 122.14 seconds of system audio and 122.00 seconds of microphone audio directly into `system-16k.wav` and `microphone-16k.wav`;
+- both files are readable WAVE files reporting one channel, 16,000 Hz, and Int16 samples;
+- system capture produced 6,107 buffers and 1,954,234 frames; microphone capture produced 1,220 buffers and 1,951,737 frames;
+- finalization reused the direct PCM files without warnings, Large v3 Turbo completed both tracks with 19 system and 18 microphone segments, and Markdown export completed;
+- session `2026-07-14T09-11-34Z_34A0C1` independently recorded 193.04 seconds of system audio and 192.90 seconds of microphone audio through the same direct path and completed finalization, transcription, and export;
+- the opt-in one-hour incremental writer test passed on the current working tree and produced a readable 3,600-second, 16 kHz mono Int16 WAV before deleting its temporary fixture;
+- the standard SwiftPM suite passed 156 tests with 9 optional skips and 0 failures, and the complete Xcode app/test scheme reported `TEST SUCCEEDED`.
+
+This evidence accepts the direct-PCM feature implementation and its real dual-track end-to-end path. It does not replace the separate 60-minute real direct-PCM resource observation required by the stabilization protocol: the application commit was not persisted in the existing July 14 session manifests, and neither session lasted 60 minutes. That release-performance follow-up remains open and must not be inferred from the synthetic one-hour writer test.
