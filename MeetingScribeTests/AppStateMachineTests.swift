@@ -73,4 +73,21 @@ final class AppStateMachineTests: XCTestCase {
             }
         }
     }
+
+    func testMenuBarIconStateTracksRecordingProcessingAndAttention() {
+        XCTAssertEqual(MenuBarIconState(status: .idle, hasRecovery: false), .idle)
+        XCTAssertEqual(MenuBarIconState(status: .recording, hasRecovery: false), .recording)
+
+        for status in AppStatus.allCases where status.isProcessing {
+            XCTAssertEqual(MenuBarIconState(status: status, hasRecovery: false), .processing)
+        }
+
+        XCTAssertEqual(MenuBarIconState(status: .failed, hasRecovery: false), .attention)
+        XCTAssertEqual(MenuBarIconState(status: .idle, hasRecovery: true), .attention)
+    }
+
+    func testActiveMenuBarStatesTakePriorityOverRecoveryBadge() {
+        XCTAssertEqual(MenuBarIconState(status: .recording, hasRecovery: true), .recording)
+        XCTAssertEqual(MenuBarIconState(status: .transcribing, hasRecovery: true), .processing)
+    }
 }

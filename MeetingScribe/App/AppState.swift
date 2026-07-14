@@ -775,6 +775,7 @@ final class AppState: ObservableObject {
             )
             currentSession = nil
             lastCompletedSession = completedSession
+            meetingTitle = ""
             if completedSession.metadata.recovery?.status == .completed {
                 try? await processingLogger.log(.recoveryCompleted, for: completedSession)
             }
