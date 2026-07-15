@@ -92,6 +92,8 @@ final class AppState: ObservableObject {
     private var hasPreparedStorage = false
     private var isPreparingStorage = false
     private var fluidAudioInstallTasks: [FluidAudioModelKind: Task<Void, Never>] = [:]
+    private var startRecordingOperation: (id: UUID, task: Task<Void, Never>)?
+    private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -225,6 +227,23 @@ final class AppState: ObservableObject {
     }
 
     func startRecording() async {
+        if let operation = startRecordingOperation {
+            await operation.task.value
+            return
+        }
+        let operationID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStartRecording()
+        }
+        startRecordingOperation = (operationID, task)
+        await task.value
+        if startRecordingOperation?.id == operationID {
+            startRecordingOperation = nil
+        }
+    }
+
+    private func performStartRecording() async {
         do {
             if let markdownFileNameTemplateError {
                 lastError = markdownFileNameTemplateError
@@ -254,8 +273,9 @@ final class AppState: ObservableObject {
 
             do {
                 captureDiagnostics = try await captureCoordinator.start(for: session)
+                try transition(to: .recording)
             } catch {
-                let diagnostics = await captureCoordinator.diagnostics()
+                let diagnostics = await captureCoordinator.stop()
                 let failedSession = try? await sessionManager.failSession(
                     reason: error.localizedDescription,
                     systemAudio: diagnostics.systemAudio.sessionMetadata,
@@ -272,7 +292,6 @@ final class AppState: ObservableObject {
                 throw error
             }
 
-            try transition(to: .recording)
             try? await processingLogger.log(.captureStarted, for: session)
             startCaptureMonitoring()
         } catch {
@@ -281,6 +300,23 @@ final class AppState: ObservableObject {
     }
 
     func stopRecording() async {
+        if let operation = stopRecordingOperation {
+            await operation.task.value
+            return
+        }
+        let operationID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStopRecording()
+        }
+        stopRecordingOperation = (operationID, task)
+        await task.value
+        if stopRecordingOperation?.id == operationID {
+            stopRecordingOperation = nil
+        }
+    }
+
+    private func performStopRecording() async {
         do {
             try transition(to: .stopping)
             resetProcessingProgress()

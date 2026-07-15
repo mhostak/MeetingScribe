@@ -1,9 +1,18 @@
 import Foundation
 
 actor CaptureCoordinator {
+    private enum Lifecycle: Equatable {
+        case idle
+        case starting
+        case capturing
+        case stopping
+    }
+
     private let systemAudioCapture: any AudioCaptureService
     private let microphoneCapture: any AudioCaptureService
-    private var isCapturing = false
+    private var lifecycle = Lifecycle.idle
+    private var startTask: Task<CaptureSessionDiagnostics, Error>?
+    private var stopTask: Task<CaptureSessionDiagnostics, Never>?
 
     init(
         systemAudioCapture: any AudioCaptureService = SystemAudioCapture(),
@@ -14,35 +23,93 @@ actor CaptureCoordinator {
     }
 
     func start(for session: RecordingSession) async throws -> CaptureSessionDiagnostics {
-        guard !isCapturing else {
+        guard lifecycle == .idle else {
             throw AudioCaptureServiceError.alreadyCapturing
         }
+        lifecycle = .starting
 
-        try await systemAudioCapture.start(outputURL: session.systemAudioURL)
+        let systemAudioCapture = systemAudioCapture
+        let microphoneCapture = microphoneCapture
+        let task = Task<CaptureSessionDiagnostics, Error> {
+            do {
+                try Task.checkCancellation()
+                try await systemAudioCapture.start(outputURL: session.systemAudioURL)
+                try Task.checkCancellation()
+
+                do {
+                    try await microphoneCapture.start(outputURL: session.microphoneAudioURL)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // Microphone capture is optional. Its service persists the reason in
+                    // diagnostics while the required system audio stream keeps running.
+                }
+                try Task.checkCancellation()
+
+                async let systemDiagnostics = systemAudioCapture.diagnostics()
+                async let microphoneDiagnostics = microphoneCapture.diagnostics()
+                return await CaptureSessionDiagnostics(
+                    systemAudio: systemDiagnostics,
+                    microphone: microphoneDiagnostics
+                )
+            } catch {
+                // A service can fail after allocating capture resources, so rollback
+                // both tracks even when its start call did not return successfully.
+                async let systemStop = systemAudioCapture.stop()
+                async let microphoneStop = microphoneCapture.stop()
+                _ = await (systemStop, microphoneStop)
+                throw error
+            }
+        }
+        startTask = task
 
         do {
-            try await microphoneCapture.start(outputURL: session.microphoneAudioURL)
+            let diagnostics = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            startTask = nil
+            guard lifecycle == .starting else {
+                throw CancellationError()
+            }
+            lifecycle = .capturing
+            return diagnostics
         } catch {
-            // Microphone capture is optional. Its service persists the reason in
-            // diagnostics while the required system audio stream keeps running.
+            startTask = nil
+            if lifecycle == .starting {
+                lifecycle = .idle
+            }
+            throw error
         }
-
-        isCapturing = true
-        return await diagnostics()
     }
 
     func stop() async -> CaptureSessionDiagnostics {
-        guard isCapturing else {
+        if lifecycle == .stopping, let stopTask {
+            return await stopTask.value
+        }
+        guard lifecycle != .idle else {
             return await diagnostics()
         }
 
-        async let systemDiagnostics = systemAudioCapture.stop()
-        async let microphoneDiagnostics = microphoneCapture.stop()
-        let diagnostics = await CaptureSessionDiagnostics(
-            systemAudio: systemDiagnostics,
-            microphone: microphoneDiagnostics
-        )
-        isCapturing = false
+        lifecycle = .stopping
+        let pendingStartTask = startTask
+        pendingStartTask?.cancel()
+        let systemAudioCapture = systemAudioCapture
+        let microphoneCapture = microphoneCapture
+        let task = Task<CaptureSessionDiagnostics, Never> {
+            _ = try? await pendingStartTask?.value
+            async let systemDiagnostics = systemAudioCapture.stop()
+            async let microphoneDiagnostics = microphoneCapture.stop()
+            return await CaptureSessionDiagnostics(
+                systemAudio: systemDiagnostics,
+                microphone: microphoneDiagnostics
+            )
+        }
+        stopTask = task
+        let diagnostics = await task.value
+        stopTask = nil
+        lifecycle = .idle
         return diagnostics
     }
 

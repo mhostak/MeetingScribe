@@ -258,6 +258,87 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(appState.status, .completed)
     }
 
+    func testConcurrentStartCallsShareOneRecordingOperation() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let systemCapture = SuspendedResilienceCaptureService()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+
+        let firstStart = Task { await appState.startRecording() }
+        await systemCapture.waitUntilStarted()
+        let secondStart = Task { await appState.startRecording() }
+        await Task.yield()
+
+        XCTAssertEqual(appState.status, .preparing)
+        await systemCapture.releaseStart()
+        await firstStart.value
+        await secondStart.value
+
+        let startCount = await systemCapture.startCount()
+        XCTAssertEqual(startCount, 1)
+        XCTAssertEqual(appState.status, .recording)
+        XCTAssertNil(appState.lastError)
+        await appState.stopRecording()
+    }
+
+    func testConcurrentStopCallsShareOneProcessingOperation() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        let systemCapture = ResilienceCaptureService()
+        let gate = BlockingFileServiceGate()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            processingFileService: BlockingExportProcessingFileService(gate: gate),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+        await appState.startRecording()
+
+        let firstStop = Task { await appState.stopRecording() }
+        let didReachExport = await gate.waitUntilBlocked()
+        XCTAssertTrue(didReachExport)
+        let secondStop = Task { await appState.stopRecording() }
+        await Task.yield()
+
+        let stopCountBeforeRelease = await systemCapture.stopCount()
+        XCTAssertEqual(stopCountBeforeRelease, 1)
+        gate.release()
+        await firstStop.value
+        await secondStop.value
+
+        let stopCount = await systemCapture.stopCount()
+        XCTAssertEqual(stopCount, 1)
+        XCTAssertEqual(appState.status, .completed)
+        XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
+    }
+
     func testRequiredSystemCaptureFailureTriggersSafeAutomaticStop() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -722,8 +803,11 @@ private actor FailingResilienceAPIKeyStore: APIKeyStoring {
 
 private actor ResilienceCaptureService: AudioCaptureService {
     private var current = AudioCaptureDiagnostics.empty
+    private var starts = 0
+    private var stops = 0
 
     func start(outputURL: URL) async throws {
+        starts += 1
         try Data("preserved mock audio".utf8).write(to: outputURL, options: .atomic)
         current = AudioCaptureDiagnostics(
             fileName: outputURL.lastPathComponent,
@@ -737,8 +821,13 @@ private actor ResilienceCaptureService: AudioCaptureService {
         )
     }
 
-    func stop() async -> AudioCaptureDiagnostics { current }
+    func stop() async -> AudioCaptureDiagnostics {
+        stops += 1
+        return current
+    }
     func diagnostics() async -> AudioCaptureDiagnostics { current }
+    func startCount() -> Int { starts }
+    func stopCount() -> Int { stops }
 
     func fail(reason: String) {
         current.failureReason = reason
@@ -756,6 +845,44 @@ private actor ResilienceCaptureService: AudioCaptureService {
             presentationTimestamp: current.lastPresentationTimestamp ?? 0
         )
     }
+}
+
+private actor SuspendedResilienceCaptureService: AudioCaptureService {
+    private var current = AudioCaptureDiagnostics.empty
+    private var starts = 0
+    private var startContinuation: CheckedContinuation<Void, Never>?
+    private var startedWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func start(outputURL: URL) async throws {
+        starts += 1
+        startedWaiters.forEach { $0.resume() }
+        startedWaiters.removeAll()
+        await withCheckedContinuation { continuation in
+            startContinuation = continuation
+        }
+        try Data("preserved mock audio".utf8).write(to: outputURL, options: .atomic)
+        current = AudioCaptureDiagnostics(
+            fileName: outputURL.lastPathComponent,
+            startedAt: Date()
+        )
+    }
+
+    func stop() async -> AudioCaptureDiagnostics { current }
+    func diagnostics() async -> AudioCaptureDiagnostics { current }
+
+    func waitUntilStarted() async {
+        guard starts == 0 else { return }
+        await withCheckedContinuation { continuation in
+            startedWaiters.append(continuation)
+        }
+    }
+
+    func releaseStart() {
+        startContinuation?.resume()
+        startContinuation = nil
+    }
+
+    func startCount() -> Int { starts }
 }
 
 private struct ResilienceAudioFinalizer: AudioFinalizing {
