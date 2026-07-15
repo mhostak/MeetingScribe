@@ -25,6 +25,7 @@ final class SpeakerPipelineTests: XCTestCase {
             session: fixture.session,
             transcript: fixture.transcript,
             systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 0,
             modelBundleURL: root.appendingPathComponent("speaker-diarization")
         )
 
@@ -50,6 +51,79 @@ final class SpeakerPipelineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.session.resolvedTranscriptURL.path))
     }
 
+    func testNonzeroSystemTimelineOffsetAlignsWordsWithDiarizationTurns() async throws {
+        let fixture = try makeFixture(systemTimelineOffsetSeconds: 5)
+        let result = try await SpeakerPipeline(diarizer: FixtureDiarizer(
+            result: diarizationResult()
+        )).process(
+            session: fixture.session,
+            transcript: fixture.transcript,
+            systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 5,
+            modelBundleURL: root.appendingPathComponent("speaker-diarization")
+        )
+
+        XCTAssertEqual(result.artifact?.schemaVersion, 2)
+        XCTAssertEqual(result.artifact?.sourceTimelineOffsetSeconds, 5)
+        XCTAssertEqual(
+            result.resolvedTranscript?.segments
+                .filter { $0.source == .system }
+                .map(\.speakerID),
+            ["speaker-001", "speaker-002"]
+        )
+        XCTAssertEqual(
+            result.resolvedTranscript?.segments
+                .filter { $0.source == .system }
+                .map(\.text),
+            ["Hello", "world."]
+        )
+    }
+
+    func testLegacyArtifactIsUpgradedWithSessionTimelineOffsetWithoutRediarization() async throws {
+        let fixture = try makeFixture(systemTimelineOffsetSeconds: 5)
+        let store = SpeakerArtifactStore()
+        let artifact = try store.makeArtifact(
+            sessionID: fixture.session.metadata.id,
+            result: diarizationResult(),
+            sourceAudioURL: fixture.audioURL,
+            transcript: fixture.transcript,
+            sourceTimelineOffsetSeconds: 5,
+            configurationRevision: "test"
+        )
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: TranscriptJSONCoder.makeEncoder().encode(artifact)
+            ) as? [String: Any]
+        )
+        object["schemaVersion"] = 1
+        object.removeValue(forKey: "sourceTimelineOffsetSeconds")
+        try JSONSerialization.data(withJSONObject: object)
+            .write(to: fixture.session.speakerDiarizationURL, options: .atomic)
+
+        let result = try await SpeakerPipeline(diarizer: FixtureDiarizer(
+            error: FixtureError.failed
+        )).process(
+            session: fixture.session,
+            transcript: fixture.transcript,
+            systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 5,
+            modelBundleURL: root.appendingPathComponent("speaker-diarization")
+        )
+
+        XCTAssertEqual(result.metadata.status, .completed)
+        XCTAssertEqual(result.artifact?.schemaVersion, 2)
+        XCTAssertEqual(result.artifact?.sourceTimelineOffsetSeconds, 5)
+        XCTAssertEqual(
+            result.resolvedTranscript?.segments
+                .filter { $0.source == .system }
+                .map(\.speakerID),
+            ["speaker-001", "speaker-002"]
+        )
+        let persisted = try store.load(from: fixture.session.speakerDiarizationURL)
+        XCTAssertEqual(persisted.schemaVersion, 2)
+        XCTAssertEqual(persisted.sourceTimelineOffsetSeconds, 5)
+    }
+
     func testMissingModelAndDiarizationFailurePreserveFallbackPath() async throws {
         let fixture = try makeFixture()
         let missing = try await SpeakerPipeline(diarizer: FixtureDiarizer(
@@ -58,6 +132,7 @@ final class SpeakerPipelineTests: XCTestCase {
             session: fixture.session,
             transcript: fixture.transcript,
             systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 0,
             modelBundleURL: nil
         )
         XCTAssertEqual(missing.metadata.status, .modelMissing)
@@ -70,6 +145,7 @@ final class SpeakerPipelineTests: XCTestCase {
             session: fixture.session,
             transcript: fixture.transcript,
             systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 0,
             modelBundleURL: root.appendingPathComponent("speaker-diarization")
         )
         XCTAssertEqual(failed.metadata.status, .failed)
@@ -87,6 +163,7 @@ final class SpeakerPipelineTests: XCTestCase {
                 session: fixture.session,
                 transcript: fixture.transcript,
                 systemAudioURL: fixture.audioURL,
+                systemTimelineOffsetSeconds: 0,
                 modelBundleURL: root.appendingPathComponent("speaker-diarization")
             )
             XCTFail("Expected cancellation")
@@ -108,6 +185,7 @@ final class SpeakerPipelineTests: XCTestCase {
             session: fixture.session,
             transcript: fixture.transcript,
             systemAudioURL: fixture.audioURL,
+            systemTimelineOffsetSeconds: 0,
             modelBundleURL: root.appendingPathComponent("speaker-diarization")
         )
         XCTAssertNotNil(pipelineResult.artifact)
@@ -147,6 +225,7 @@ final class SpeakerPipelineTests: XCTestCase {
             result: diarizationResult(),
             sourceAudioURL: fixture.audioURL,
             transcript: fixture.transcript,
+            sourceTimelineOffsetSeconds: 0,
             configurationRevision: "test"
         )
         try store.persist(artifact, to: fixture.session.speakerDiarizationURL)
@@ -186,7 +265,8 @@ final class SpeakerPipelineTests: XCTestCase {
     }
 
     private func makeFixture(
-        includeMarkdown: Bool = false
+        includeMarkdown: Bool = false,
+        systemTimelineOffsetSeconds: Double = 0
     ) throws -> (session: RecordingSession, transcript: MergedTranscript, audioURL: URL, markdownURL: URL?) {
         let audioURL = root.appendingPathComponent("system-16k.wav")
         try Data("audio-fixture".utf8).write(to: audioURL)
@@ -201,7 +281,7 @@ final class SpeakerPipelineTests: XCTestCase {
                 channelCount: 1,
                 totalFrames: 32_000,
                 durationSeconds: 2,
-                timelineOffsetSeconds: 0
+                timelineOffsetSeconds: systemTimelineOffsetSeconds
             ),
             microphone: nil,
             warnings: []
@@ -235,14 +315,24 @@ final class SpeakerPipelineTests: XCTestCase {
                     id: "system-1",
                     source: .system,
                     speaker: "Other",
-                    start: 0,
-                    end: 2,
+                    start: systemTimelineOffsetSeconds,
+                    end: systemTimelineOffsetSeconds + 2,
                     language: "en",
                     text: "Hello world.",
                     confidence: 0.9,
                     words: [
-                        TranscriptWord(start: 0, end: 0.8, text: "Hello", confidence: 0.9),
-                        TranscriptWord(start: 1.2, end: 2, text: "world.", confidence: 0.8),
+                        TranscriptWord(
+                            start: systemTimelineOffsetSeconds,
+                            end: systemTimelineOffsetSeconds + 0.8,
+                            text: "Hello",
+                            confidence: 0.9
+                        ),
+                        TranscriptWord(
+                            start: systemTimelineOffsetSeconds + 1.2,
+                            end: systemTimelineOffsetSeconds + 2,
+                            text: "world.",
+                            confidence: 0.8
+                        ),
                     ]
                 ),
                 TranscriptSegment(

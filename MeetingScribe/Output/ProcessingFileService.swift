@@ -194,7 +194,8 @@ actor ProcessingFileService: ProcessingFileServicing {
             from: session.speakerDiarizationURL,
             sessionID: session.metadata.id,
             sourceAudioURL: audioURL,
-            transcript: transcript
+            transcript: transcript,
+            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds
         ) else {
             return (nil, nil)
         }
