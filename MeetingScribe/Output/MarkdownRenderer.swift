@@ -20,7 +20,9 @@ struct MarkdownRenderer: Sendable {
         let languages = uniqueValues(
             transcript.segments.map(\.language) + transcript.tracks.map(\.detectedLanguage)
         )
-        let participants = uniqueValues(transcript.segments.map(\.speaker))
+        let participants = session.calendarEvent.map { snapshot in
+            uniqueValues(snapshot.participants.map(\.displayName))
+        } ?? uniqueValues(transcript.segments.map(\.speaker))
 
         var lines = [
             "---",

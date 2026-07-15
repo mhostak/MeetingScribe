@@ -23,6 +23,10 @@ struct SettingsView: View {
                 .tabItem { Label("Output", systemImage: "doc.text") }
                 .tag("output")
 
+            calendarSettings
+                .tabItem { Label("Calendar", systemImage: "calendar") }
+                .tag("calendar")
+
             advancedSettings
                 .tabItem { Label("Advanced", systemImage: "slider.horizontal.3") }
                 .tag("advanced")
@@ -249,6 +253,69 @@ struct SettingsView: View {
             }
         }
         .disabled(!appState.canEditSessionConfiguration)
+    }
+
+    private var calendarSettings: some View {
+        settingsForm {
+            Section("Apple Calendar") {
+                Toggle("Enable Apple Calendar integration", isOn: Binding(
+                    get: { appState.calendarIntegrationEnabled },
+                    set: { appState.setCalendarIntegrationEnabled($0) }
+                ))
+
+                Text("MeetingScribe never reads Calendar until you enable this integration. Each event and participant selection must also be confirmed for the individual meeting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if appState.calendarIntegrationEnabled {
+                Section("Permission") {
+                    LabeledContent("Status") {
+                        Text(LocalizedStringKey(appState.calendarAuthorizationStatus.displayName))
+                    }
+
+                    switch appState.calendarAuthorizationStatus {
+                    case .notDetermined:
+                        HStack {
+                            Button("Request Calendar access") {
+                                Task { await appState.requestCalendarAccess() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(appState.isRequestingCalendarAccess)
+
+                            if appState.isRequestingCalendarAccess {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                        }
+                    case .denied, .restricted, .writeOnly:
+                        Button("Open System Settings") {
+                            appState.openCalendarPrivacySettings()
+                        }
+                    case .fullAccess:
+                        Label("MeetingScribe can read calendar events.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+
+                    if let calendarAccessError = appState.calendarAccessError {
+                        Label(calendarAccessError, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    Text("Full access is used only to offer nearby event titles, times, and invitee display names. Email addresses, locations, notes, links, calendar names, and Apple event identifiers are not saved.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Saved meetings") {
+                Text("Turning this integration off stops future Calendar reads. Confirmed snapshots already stored with recordings are preserved so their Markdown output remains reproducible.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { appState.refreshCalendarAuthorizationStatus() }
     }
 
     private var advancedSettings: some View {

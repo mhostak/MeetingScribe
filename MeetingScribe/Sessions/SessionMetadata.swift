@@ -174,6 +174,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var language: TranscriptionLanguage
     var outputLanguage: OutputLanguage?
     var outputFileNameTemplate: String?
+    var calendarEvent: CalendarEventSnapshot?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
     var systemAudio: AudioTrackMetadata?
@@ -187,7 +188,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 9,
+        schemaVersion: Int = 10,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -197,6 +198,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         language: TranscriptionLanguage = .automatic,
         outputLanguage: OutputLanguage? = .slovak,
         outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
+        calendarEvent: CalendarEventSnapshot? = nil,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
         systemAudio: AudioTrackMetadata? = nil,
@@ -219,6 +221,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.language = language
         self.outputLanguage = outputLanguage
         self.outputFileNameTemplate = outputFileNameTemplate
+        self.calendarEvent = calendarEvent
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
         self.systemAudio = systemAudio

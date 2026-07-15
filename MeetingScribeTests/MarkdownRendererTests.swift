@@ -77,6 +77,46 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertFalse(markdown.contains("# Line \"one\"\nLine two"))
     }
 
+    func testRenderUsesOnlyConfirmedCalendarParticipantsWhenSnapshotExists() {
+        let session = SessionMetadata(
+            id: "calendar-recording",
+            title: "Planning",
+            status: .recorded,
+            createdAt: startedAt,
+            calendarEvent: CalendarEventSnapshot(
+                source: .appleCalendar,
+                title: "Planning",
+                startsAt: startedAt,
+                endsAt: endedAt,
+                selectedAt: startedAt,
+                participants: [
+                    ConfirmedParticipant(displayName: "Jana Nováková"),
+                    ConfirmedParticipant(displayName: "Peter Hrivnák"),
+                ],
+                shareParticipantNamesWithAnalysis: false
+            )
+        )
+        let transcript = makeTranscript(segments: [
+            segment(
+                id: "segment-000000",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 2,
+                language: "sk",
+                text: "Dobrý deň."
+            ),
+        ])
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: transcript
+        )
+
+        XCTAssertTrue(markdown.contains("  - \"Jana Nováková\"\n  - \"Peter Hrivnák\""))
+        XCTAssertFalse(markdown.contains("participants:\n  - \"Other\""))
+    }
+
     func testRenderFillsAnalysisSectionsWithEvidenceAndUnknownTaskFields() {
         let session = SessionMetadata(
             id: "recording-1",

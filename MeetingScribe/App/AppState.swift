@@ -34,6 +34,12 @@ final class AppState: ObservableObject {
     @Published private(set) var recordingsNavigationRequest: RecordingsNavigationRequest?
     @Published private(set) var isRecoveringSession = false
     @Published private(set) var processingSteps = ProcessingStep.initial
+    @Published private(set) var calendarAuthorizationStatus: CalendarAuthorizationStatus = .notDetermined
+    @Published private(set) var calendarEventCandidates: [CalendarEventCandidate] = []
+    @Published private(set) var pendingCalendarEvent: CalendarEventSnapshot?
+    @Published private(set) var isLoadingCalendarEvents = false
+    @Published private(set) var isRequestingCalendarAccess = false
+    @Published private(set) var calendarAccessError: String?
     @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
@@ -45,6 +51,7 @@ final class AppState: ObservableObject {
     @Published var selectedOutputLanguage: OutputLanguage = .slovak
     @Published var markdownFileNameTemplate = MarkdownFileNameTemplate.defaultValue
     @Published var minimumStorageBytes = StorageGuard.defaultMinimumBytes
+    @Published var calendarIntegrationEnabled = false
     @Published var selectedSettingsSection = "general"
     @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
 
@@ -62,6 +69,7 @@ final class AppState: ObservableObject {
     private let whisperSettingsStore: WhisperSettingsStore
     private let audioRetentionSettingsStore: AudioRetentionSettingsStore
     private let applicationSettingsStore: ApplicationSettingsStore
+    private let calendarEventProvider: any CalendarEventProviding
     private let audioSourceCleaner: any AudioSourceCleaning
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
@@ -91,6 +99,7 @@ final class AppState: ObservableObject {
         whisperSettingsStore: WhisperSettingsStore? = nil,
         audioRetentionSettingsStore: AudioRetentionSettingsStore? = nil,
         applicationSettingsStore: ApplicationSettingsStore? = nil,
+        calendarEventProvider: (any CalendarEventProviding)? = nil,
         audioSourceCleaner: any AudioSourceCleaning = AudioSourceCleaner(),
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
@@ -114,6 +123,7 @@ final class AppState: ObservableObject {
             ?? AudioRetentionSettingsStore()
         self.applicationSettingsStore = applicationSettingsStore
             ?? ApplicationSettingsStore()
+        self.calendarEventProvider = calendarEventProvider ?? CalendarEventService()
         self.audioSourceCleaner = audioSourceCleaner
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
@@ -147,6 +157,8 @@ final class AppState: ObservableObject {
         selectedOutputLanguage = applicationSettingsStore.outputLanguage
         markdownFileNameTemplate = applicationSettingsStore.markdownFileNameTemplate
         minimumStorageBytes = applicationSettingsStore.minimumStorageBytes
+        calendarIntegrationEnabled = applicationSettingsStore.calendarIntegrationEnabled
+        calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
         await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
         automaticallyDeleteSourceCAF = audioRetentionSettingsStore
             .automaticallyDeleteSourceCAF
@@ -189,9 +201,11 @@ final class AppState: ObservableObject {
                 title: meetingTitle,
                 language: selectedTranscriptionLanguage,
                 outputLanguage: selectedOutputLanguage,
-                outputFileNameTemplate: markdownFileNameTemplate
+                outputFileNameTemplate: markdownFileNameTemplate,
+                calendarEvent: pendingCalendarEvent
             )
             currentSession = session
+            pendingCalendarEvent = nil
             try? await processingLogger.log(.sessionCreated, for: session)
 
             do {
@@ -519,6 +533,187 @@ final class AppState: ObservableObject {
         await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
     }
 
+    var approvedCalendarEvent: CalendarEventSnapshot? {
+        currentSession?.metadata.calendarEvent ?? pendingCalendarEvent
+    }
+
+    var canChooseCalendarEvent: Bool {
+        switch status {
+        case .idle, .recording, .completed, .failed:
+            return !isRecoveringSession
+        case .preparing, .stopping, .transcribing, .analyzing, .exporting:
+            return false
+        }
+    }
+
+    func setCalendarIntegrationEnabled(_ enabled: Bool) {
+        calendarIntegrationEnabled = enabled
+        applicationSettingsStore.setCalendarIntegrationEnabled(enabled)
+        calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
+        calendarAccessError = nil
+        if !enabled {
+            calendarEventCandidates = []
+            if currentSession == nil {
+                pendingCalendarEvent = nil
+            }
+        }
+    }
+
+    func refreshCalendarAuthorizationStatus() {
+        calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
+        if calendarAuthorizationStatus.canReadEvents {
+            calendarAccessError = nil
+        }
+    }
+
+    func requestCalendarAccess() async {
+        guard calendarIntegrationEnabled else {
+            let message = localized(CalendarIntegrationError.integrationDisabled)
+            calendarAccessError = message
+            lastError = message
+            return
+        }
+
+        isRequestingCalendarAccess = true
+        calendarAccessError = nil
+        defer { isRequestingCalendarAccess = false }
+
+        do {
+            NSApplication.shared.activate()
+            await Task.yield()
+            let granted = try await calendarEventProvider.requestFullAccess()
+            calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
+            guard granted, calendarAuthorizationStatus.canReadEvents else {
+                let message = localized(CalendarIntegrationError.fullAccessRequired)
+                calendarAccessError = message
+                lastError = message
+                return
+            }
+
+            await loadCalendarEventCandidates()
+            calendarAccessError = nil
+            lastError = nil
+        } catch {
+            calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
+            let message = localized(error)
+            calendarAccessError = message
+            lastError = message
+        }
+    }
+
+    func loadCalendarEventCandidates(now: Date = Date()) async {
+        guard calendarIntegrationEnabled else {
+            calendarEventCandidates = []
+            return
+        }
+        calendarAuthorizationStatus = calendarEventProvider.authorizationStatus
+        guard calendarAuthorizationStatus.canReadEvents else {
+            calendarEventCandidates = []
+            return
+        }
+
+        isLoadingCalendarEvents = true
+        defer { isLoadingCalendarEvents = false }
+        do {
+            calendarEventCandidates = try calendarEventProvider.eventCandidates(
+                for: calendarEventQuery(now: now)
+            )
+            lastError = nil
+        } catch {
+            calendarEventCandidates = []
+            lastError = localized(error)
+        }
+    }
+
+    func approveCalendarEvent(
+        _ candidate: CalendarEventCandidate,
+        participantIDs: Set<String>,
+        useEventTitle: Bool,
+        shareParticipantNamesWithAnalysis: Bool,
+        now: Date = Date()
+    ) async -> Bool {
+        let participants = candidate.participants.compactMap { participant -> ConfirmedParticipant? in
+            guard participantIDs.contains(participant.id) else { return nil }
+            return ConfirmedParticipant(displayName: participant.displayName)
+        }
+        let snapshot = CalendarEventSnapshot(
+            source: .appleCalendar,
+            title: candidate.title,
+            startsAt: candidate.startsAt,
+            endsAt: candidate.endsAt,
+            selectedAt: now,
+            participants: participants,
+            shareParticipantNamesWithAnalysis: shareParticipantNamesWithAnalysis
+                && !participants.isEmpty
+        )
+        let approvedTitle = useEventTitle ? candidate.title : nil
+
+        do {
+            if currentSession != nil {
+                let updated = try await sessionManager.updateActiveSessionCalendarEvent(
+                    snapshot,
+                    title: approvedTitle
+                )
+                currentSession = updated
+                if useEventTitle { meetingTitle = updated.metadata.title }
+            } else {
+                pendingCalendarEvent = snapshot
+                if let approvedTitle { meetingTitle = approvedTitle }
+            }
+            calendarEventCandidates = []
+            lastError = nil
+            return true
+        } catch {
+            lastError = localized(error)
+            return false
+        }
+    }
+
+    func clearCalendarSelection() async {
+        do {
+            if currentSession != nil {
+                currentSession = try await sessionManager.updateActiveSessionCalendarEvent(nil)
+            } else {
+                pendingCalendarEvent = nil
+            }
+            lastError = nil
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    func openCalendarPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func calendarEventQuery(now: Date) -> CalendarEventQuery {
+        let grace: TimeInterval = 15 * 60
+        let targetStart: Date
+        let targetEnd: Date
+        if status == .recording, let startedAt = currentSession?.metadata.startedAt {
+            targetStart = min(startedAt, now).addingTimeInterval(-grace)
+            targetEnd = max(startedAt, now).addingTimeInterval(grace)
+        } else {
+            targetStart = now.addingTimeInterval(-grace)
+            targetEnd = now.addingTimeInterval(grace)
+        }
+
+        let calendar = Calendar.autoupdatingCurrent
+        let dayStart = calendar.startOfDay(for: targetStart)
+        let nextDay = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: targetEnd)
+        ) ?? targetEnd.addingTimeInterval(24 * 60 * 60)
+        return CalendarEventQuery(
+            targetInterval: DateInterval(start: targetStart, end: targetEnd),
+            searchInterval: DateInterval(start: dayStart, end: max(nextDay, targetEnd))
+        )
+    }
+
     func setLaunchAtLoginEnabled(_ enabled: Bool) async {
         do {
             if enabled {
@@ -806,6 +1001,8 @@ final class AppState: ObservableObject {
             currentSession = nil
             lastCompletedSession = completedSession
             meetingTitle = ""
+            pendingCalendarEvent = nil
+            calendarEventCandidates = []
             if completedSession.metadata.recovery?.status == .completed {
                 try? await processingLogger.log(.recoveryCompleted, for: completedSession)
             }

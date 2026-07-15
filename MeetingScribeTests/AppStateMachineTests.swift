@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import MeetingScribe
 
@@ -84,6 +85,9 @@ final class AppStateMachineTests: XCTestCase {
 
         XCTAssertEqual(MenuBarIconState(status: .failed, hasRecovery: false), .attention)
         XCTAssertEqual(MenuBarIconState(status: .idle, hasRecovery: true), .attention)
+
+        let idleImage = MenuBarIconRenderer.image(for: .idle, colorScheme: .dark)
+        XCTAssertEqual(idleImage.size, NSSize(width: 18, height: 18))
     }
 
     func testActiveMenuBarStatesTakePriorityOverRecoveryBadge() {

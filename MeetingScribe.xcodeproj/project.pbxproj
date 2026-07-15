@@ -82,6 +82,10 @@
 		000000000000000000000173 /* RecordingsWindowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000276 /* RecordingsWindowModel.swift */; };
 		000000000000000000000174 /* RecordingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000277 /* RecordingsWindow.swift */; };
 		000000000000000000000175 /* SessionCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000278 /* SessionCatalogTests.swift */; };
+		000000000000000000000176 /* CalendarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000279 /* CalendarModels.swift */; };
+		000000000000000000000177 /* CalendarEventService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000280 /* CalendarEventService.swift */; };
+		000000000000000000000178 /* CalendarEventPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000281 /* CalendarEventPickerView.swift */; };
+		000000000000000000000179 /* CalendarIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000282 /* CalendarIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -173,6 +177,10 @@
 		000000000000000000000276 /* RecordingsWindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindowModel.swift; sourceTree = "<group>"; };
 		000000000000000000000277 /* RecordingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindow.swift; sourceTree = "<group>"; };
 		000000000000000000000278 /* SessionCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalogTests.swift; sourceTree = "<group>"; };
+		000000000000000000000279 /* CalendarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarModels.swift; sourceTree = "<group>"; };
+		000000000000000000000280 /* CalendarEventService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventService.swift; sourceTree = "<group>"; };
+		000000000000000000000281 /* CalendarEventPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventPickerView.swift; sourceTree = "<group>"; };
+		000000000000000000000282 /* CalendarIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -210,6 +218,7 @@
 				000000000000000000000265 /* MeetingScribe.entitlements */,
 				000000000000000000000603 /* App */,
 				000000000000000000000611 /* Resources */,
+				000000000000000000000612 /* Calendar */,
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
 				000000000000000000000608 /* Transcription */,
@@ -231,6 +240,7 @@
 				000000000000000000000204 /* MenuBarView.swift */,
 				000000000000000000000276 /* RecordingsWindowModel.swift */,
 				000000000000000000000277 /* RecordingsWindow.swift */,
+				000000000000000000000281 /* CalendarEventPickerView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -241,6 +251,15 @@
 				000000000000000000000274 /* Localizable.xcstrings */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		000000000000000000000612 /* Calendar */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000279 /* CalendarModels.swift */,
+				000000000000000000000280 /* CalendarEventService.swift */,
+			);
+			path = Calendar;
 			sourceTree = "<group>";
 		};
 		000000000000000000000604 /* Sessions */ = {
@@ -288,6 +307,7 @@
 				000000000000000000000208 /* AppStateMachineTests.swift */,
 				000000000000000000000209 /* SessionManagerTests.swift */,
 				000000000000000000000278 /* SessionCatalogTests.swift */,
+				000000000000000000000282 /* CalendarIntegrationTests.swift */,
 			);
 			path = MeetingScribeTests;
 			sourceTree = "<group>";
@@ -506,6 +526,9 @@
 				000000000000000000000104 /* MenuBarView.swift in Sources */,
 				000000000000000000000173 /* RecordingsWindowModel.swift in Sources */,
 				000000000000000000000174 /* RecordingsWindow.swift in Sources */,
+				000000000000000000000176 /* CalendarModels.swift in Sources */,
+				000000000000000000000177 /* CalendarEventService.swift in Sources */,
+				000000000000000000000178 /* CalendarEventPickerView.swift in Sources */,
 				000000000000000000000105 /* RecordingSession.swift in Sources */,
 				000000000000000000000106 /* SessionMetadata.swift in Sources */,
 				000000000000000000000107 /* SessionManager.swift in Sources */,
@@ -544,6 +567,7 @@
 				000000000000000000000119 /* CaptureCoordinatorTests.swift in Sources */,
 				000000000000000000000108 /* AppStateMachineTests.swift in Sources */,
 				000000000000000000000109 /* SessionManagerTests.swift in Sources */,
+				000000000000000000000179 /* CalendarIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -664,6 +688,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MeetingScribe reads event titles, times, and invitee display names only after you choose and confirm a meeting.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -693,6 +718,7 @@
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MeetingScribe reads event titles, times, and invitee display names only after you choose and confirm a meeting.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

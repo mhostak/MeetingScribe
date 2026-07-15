@@ -39,6 +39,7 @@ actor SessionManager {
         language: TranscriptionLanguage = .automatic,
         outputLanguage: OutputLanguage = .slovak,
         outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
+        calendarEvent: CalendarEventSnapshot? = nil,
         now: Date = Date()
     ) throws -> RecordingSession {
         guard activeSession == nil else {
@@ -61,7 +62,8 @@ actor SessionManager {
             startedAt: now,
             language: language,
             outputLanguage: outputLanguage,
-            outputFileNameTemplate: outputFileNameTemplate
+            outputFileNameTemplate: outputFileNameTemplate,
+            calendarEvent: calendarEvent
         )
         let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 
@@ -147,6 +149,27 @@ actor SessionManager {
         }
 
         session.metadata.title = normalizedTitle
+        try persist(session)
+        activeSession = session
+        return session
+    }
+
+    func updateActiveSessionCalendarEvent(
+        _ calendarEvent: CalendarEventSnapshot?,
+        title: String? = nil
+    ) throws -> RecordingSession {
+        guard var session = activeSession else {
+            throw SessionManagerError.noActiveSession
+        }
+
+        if let title {
+            let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !normalizedTitle.isEmpty else {
+                throw SessionManagerError.emptyTitle
+            }
+            session.metadata.title = normalizedTitle
+        }
+        session.metadata.calendarEvent = calendarEvent
         try persist(session)
         activeSession = session
         return session
