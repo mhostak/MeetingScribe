@@ -265,6 +265,29 @@ actor SessionManager {
         return session
     }
 
+    func closeRecoveryIssue(directoryName: String) throws {
+        guard activeSession == nil else {
+            throw SessionManagerError.sessionAlreadyActive
+        }
+        let result = try scanForRecovery()
+        guard result.issues.contains(where: { $0.directoryName == directoryName }) else {
+            throw SessionRecoveryError.issueNotFound
+        }
+        let standardizedRoot = recordingsRoot.standardizedFileURL
+        let directoryURL = standardizedRoot
+            .appendingPathComponent(directoryName, isDirectory: true)
+            .standardizedFileURL
+        guard directoryURL.deletingLastPathComponent() == standardizedRoot else {
+            throw SessionRecoveryError.issueNotFound
+        }
+        let markerURL = directoryURL.appendingPathComponent(
+            SessionRecoveryScanner.closedIssueMarkerFileName,
+            isDirectory: false
+        )
+        try Data("Closed by the user. Existing artifacts were preserved.\n".utf8)
+            .write(to: markerURL, options: .atomic)
+    }
+
     private func persist(_ session: RecordingSession) throws {
         let data = try SessionJSONCoder.makeEncoder().encode(session.metadata)
         try data.write(to: session.manifestURL, options: .atomic)

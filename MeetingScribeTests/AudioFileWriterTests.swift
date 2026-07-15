@@ -4,6 +4,28 @@ import XCTest
 @testable import MeetingScribe
 
 final class AudioFileWriterTests: XCTestCase {
+    func testEmptyPCMBufferIsIgnoredWithoutCreatingAnOutputFile() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeEmptyWriter-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 1
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: 1
+        ))
+        buffer.frameLength = 0
+        let writer = AudioFileWriter(outputURL: outputURL)
+
+        let result = try writer.write(buffer)
+        try writer.finish()
+
+        XCTAssertEqual(result.frameCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testWritesPCMBufferToReadableTranscriptionWAVFile() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeAudioWriter-\(UUID().uuidString).wav")
@@ -11,7 +33,7 @@ final class AudioFileWriterTests: XCTestCase {
 
         let writer = AudioFileWriter(outputURL: outputURL)
         let result = try writer.write(makeSampleBuffer(frameCount: 480))
-        writer.finish()
+        try writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertGreaterThan(result.frameCount, 0)
@@ -44,7 +66,7 @@ final class AudioFileWriterTests: XCTestCase {
 
         let writer = AudioFileWriter(outputURL: outputURL)
         let result = try writer.write(buffer)
-        writer.finish()
+        try writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertGreaterThan(result.frameCount, 0)
@@ -74,7 +96,7 @@ final class AudioFileWriterTests: XCTestCase {
         let writer = AudioFileWriter(outputURL: outputURL)
         let first = try writer.write(original)
         let second = try writer.write(changedRoute)
-        writer.finish()
+        try writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertEqual(first.sampleRate, 16_000)
@@ -100,7 +122,7 @@ final class AudioFileWriterTests: XCTestCase {
             sampleRate: 24_000,
             channelCount: 1
         ))
-        writer.finish()
+        try writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertEqual(first.sampleRate, 16_000)
@@ -127,7 +149,7 @@ final class AudioFileWriterTests: XCTestCase {
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertGreaterThan(file.length, 31_000)
         XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
-        writer.finish()
+        try writer.finish()
     }
 
     func testRepairerRecoversPhysicalPCMBytesFromStaleHeader() throws {
@@ -140,7 +162,7 @@ final class AudioFileWriterTests: XCTestCase {
             channels: 1,
             frameCount: 16_000
         ))
-        writer.finish()
+        try writer.finish()
 
         let handle = try FileHandle(forUpdating: outputURL)
         try handle.seek(toOffset: 4)

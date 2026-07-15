@@ -67,6 +67,13 @@ final class AudioFileWriter {
         }
 
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        guard frameCount > 0 else {
+            return WriteResult(
+                frameCount: 0,
+                sampleRate: Self.targetSampleRate,
+                channelCount: Int(Self.targetChannelCount)
+            )
+        }
         return try sampleBuffer.withAudioBufferList { audioBufferList, _ in
             guard let pcmBuffer = AVAudioPCMBuffer(
                 pcmFormat: format,
@@ -83,10 +90,16 @@ final class AudioFileWriter {
 
     func write(_ pcmBuffer: AVAudioPCMBuffer) throws -> WriteResult {
         guard !isFinished else { throw PCMFileWriterError.writerFinished }
-        guard pcmBuffer.frameLength > 0,
-              pcmBuffer.format.sampleRate > 0,
+        guard pcmBuffer.format.sampleRate > 0,
               pcmBuffer.format.channelCount > 0 else {
             throw AudioCaptureServiceError.invalidAudioFormat
+        }
+        guard pcmBuffer.frameLength > 0 else {
+            return WriteResult(
+                frameCount: 0,
+                sampleRate: Self.targetSampleRate,
+                channelCount: Int(Self.targetChannelCount)
+            )
         }
 
         try prepareFileIfNeeded()
@@ -102,19 +115,25 @@ final class AudioFileWriter {
         )
     }
 
-    func finish() {
+    func finish() throws {
         guard !isFinished else { return }
         isFinished = true
+        var finishError: Error?
         do {
             try drainConverter()
             try checkpoint(force: true)
+        } catch {
+            finishError = error
+        }
+        do {
             try fileHandle?.close()
         } catch {
-            try? fileHandle?.close()
+            if finishError == nil { finishError = error }
         }
         fileHandle = nil
         converter = nil
         inputFormat = nil
+        if let finishError { throw finishError }
     }
 
     private func prepareFileIfNeeded() throws {

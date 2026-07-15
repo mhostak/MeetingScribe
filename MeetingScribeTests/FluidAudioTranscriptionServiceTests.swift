@@ -579,6 +579,8 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        resolvedTranscript: ResolvedTranscript?,
         analysis: MeetingAnalysis?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {

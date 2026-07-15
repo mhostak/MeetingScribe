@@ -625,6 +625,8 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        resolvedTranscript: ResolvedTranscript?,
         analysis: MeetingAnalysis?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
@@ -632,6 +634,8 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         return try await delegate.exportMarkdown(
             session: session,
             transcript: transcript,
+            utteranceTranscript: utteranceTranscript,
+            resolvedTranscript: resolvedTranscript,
             analysis: analysis,
             to: directoryURL
         )

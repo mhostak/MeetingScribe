@@ -16,13 +16,6 @@ protocol ProcessingFileServicing: Sendable {
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
-        analysis: MeetingAnalysis?,
-        to directoryURL: URL
-    ) async throws -> MarkdownExportResult
-
-    func exportMarkdown(
-        session: SessionMetadata,
-        transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
         analysis: MeetingAnalysis?,
@@ -31,22 +24,6 @@ protocol ProcessingFileServicing: Sendable {
 }
 
 extension ProcessingFileServicing {
-    func exportMarkdown(
-        session: SessionMetadata,
-        transcript: MergedTranscript,
-        utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
-        to directoryURL: URL
-    ) async throws -> MarkdownExportResult {
-        try await exportMarkdown(
-            session: session,
-            transcript: transcript,
-            analysis: analysis,
-            to: directoryURL
-        )
-    }
-
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,

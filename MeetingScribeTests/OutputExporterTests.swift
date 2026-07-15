@@ -42,6 +42,29 @@ final class OutputExporterTests: XCTestCase {
         )
     }
 
+    func testFilenameRenderingIsSinglePassAndBoundedByUTF8Bytes() {
+        let sanitizer = FilenameSanitizer(timeZone: utc)
+        XCTAssertEqual(
+            sanitizer.markdownFileName(
+                title: "{id}",
+                sessionID: "recording-1",
+                startedAt: startedAt,
+                template: "{title}-{id}"
+            ),
+            "{id}-recording-1.md"
+        )
+
+        let emojiTitle = String(repeating: "🧑🏽‍💻", count: 100)
+        let fileName = sanitizer.markdownFileName(
+            title: emojiTitle,
+            startedAt: startedAt,
+            template: "{title}{title}"
+        )
+        XCTAssertLessThanOrEqual(fileName.utf8.count, 103)
+        XCTAssertNotNil(fileName.data(using: .utf8))
+        XCTAssertTrue(fileName.hasSuffix(".md"))
+    }
+
     func testExporterWritesUTF8MarkdownWithoutOverwritingExistingFile() throws {
         let exportedAt = ISO8601DateFormatter().date(from: "2026-07-10T11:00:00Z")!
         let exporter = OutputExporter(

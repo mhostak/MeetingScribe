@@ -149,6 +149,34 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertTrue(remainingCandidates.isEmpty)
     }
 
+    func testCloseRecoveryIssuePreservesFolderAndStopsReportingIt() async throws {
+        let corruptDirectory = root.appendingPathComponent("corrupt-issue", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: corruptDirectory,
+            withIntermediateDirectories: true
+        )
+        let manifestURL = corruptDirectory.appendingPathComponent("session.json")
+        let originalData = Data("not-json".utf8)
+        try originalData.write(to: manifestURL)
+        let manager = SessionManager(
+            recordingsRoot: root,
+            storageGuard: StorageGuard(provider: RecoveryCapacityProvider(), minimumBytes: 1)
+        )
+
+        let initialIssues = try await manager.scanForRecovery().issues
+        XCTAssertEqual(initialIssues.map(\.directoryName), ["corrupt-issue"])
+        try await manager.closeRecoveryIssue(directoryName: "corrupt-issue")
+
+        XCTAssertEqual(try Data(contentsOf: manifestURL), originalData)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: corruptDirectory.appendingPathComponent(
+                SessionRecoveryScanner.closedIssueMarkerFileName
+            ).path
+        ))
+        let remainingIssues = try await manager.scanForRecovery().issues
+        XCTAssertTrue(remainingIssues.isEmpty)
+    }
+
     func testUnsuccessfulRecoveryRemainsAvailableForRetry() async throws {
         let session = try makeSession(id: "retry-me", status: .recording)
         try Data("audio".utf8).write(to: session.systemAudioURL)
@@ -304,7 +332,7 @@ final class SessionRecoveryTests: XCTestCase {
         buffer.floatChannelData?[0].initialize(repeating: 0.1, count: 48_000)
         let writer = AudioFileWriter(outputURL: session.systemAudioURL)
         _ = try writer.write(buffer)
-        writer.finish()
+        try writer.finish()
 
         let handle = try FileHandle(forUpdating: session.systemAudioURL)
         try handle.seek(toOffset: 4)

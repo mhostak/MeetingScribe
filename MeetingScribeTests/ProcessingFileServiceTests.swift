@@ -3,6 +3,33 @@ import XCTest
 @testable import MeetingScribe
 
 final class ProcessingFileServiceTests: XCTestCase {
+    func testConvenienceExportDelegatesToCanonicalRequirementOnce() async throws {
+        let service = CanonicalProcessingFileService()
+        let metadata = SessionMetadata(
+            id: "canonical",
+            title: "Canonical",
+            status: .recorded,
+            createdAt: Date()
+        )
+        let transcript = MergedTranscript(
+            sessionID: metadata.id,
+            title: metadata.title,
+            completedAt: Date(),
+            tracks: [],
+            segments: []
+        )
+
+        _ = try await service.exportMarkdown(
+            session: metadata,
+            transcript: transcript,
+            analysis: nil,
+            to: FileManager.default.temporaryDirectory
+        )
+
+        let callCount = await service.callCount()
+        XCTAssertEqual(callCount, 1)
+    }
+
     func testPersistsAndLoadsRecoveryArtifactsThenExportsMarkdown() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeProcessingIO-\(UUID().uuidString)", isDirectory: true)
@@ -65,4 +92,31 @@ final class ProcessingFileServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Background I/O transcript"))
         XCTAssertTrue(markdown.contains("Background I/O summary"))
     }
+}
+
+private actor CanonicalProcessingFileService: ProcessingFileServicing {
+    private var exportCalls = 0
+
+    func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts? {
+        nil
+    }
+
+    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {}
+
+    func exportMarkdown(
+        session: SessionMetadata,
+        transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        resolvedTranscript: ResolvedTranscript?,
+        analysis: MeetingAnalysis?,
+        to directoryURL: URL
+    ) async throws -> MarkdownExportResult {
+        exportCalls += 1
+        return MarkdownExportResult(
+            fileURL: directoryURL.appendingPathComponent("canonical.md"),
+            exportedAt: Date()
+        )
+    }
+
+    func callCount() -> Int { exportCalls }
 }

@@ -63,6 +63,22 @@ struct CalendarEventSnapshot: Codable, Equatable, Sendable {
     var shareParticipantNamesWithAnalysis: Bool
 }
 
+enum CalendarEventIdentity {
+    static func candidateID(
+        eventIdentifier: String?,
+        calendarItemIdentifier: String,
+        startsAt: Date
+    ) -> String {
+        if let eventIdentifier, !eventIdentifier.isEmpty {
+            return eventIdentifier
+        }
+        let occurrenceMilliseconds = Int64(
+            (startsAt.timeIntervalSinceReferenceDate * 1_000).rounded()
+        )
+        return "\(calendarItemIdentifier)#occurrence-\(occurrenceMilliseconds)"
+    }
+}
+
 enum CalendarIntegrationError: Error, Equatable, LocalizedError {
     case integrationDisabled
     case fullAccessRequired
@@ -98,7 +114,9 @@ enum CalendarEventRanking {
             let rhsDistance = distance(from: rhs.interval, to: targetInterval)
             if lhsDistance != rhsDistance { return lhsDistance < rhsDistance }
             if lhs.startsAt != rhs.startsAt { return lhs.startsAt < rhs.startsAt }
-            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            let titleOrder = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+            if titleOrder != .orderedSame { return titleOrder == .orderedAscending }
+            return lhs.id < rhs.id
         }
     }
 

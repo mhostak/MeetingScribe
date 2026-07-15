@@ -60,7 +60,7 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
             try await stream.startCapture()
         } catch {
             callbackQueue.sync {
-                state.writer?.finish()
+                finishWriter()
                 state.isCapturing = false
                 state.diagnostics.failureReason = error.localizedDescription
             }
@@ -86,8 +86,7 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
 
         self.stream = nil
         return callbackQueue.sync {
-            state.writer?.finish()
-            state.writer = nil
+            finishWriter()
             state.isCapturing = false
             return state.diagnostics
         }
@@ -122,6 +121,18 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         // -3817: the user stopped capture through the system capture control.
         return error.code == -3_808 || error.code == -3_817
     }
+
+    private func finishWriter() {
+        guard let writer = state.writer else { return }
+        do {
+            try writer.finish()
+        } catch {
+            if state.diagnostics.failureReason == nil {
+                state.diagnostics.failureReason = error.localizedDescription
+            }
+        }
+        state.writer = nil
+    }
 }
 
 extension SystemAudioCapture: SCStreamOutput {
@@ -140,6 +151,7 @@ extension SystemAudioCapture: SCStreamOutput {
             }
 
             let result = try writer.write(sampleBuffer)
+            guard result.frameCount > 0 else { return }
             state.diagnostics.registerBuffer(
                 frameCount: result.frameCount,
                 sampleRate: result.sampleRate,
@@ -148,8 +160,7 @@ extension SystemAudioCapture: SCStreamOutput {
             )
         } catch {
             state.diagnostics.failureReason = error.localizedDescription
-            state.writer?.finish()
-            state.writer = nil
+            finishWriter()
         }
     }
 }
@@ -161,8 +172,7 @@ extension SystemAudioCapture: SCStreamDelegate {
             if !Self.isBenignStopError(error) {
                 self.state.diagnostics.failureReason = error.localizedDescription
             }
-            self.state.writer?.finish()
-            self.state.writer = nil
+            self.finishWriter()
             self.state.isCapturing = false
         }
     }
