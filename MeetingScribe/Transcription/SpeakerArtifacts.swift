@@ -135,7 +135,9 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         sourceAudioURL: URL,
         transcript: MergedTranscript,
         sourceTimelineOffsetSeconds: Double,
-        configurationRevision: String
+        configurationRevision: String,
+        sourceAudioFingerprint: String? = nil,
+        sourceTranscriptFingerprint: String? = nil
     ) throws -> SpeakerDiarizationArtifact {
         try validateTimelineOffset(sourceTimelineOffsetSeconds)
         let orderedClusterIDs = result.segments.reduce(into: [String]()) { ids, segment in
@@ -184,8 +186,8 @@ struct SpeakerArtifactStore: @unchecked Sendable {
             sessionID: sessionID,
             createdAt: timestamp,
             modifiedAt: timestamp,
-            sourceAudioFingerprint: try fingerprint(fileAt: sourceAudioURL),
-            sourceTranscriptFingerprint: try fingerprint(transcript: transcript),
+            sourceAudioFingerprint: try sourceAudioFingerprint ?? fingerprint(fileAt: sourceAudioURL),
+            sourceTranscriptFingerprint: try sourceTranscriptFingerprint ?? fingerprint(transcript: transcript),
             sourceTimelineOffsetSeconds: sourceTimelineOffsetSeconds,
             configurationRevision: configurationRevision,
             result: stableResult,
@@ -216,15 +218,19 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         sessionID: String,
         sourceAudioURL: URL,
         transcript: MergedTranscript,
-        expectedTimelineOffsetSeconds: Double? = nil
+        expectedTimelineOffsetSeconds: Double? = nil,
+        sourceAudioFingerprint: String? = nil,
+        sourceTranscriptFingerprint: String? = nil
     ) throws -> SpeakerDiarizationArtifact? {
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         var artifact = try load(from: url)
         guard artifact.sessionID == sessionID else { throw SpeakerArtifactError.wrongSession }
-        guard artifact.sourceAudioFingerprint == (try fingerprint(fileAt: sourceAudioURL)) else {
+        let audioFingerprint = try sourceAudioFingerprint ?? fingerprint(fileAt: sourceAudioURL)
+        guard artifact.sourceAudioFingerprint == audioFingerprint else {
             throw SpeakerArtifactError.staleAudio
         }
-        guard artifact.sourceTranscriptFingerprint == (try fingerprint(transcript: transcript)) else {
+        let transcriptFingerprint = try sourceTranscriptFingerprint ?? fingerprint(transcript: transcript)
+        guard artifact.sourceTranscriptFingerprint == transcriptFingerprint else {
             throw SpeakerArtifactError.staleTranscript
         }
         if let expectedTimelineOffsetSeconds {
@@ -271,6 +277,12 @@ struct SpeakerArtifactStore: @unchecked Sendable {
             currentID = target
         }
         return nil
+    }
+
+    func effectiveProfiles(in artifact: SpeakerDiarizationArtifact) -> [String: SpeakerProfile] {
+        Dictionary(uniqueKeysWithValues: artifact.speakers.compactMap { profile in
+            effectiveProfile(for: profile.id, in: artifact).map { (profile.id, $0) }
+        })
     }
 
     func validateProfiles(_ profiles: [SpeakerProfile]) throws {
@@ -329,7 +341,9 @@ struct ResolvedTranscriptStore: @unchecked Sendable {
     func loadValid(
         from url: URL,
         transcript: MergedTranscript,
-        artifact: SpeakerDiarizationArtifact
+        artifact: SpeakerDiarizationArtifact,
+        transcriptFingerprint: String? = nil,
+        artifactFingerprint: String? = nil
     ) throws -> ResolvedTranscript? {
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
@@ -337,13 +351,13 @@ struct ResolvedTranscriptStore: @unchecked Sendable {
             ResolvedTranscript.self,
             from: data
         )
+        let resolvedTranscriptFingerprint = try transcriptFingerprint
+            ?? artifactStore.fingerprint(transcript: transcript)
+        let resolvedArtifactFingerprint = try artifactFingerprint
+            ?? artifactStore.fingerprint(artifact: artifact)
         guard resolved.sessionID == transcript.sessionID,
-              resolved.sourceTranscriptFingerprint == (try artifactStore.fingerprint(
-                transcript: transcript
-              )),
-              resolved.diarizationFingerprint == (try artifactStore.fingerprint(
-                artifact: artifact
-              )) else {
+              resolved.sourceTranscriptFingerprint == resolvedTranscriptFingerprint,
+              resolved.diarizationFingerprint == resolvedArtifactFingerprint else {
             return nil
         }
         return resolved

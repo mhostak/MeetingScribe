@@ -248,7 +248,7 @@ private struct RecordingSessionRow: View {
                 .disabled(
                     appState.status == .recording
                         || appState.status.isProcessing
-                        || !hasSpeakerArtifact
+                        || !entry.hasSpeakerArtifact
                 )
 
                 Button {
@@ -349,10 +349,6 @@ private struct RecordingSessionRow: View {
         markdownURL ?? entry.session.manifestURL
     }
 
-    private var hasSpeakerArtifact: Bool {
-        FileManager.default.fileExists(atPath: entry.session.speakerDiarizationURL.path)
-    }
-
     @ViewBuilder
     private var actionItems: some View {
         Button("Show session in Finder") {
@@ -370,7 +366,7 @@ private struct RecordingSessionRow: View {
             }
         }
 
-        if hasSpeakerArtifact {
+        if entry.hasSpeakerArtifact {
             Button("Edit speakers") {
                 isShowingSpeakerEditor = true
             }

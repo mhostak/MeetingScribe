@@ -38,6 +38,7 @@ struct SessionCatalogEntry: Identifiable, Equatable, Sendable {
     let audio: SessionArtifactState
     let transcript: SessionArtifactState
     let markdown: SessionArtifactState
+    let hasSpeakerArtifact: Bool
 
     var id: String { session.metadata.id }
 }
@@ -152,7 +153,8 @@ actor SessionCatalog {
             message: state.message,
             audio: audio,
             transcript: transcript,
-            markdown: markdown
+            markdown: markdown,
+            hasSpeakerArtifact: hasNonemptyFile(session.speakerDiarizationURL)
         )
     }
 

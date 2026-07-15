@@ -7,6 +7,7 @@ struct CaptureMonitoringConfiguration: Sendable {
     var interval: Duration = .seconds(1)
     var storageCheckEveryTicks = 5
     var stalledSystemAudioCheckCount = 3
+    var maximumStorageCheckFailures = 3
 }
 
 struct RecordingsNavigationRequest: Equatable, Sendable {
@@ -86,6 +87,7 @@ final class AppState: ObservableObject {
     private let storageStatusProvider: @Sendable () async throws -> StorageStatus
     private var captureMonitorTask: Task<Void, Never>?
     private var storageCheckTick = 0
+    private var storageCheckFailureCount = 0
     private var stalledSystemAudioCheckTick = 0
     private var isStoppingForLowStorage = false
     private var isStoppingForCaptureFailure = false
@@ -258,6 +260,7 @@ final class AppState: ObservableObject {
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
             storageCheckTick = 0
+            storageCheckFailureCount = 0
             stalledSystemAudioCheckTick = 0
 
             let session = try await sessionManager.startSession(
@@ -497,6 +500,7 @@ final class AppState: ObservableObject {
             resetProcessingProgress()
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
+            storageCheckFailureCount = 0
         } catch {
             setFailure(error)
         }
@@ -1707,11 +1711,34 @@ final class AppState: ObservableObject {
                     monitoringConfiguration.storageCheckEveryTicks
                 )
                 guard self.storageCheckTick.isMultiple(of: storageFrequency),
-                      !self.isStoppingForLowStorage,
-                      let storage = try? await self.storageStatusProvider(),
-                      !storage.hasSufficientCapacity else {
+                      !self.isStoppingForLowStorage else {
                     continue
                 }
+
+                let storage: StorageStatus
+                do {
+                    storage = try await self.storageStatusProvider()
+                    self.storageCheckFailureCount = 0
+                } catch is CancellationError {
+                    break
+                } catch {
+                    self.storageCheckFailureCount += 1
+                    let maximumFailures = max(
+                        1,
+                        monitoringConfiguration.maximumStorageCheckFailures
+                    )
+                    guard self.storageCheckFailureCount >= maximumFailures else {
+                        continue
+                    }
+                    if await self.stopRecordingForCaptureFailure(
+                        message: self.localized(.storageCheckFailedSafeStop)
+                    ) {
+                        break
+                    }
+                    continue
+                }
+
+                guard !storage.hasSufficientCapacity else { continue }
 
                 guard !Task.isCancelled, self.status == .recording else {
                     break

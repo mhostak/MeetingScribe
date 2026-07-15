@@ -195,6 +195,7 @@ struct FluidAudioHTTPModelFileDownloader: FluidAudioModelFileDownloading, @unche
             for: URLRequest(url: sourceURL),
             delegate: delegate
         )
+        defer { try? fileManager.removeItem(at: temporaryURL) }
         try Task.checkCancellation()
         guard let response = response as? HTTPURLResponse,
               (200..<300).contains(response.statusCode)

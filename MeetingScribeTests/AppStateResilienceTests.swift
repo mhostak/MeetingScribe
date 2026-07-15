@@ -428,6 +428,53 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
     }
 
+    func testRepeatedStorageCheckFailuresTriggerSafeAutomaticStop() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        let failureCounter = StorageFailureCounter()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(
+                interval: .milliseconds(5),
+                storageCheckEveryTicks: 1,
+                maximumStorageCheckFailures: 2
+            ),
+            storageStatusProvider: {
+                await failureCounter.increment()
+                throw StorageCheckTestError.unavailable
+            },
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        try await waitUntil { appState.status != .recording }
+        try await waitUntil { appState.status == .completed || appState.status == .failed }
+
+        XCTAssertEqual(appState.status, .completed)
+        let failureCount = await failureCounter.value
+        XCTAssertGreaterThanOrEqual(failureCount, 2)
+        XCTAssertEqual(
+            appState.lastError,
+            AppLocalization.message(
+                .storageCheckFailedSafeStop,
+                language: appState.selectedAppLanguage
+            )
+        )
+    }
+
     func testTransientSystemAudioStallRecoversWithoutStoppingRecording() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -601,6 +648,18 @@ final class AppStateResilienceTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("Timed out waiting for AppState transition.")
+    }
+}
+
+private enum StorageCheckTestError: Error {
+    case unavailable
+}
+
+private actor StorageFailureCounter {
+    private(set) var value = 0
+
+    func increment() {
+        value += 1
     }
 }
 

@@ -29,7 +29,9 @@ struct SpeakerTranscriptResolver: Sendable {
 
     func resolve(
         transcript: MergedTranscript,
-        artifact: SpeakerDiarizationArtifact
+        artifact: SpeakerDiarizationArtifact,
+        transcriptFingerprint: String? = nil,
+        artifactFingerprint: String? = nil
     ) throws -> ResolvedTranscript {
         guard transcript.sessionID == artifact.sessionID else {
             throw SpeakerArtifactError.wrongSession
@@ -38,24 +40,32 @@ struct SpeakerTranscriptResolver: Sendable {
               artifact.effectiveTimelineOffsetSeconds >= 0 else {
             throw SpeakerArtifactError.invalidTimelineOffset
         }
-        guard artifact.sourceTranscriptFingerprint == (try artifactStore.fingerprint(
-            transcript: transcript
-        )) else {
+        let resolvedTranscriptFingerprint: String
+        if let transcriptFingerprint {
+            resolvedTranscriptFingerprint = transcriptFingerprint
+        } else {
+            resolvedTranscriptFingerprint = try artifactStore.fingerprint(transcript: transcript)
+        }
+        guard artifact.sourceTranscriptFingerprint == resolvedTranscriptFingerprint else {
             throw SpeakerArtifactError.staleTranscript
         }
 
-        let drafts = transcript.segments.flatMap { segment -> [Draft] in
+        let profiles = artifactStore.effectiveProfiles(in: artifact)
+        var sweep = SystemAssignmentSweep(segments: artifact.result.segments)
+        var drafts: [Draft] = []
+        for segment in transcript.segments {
             if segment.source == .microphone {
-                return [draft(
+                drafts.append(draft(
                     segment: segment,
                     start: segment.start,
                     end: segment.end,
                     text: segment.text,
-                    assignment: assignment(for: SpeakerProfile.localID, artifact: artifact)
-                )]
+                    assignment: assignment(for: SpeakerProfile.localID, profiles: profiles)
+                ))
+                continue
             }
             guard let words = segment.words, !words.isEmpty else {
-                return [draft(
+                drafts.append(draft(
                     segment: segment,
                     start: segment.start,
                     end: segment.end,
@@ -63,19 +73,34 @@ struct SpeakerTranscriptResolver: Sendable {
                     assignment: systemAssignment(
                         start: segment.start,
                         end: segment.end,
-                        artifact: artifact
+                        timelineOffset: artifact.effectiveTimelineOffsetSeconds,
+                        profiles: profiles,
+                        sweep: &sweep
                     )
-                )]
+                ))
+                continue
             }
-            return wordDrafts(words, segment: segment, artifact: artifact)
+            drafts.append(contentsOf: wordDrafts(
+                words,
+                segment: segment,
+                timelineOffset: artifact.effectiveTimelineOffsetSeconds,
+                profiles: profiles,
+                sweep: &sweep
+            ))
         }
         let merged = mergeContinuousDrafts(drafts.sorted(by: draftComesBefore))
+        let resolvedArtifactFingerprint: String
+        if let artifactFingerprint {
+            resolvedArtifactFingerprint = artifactFingerprint
+        } else {
+            resolvedArtifactFingerprint = try artifactStore.fingerprint(artifact: artifact)
+        }
         return ResolvedTranscript(
             schemaVersion: 1,
             sessionID: transcript.sessionID,
             createdAt: now(),
-            sourceTranscriptFingerprint: try artifactStore.fingerprint(transcript: transcript),
-            diarizationFingerprint: try artifactStore.fingerprint(artifact: artifact),
+            sourceTranscriptFingerprint: resolvedTranscriptFingerprint,
+            diarizationFingerprint: resolvedArtifactFingerprint,
             segments: merged.enumerated().map { index, value in
                 ResolvedTranscriptSegment(
                     id: String(format: "resolved-%06d", index),
@@ -97,14 +122,18 @@ struct SpeakerTranscriptResolver: Sendable {
     private func wordDrafts(
         _ words: [TranscriptWord],
         segment: TranscriptSegment,
-        artifact: SpeakerDiarizationArtifact
+        timelineOffset: Double,
+        profiles: [String: SpeakerProfile],
+        sweep: inout SystemAssignmentSweep
     ) -> [Draft] {
         var groups: [Draft] = []
         for word in words where !word.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let assignment = systemAssignment(
                 start: word.start,
                 end: word.end,
-                artifact: artifact
+                timelineOffset: timelineOffset,
+                profiles: profiles,
+                sweep: &sweep
             )
             let value = draft(
                 segment: segment,
@@ -131,7 +160,9 @@ struct SpeakerTranscriptResolver: Sendable {
                 assignment: systemAssignment(
                     start: segment.start,
                     end: segment.end,
-                    artifact: artifact
+                    timelineOffset: timelineOffset,
+                    profiles: profiles,
+                    sweep: &sweep
                 )
             )]
         }
@@ -141,23 +172,13 @@ struct SpeakerTranscriptResolver: Sendable {
     private func systemAssignment(
         start: Double,
         end: Double,
-        artifact: SpeakerDiarizationArtifact
+        timelineOffset: Double,
+        profiles: [String: SpeakerProfile],
+        sweep: inout SystemAssignmentSweep
     ) -> Assignment {
-        let timelineOffset = artifact.effectiveTimelineOffsetSeconds
         let localStart = start - timelineOffset
         let localEnd = end - timelineOffset
-        let overlaps = artifact.result.segments.compactMap { segment -> (String, Double)? in
-            let overlap = max(
-                0,
-                min(localEnd, segment.end) - max(localStart, segment.start)
-            )
-            return overlap > 0 ? (segment.speakerID, overlap) : nil
-        }.reduce(into: [String: Double]()) { values, item in
-            values[item.0, default: 0] += item.1
-        }.sorted {
-            if $0.value != $1.value { return $0.value > $1.value }
-            return $0.key < $1.key
-        }
+        let overlaps = sweep.overlaps(start: localStart, end: localEnd)
         guard let best = overlaps.first else {
             return Assignment(
                 speakerID: "unknown-speaker",
@@ -165,7 +186,7 @@ struct SpeakerTranscriptResolver: Sendable {
                 ambiguity: .unmatchedSpeech
             )
         }
-        var value = assignment(for: best.key, artifact: artifact)
+        var value = assignment(for: best.key, profiles: profiles)
         if overlaps.count > 1,
            best.value - overlaps[1].value <= configuration.ambiguityToleranceSeconds {
             value.ambiguity = .overlappingSpeakers
@@ -175,9 +196,9 @@ struct SpeakerTranscriptResolver: Sendable {
 
     private func assignment(
         for speakerID: String,
-        artifact: SpeakerDiarizationArtifact
+        profiles: [String: SpeakerProfile]
     ) -> Assignment {
-        guard let profile = artifactStore.effectiveProfile(for: speakerID, in: artifact) else {
+        guard let profile = profiles[speakerID] else {
             return Assignment(
                 speakerID: "unknown-speaker",
                 speaker: "Unknown speaker",
@@ -240,6 +261,37 @@ struct SpeakerTranscriptResolver: Sendable {
         let speakerID: String
         let speaker: String
         var ambiguity: ResolvedSpeakerAmbiguity
+    }
+
+    private struct SystemAssignmentSweep {
+        let segments: [SpeakerDiarizationSegment]
+        var cursor = 0
+        var lastStart = -Double.infinity
+
+        mutating func overlaps(start: Double, end: Double) -> [(key: String, value: Double)] {
+            guard end > start else { return [] }
+            if start < lastStart {
+                cursor = 0
+            }
+            lastStart = start
+            while cursor < segments.count, segments[cursor].end <= start {
+                cursor += 1
+            }
+            var totals: [String: Double] = [:]
+            var index = cursor
+            while index < segments.count, segments[index].start < end {
+                let segment = segments[index]
+                let overlap = max(0, min(end, segment.end) - max(start, segment.start))
+                if overlap > 0 {
+                    totals[segment.speakerID, default: 0] += overlap
+                }
+                index += 1
+            }
+            return totals.sorted {
+                if $0.value != $1.value { return $0.value > $1.value }
+                return $0.key < $1.key
+            }
+        }
     }
 
     private struct Draft {

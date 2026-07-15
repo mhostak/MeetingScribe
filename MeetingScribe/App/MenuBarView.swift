@@ -658,7 +658,7 @@ struct MenuBarView: View {
 
     private func messageBanner(_ message: String, color: Color, icon: String) -> some View {
         Label {
-            Text(LocalizedStringKey(message))
+            Text(verbatim: message)
         } icon: {
             Image(systemName: icon)
         }
@@ -682,7 +682,7 @@ struct MenuBarView: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title) + Text(": ") + Text(audioHealthKey(health))
                 if let failureReason = diagnostics.failureReason, !required {
-                    Text(LocalizedStringKey(failureReason)).foregroundStyle(.orange).lineLimit(2)
+                    Text(verbatim: failureReason).foregroundStyle(.orange).lineLimit(2)
                 }
             }
             Spacer()
@@ -708,24 +708,6 @@ struct MenuBarView: View {
         case .stalled, .failed: return "exclamationmark.triangle.fill"
         case .idle, .waitingForData: return "waveform"
         }
-    }
-}
-
-struct MenuBarStatusLabel: View {
-    let status: AppStatus
-    let hasRecovery: Bool
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var iconState: MenuBarIconState {
-        MenuBarIconState(status: status, hasRecovery: hasRecovery)
-    }
-
-    var body: some View {
-        Image(nsImage: MenuBarIconRenderer.image(for: iconState, colorScheme: colorScheme))
-            .renderingMode(.original)
-            .frame(width: 18, height: 18)
-            .id("\(iconState.rawValue)-\(colorScheme)")
-            .accessibilityLabel(Text(LocalizedStringKey(iconState.accessibilityLabel)))
     }
 }
 
