@@ -3,11 +3,24 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
-    @Environment(\.openSettings) private var openSettings
-    @Environment(\.openWindow) private var openWindow
+    let openSettingsAction: () -> Void
+    let openRecordingsAction: () -> Void
+    let openCalendarPickerAction: () -> Void
     @State private var isEditingMeetingTitle = false
     @State private var meetingTitleDraft = ""
     @FocusState private var isMeetingTitleFocused: Bool
+
+    init(
+        appState: AppState,
+        openSettingsAction: @escaping () -> Void = {},
+        openRecordingsAction: @escaping () -> Void = {},
+        openCalendarPickerAction: @escaping () -> Void = {}
+    ) {
+        self.appState = appState
+        self.openSettingsAction = openSettingsAction
+        self.openRecordingsAction = openRecordingsAction
+        self.openCalendarPickerAction = openCalendarPickerAction
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -81,7 +94,7 @@ struct MenuBarView: View {
             }
 
             Button {
-                openSettings()
+                openSettingsAction()
             } label: {
                 Image(systemName: "gearshape")
             }
@@ -102,8 +115,7 @@ struct MenuBarView: View {
 
     private var readyContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Meeting title (optional)", text: $appState.meetingTitle)
-                .textFieldStyle(.roundedBorder)
+            meetingTitleAndCalendarControl
 
             Button {
                 Task { await appState.startRecording() }
@@ -143,7 +155,12 @@ struct MenuBarView: View {
 
     private var recordingContent: some View {
         VStack(spacing: 14) {
-            recordingTitleEditor
+            HStack(spacing: 8) {
+                calendarPickerButton
+                recordingTitleEditor
+                clearCalendarSelectionButton
+            }
+            calendarSelectionSummary
 
             if let startedAt = appState.currentSession?.metadata.startedAt {
                 RecordingDurationView(startedAt: startedAt)
@@ -288,8 +305,7 @@ struct MenuBarView: View {
 
             Divider()
 
-            TextField("Meeting title (optional)", text: $appState.meetingTitle)
-                .textFieldStyle(.roundedBorder)
+            meetingTitleAndCalendarControl
 
             Button {
                 Task { await appState.startRecording() }
@@ -305,7 +321,7 @@ struct MenuBarView: View {
         Button {
             guard let session = appState.lastCompletedSession else { return }
             appState.requestRecordingsOverview(for: session)
-            openWindow(id: "recordings")
+            openRecordingsAction()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
@@ -348,7 +364,7 @@ struct MenuBarView: View {
             Divider()
             HStack {
                 Button {
-                    openWindow(id: "recordings")
+                    openRecordingsAction()
                 } label: {
                     Label("Recordings overview", systemImage: "list.bullet.rectangle")
                 }
@@ -360,6 +376,77 @@ struct MenuBarView: View {
         }
     }
 
+    private var meetingTitleAndCalendarControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                calendarPickerButton
+                TextField("Meeting title (optional)", text: $appState.meetingTitle)
+                    .textFieldStyle(.roundedBorder)
+                clearCalendarSelectionButton
+            }
+            calendarSelectionSummary
+        }
+    }
+
+    private var calendarPickerButton: some View {
+        Button(action: openCalendarPickerOrSettings) {
+            Image(systemName: appState.approvedCalendarEvent == nil
+                ? "calendar"
+                : "calendar.badge.checkmark")
+                .foregroundStyle(appState.approvedCalendarEvent == nil ? Color.primary : .green)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(!appState.canChooseCalendarEvent)
+        .help(appState.approvedCalendarEvent == nil ? "Choose from Calendar" : "Change")
+        .accessibilityLabel(appState.approvedCalendarEvent == nil ? "Choose from Calendar" : "Change")
+    }
+
+    @ViewBuilder
+    private var clearCalendarSelectionButton: some View {
+        if appState.approvedCalendarEvent != nil {
+            Button {
+                Task { await appState.clearCalendarSelection() }
+            } label: {
+                Image(systemName: "xmark")
+                    .frame(width: 16, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove calendar selection")
+            .accessibilityLabel("Remove calendar selection")
+        }
+    }
+
+    @ViewBuilder
+    private var calendarSelectionSummary: some View {
+        if let event = appState.approvedCalendarEvent {
+            HStack(spacing: 5) {
+                Text(verbatim: event.title)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(event.participants.count) confirmed participants")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption2)
+            .padding(.leading, 46)
+        }
+    }
+
+    private func openCalendarPickerOrSettings() {
+        appState.refreshCalendarAuthorizationStatus()
+        guard appState.calendarIntegrationEnabled,
+              appState.calendarAuthorizationStatus.canReadEvents else {
+            appState.selectedSettingsSection = "calendar"
+            openSettingsAction()
+            return
+        }
+        openCalendarPickerAction()
+    }
+
     private func settingsChip(
         _ title: String,
         icon: String,
@@ -368,7 +455,7 @@ struct MenuBarView: View {
     ) -> some View {
         Button {
             appState.selectedSettingsSection = section
-            openSettings()
+            openSettingsAction()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: icon)
@@ -593,15 +680,15 @@ struct MenuBarStatusLabel: View {
     var body: some View {
         Image(nsImage: MenuBarIconRenderer.image(for: iconState, colorScheme: colorScheme))
             .renderingMode(.original)
-            .frame(width: 24, height: 18)
+            .frame(width: 18, height: 18)
             .id("\(iconState.rawValue)-\(colorScheme)")
             .accessibilityLabel(Text(LocalizedStringKey(iconState.accessibilityLabel)))
     }
 }
 
-private enum MenuBarIconRenderer {
+enum MenuBarIconRenderer {
     static func image(for state: MenuBarIconState, colorScheme: ColorScheme) -> NSImage {
-        let size = NSSize(width: 24, height: 18)
+        let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             NSGraphicsContext.current?.shouldAntialias = true
             let baseColor: NSColor = colorScheme == .dark ? .white : .black
@@ -624,7 +711,7 @@ private enum MenuBarIconRenderer {
     }
 
     private static func drawBadge(_ state: MenuBarIconState, in rect: NSRect) {
-        let center = NSPoint(x: rect.maxX - 4.6, y: rect.maxY - 4.6)
+        let center = NSPoint(x: rect.maxX - 3.8, y: rect.maxY - 4.6)
         switch state {
         case .idle:
             break

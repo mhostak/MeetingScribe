@@ -38,7 +38,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 9)
+        XCTAssertEqual(metadata.schemaVersion, 10)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
         XCTAssertNil(metadata.audioFiles.systemWorking)
@@ -188,6 +188,29 @@ final class SessionManagerTests: XCTestCase {
         )
     }
 
+    func testCalendarSnapshotIsPersistedAndUpdatedAtomicallyWithTitle() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let initialSnapshot = makeCalendarSnapshot(title: "Initial event")
+        let started = try await manager.startSession(
+            title: "Manual title",
+            calendarEvent: initialSnapshot
+        )
+
+        XCTAssertEqual(started.metadata.calendarEvent, initialSnapshot)
+
+        let updatedSnapshot = makeCalendarSnapshot(title: "Updated event")
+        let updated = try await manager.updateActiveSessionCalendarEvent(
+            updatedSnapshot,
+            title: "  Updated event  "
+        )
+        let persisted = try decodeMetadata(at: started.manifestURL)
+
+        XCTAssertEqual(updated.metadata.title, "Updated event")
+        XCTAssertEqual(updated.metadata.calendarEvent, updatedSnapshot)
+        XCTAssertEqual(persisted.title, "Updated event")
+        XCTAssertEqual(persisted.calendarEvent, updatedSnapshot)
+    }
+
     func testRecordsSourceCleanupAuditAfterSessionCompletion() async throws {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         _ = try await manager.startSession(title: "Cleanup")
@@ -298,5 +321,19 @@ final class SessionManagerTests: XCTestCase {
     private func decodeMetadata(at url: URL) throws -> SessionMetadata {
         let data = try Data(contentsOf: url)
         return try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: data)
+    }
+
+    private func makeCalendarSnapshot(title: String) -> CalendarEventSnapshot {
+        CalendarEventSnapshot(
+            source: .appleCalendar,
+            title: title,
+            startsAt: Date(timeIntervalSince1970: 1_800_000_000),
+            endsAt: Date(timeIntervalSince1970: 1_800_003_600),
+            selectedAt: Date(timeIntervalSince1970: 1_799_999_000),
+            participants: [
+                ConfirmedParticipant(displayName: "Martin Hošták"),
+            ],
+            shareParticipantNamesWithAnalysis: false
+        )
     }
 }

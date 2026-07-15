@@ -300,8 +300,46 @@ enum AppLocalization {
             }
         case let error as KeychainStoreError:
             return keychainError(error, language: language)
+        case let error as CalendarIntegrationError:
+            return calendarError(error, language: language)
         default:
             return error.localizedDescription
+        }
+    }
+
+    private static func calendarError(
+        _ error: CalendarIntegrationError,
+        language: AppLanguage
+    ) -> String {
+        switch error {
+        case .integrationDisabled:
+            return pick(
+                "Apple Calendar integration is disabled.",
+                "Integrácia Apple Kalendára je vypnutá.",
+                "Integrace Apple Kalendáře je vypnutá.",
+                language
+            )
+        case .fullAccessRequired:
+            return pick(
+                "Full Calendar access is required to read events.",
+                "Na čítanie udalostí je potrebný úplný prístup ku Kalendáru.",
+                "Pro čtení událostí je vyžadován úplný přístup ke Kalendáři.",
+                language
+            )
+        case let .accessRequestFailed(detail):
+            return pick(
+                "Calendar access could not be requested: \(detail)",
+                "Prístup ku Kalendáru sa nepodarilo vyžiadať: \(detail)",
+                "Přístup ke Kalendáři se nepodařilo vyžádat: \(detail)",
+                language
+            )
+        case let .eventLoadingFailed(detail):
+            return pick(
+                "Calendar events could not be loaded: \(detail)",
+                "Udalosti Kalendára sa nepodarilo načítať: \(detail)",
+                "Události Kalendáře se nepodařilo načíst: \(detail)",
+                language
+            )
         }
     }
 
@@ -560,6 +598,7 @@ final class ApplicationSettingsStore {
         static let outputLanguage = "meetingOutputLanguage"
         static let markdownFileNameTemplate = "markdownFileNameTemplate"
         static let minimumStorageBytes = "minimumRecordingStorageBytes"
+        static let calendarIntegrationEnabled = "appleCalendarIntegrationEnabled"
     }
 
     private let defaults: UserDefaults
@@ -590,6 +629,10 @@ final class ApplicationSettingsStore {
         return max(value?.int64Value ?? StorageGuard.defaultMinimumBytes, 1)
     }
 
+    var calendarIntegrationEnabled: Bool {
+        defaults.bool(forKey: Key.calendarIntegrationEnabled)
+    }
+
     func setAppLanguage(_ language: AppLanguage) {
         defaults.set(language.rawValue, forKey: Key.appLanguage)
     }
@@ -604,5 +647,9 @@ final class ApplicationSettingsStore {
 
     func setMinimumStorageBytes(_ bytes: Int64) {
         defaults.set(max(bytes, 1), forKey: Key.minimumStorageBytes)
+    }
+
+    func setCalendarIntegrationEnabled(_ enabled: Bool) {
+        defaults.set(enabled, forKey: Key.calendarIntegrationEnabled)
     }
 }

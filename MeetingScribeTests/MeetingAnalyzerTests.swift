@@ -79,6 +79,37 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testConfirmedParticipantNamesAreIncludedOnlyWithExplicitAnalysisOptIn() async throws {
+        let optedInProvider = MockAnalysisProvider()
+        let optedOutProvider = MockAnalysisProvider()
+        let transcript = makeTranscript(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Text meetingu",
+                confidence: nil
+            ),
+        ])
+
+        _ = try await MeetingAnalyzer(provider: optedInProvider).analyze(
+            session: makeSession(shareParticipantNamesWithAnalysis: true),
+            transcript: transcript
+        )
+        _ = try await MeetingAnalyzer(provider: optedOutProvider).analyze(
+            session: makeSession(shareParticipantNamesWithAnalysis: false),
+            transcript: transcript
+        )
+
+        let optedInRequests = await optedInProvider.requests
+        let optedOutRequests = await optedOutProvider.requests
+        XCTAssertTrue(optedInRequests[0].content.contains("Confirmed participants: Jana Nováková"))
+        XCTAssertFalse(optedOutRequests[0].content.contains("Jana Nováková"))
+    }
+
     func testConsolidationDeadEndIsRejectedInsteadOfLooping() async {
         let provider = LargePartialAnalysisProvider()
         let segments = (0..<2).map { index in
@@ -142,12 +173,27 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
     }
 
-    private func makeSession() -> SessionMetadata {
+    private func makeSession(
+        shareParticipantNamesWithAnalysis: Bool? = nil
+    ) -> SessionMetadata {
         SessionMetadata(
             id: "session-1",
             title: "Test meeting",
             status: .recorded,
-            createdAt: Date()
+            createdAt: Date(),
+            calendarEvent: shareParticipantNamesWithAnalysis.map { shareNames in
+                CalendarEventSnapshot(
+                    source: .appleCalendar,
+                    title: "Test meeting",
+                    startsAt: Date(),
+                    endsAt: Date().addingTimeInterval(3_600),
+                    selectedAt: Date(),
+                    participants: [
+                        ConfirmedParticipant(displayName: "Jana Nováková"),
+                    ],
+                    shareParticipantNamesWithAnalysis: shareNames
+                )
+            }
         )
     }
 
