@@ -41,6 +41,7 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
     private var statusObservation: AnyCancellable?
     private var recordingsWindow: NSWindow?
     private var calendarPickerWindow: NSWindow?
+    private var renderedStatusIcon: (state: MenuBarIconState, colorScheme: ColorScheme)?
 
     init(appState: AppState) {
         self.appState = appState
@@ -105,10 +106,15 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
         let colorScheme: ColorScheme = appearance == .darkAqua ? .dark : .light
         let state = MenuBarIconState(
             status: appState.status,
-            hasRecovery: !appState.recoveryCandidates.isEmpty
+            hasRecovery: !appState.recoveryCandidates.isEmpty || !appState.recoveryIssues.isEmpty
         )
+        guard renderedStatusIcon?.state != state
+                || renderedStatusIcon?.colorScheme != colorScheme else {
+            return
+        }
         button.image = MenuBarIconRenderer.image(for: state, colorScheme: colorScheme)
         button.setAccessibilityLabel(state.accessibilityLabel)
+        renderedStatusIcon = (state, colorScheme)
     }
 
     private func openSettings() {

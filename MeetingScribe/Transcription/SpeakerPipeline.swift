@@ -43,17 +43,20 @@ actor SpeakerPipeline {
         modelBundleURL: URL?
     ) async throws -> SpeakerProcessingResult {
         try Task.checkCancellation()
+        let transcriptFingerprint = try artifactStore.fingerprint(transcript: transcript)
         if let artifact = try? artifactStore.loadValid(
             from: session.speakerDiarizationURL,
             sessionID: session.metadata.id,
             sourceAudioURL: systemAudioURL,
             transcript: transcript,
-            expectedTimelineOffsetSeconds: systemTimelineOffsetSeconds
+            expectedTimelineOffsetSeconds: systemTimelineOffsetSeconds,
+            sourceTranscriptFingerprint: transcriptFingerprint
         ) {
             let resolved = try loadOrResolve(
                 session: session,
                 transcript: transcript,
-                artifact: artifact
+                artifact: artifact,
+                transcriptFingerprint: transcriptFingerprint
             )
             return SpeakerProcessingResult(
                 metadata: completedMetadata(
@@ -99,16 +102,25 @@ actor SpeakerPipeline {
                 options: SpeakerDiarizationOptions()
             ))
             try Task.checkCancellation()
+            let audioFingerprint = try artifactStore.fingerprint(fileAt: systemAudioURL)
             let artifact = try artifactStore.makeArtifact(
                 sessionID: session.metadata.id,
                 result: result,
                 sourceAudioURL: systemAudioURL,
                 transcript: transcript,
                 sourceTimelineOffsetSeconds: systemTimelineOffsetSeconds,
-                configurationRevision: configuration.revision
+                configurationRevision: configuration.revision,
+                sourceAudioFingerprint: audioFingerprint,
+                sourceTranscriptFingerprint: transcriptFingerprint
             )
             try artifactStore.persist(artifact, to: session.speakerDiarizationURL)
-            let resolved = try resolver.resolve(transcript: transcript, artifact: artifact)
+            let artifactFingerprint = try artifactStore.fingerprint(artifact: artifact)
+            let resolved = try resolver.resolve(
+                transcript: transcript,
+                artifact: artifact,
+                transcriptFingerprint: transcriptFingerprint,
+                artifactFingerprint: artifactFingerprint
+            )
             try resolvedStore.persist(resolved, to: session.resolvedTranscriptURL)
             await diarizer.releaseResources()
             return SpeakerProcessingResult(
@@ -154,9 +166,16 @@ actor SpeakerPipeline {
     func resolvePersisted(
         session: RecordingSession,
         transcript: MergedTranscript,
-        artifact: SpeakerDiarizationArtifact
+        artifact: SpeakerDiarizationArtifact,
+        transcriptFingerprint: String? = nil,
+        artifactFingerprint: String? = nil
     ) throws -> ResolvedTranscript {
-        let resolved = try resolver.resolve(transcript: transcript, artifact: artifact)
+        let resolved = try resolver.resolve(
+            transcript: transcript,
+            artifact: artifact,
+            transcriptFingerprint: transcriptFingerprint,
+            artifactFingerprint: artifactFingerprint
+        )
         try resolvedStore.persist(resolved, to: session.resolvedTranscriptURL)
         return resolved
     }
@@ -164,19 +183,25 @@ actor SpeakerPipeline {
     private func loadOrResolve(
         session: RecordingSession,
         transcript: MergedTranscript,
-        artifact: SpeakerDiarizationArtifact
+        artifact: SpeakerDiarizationArtifact,
+        transcriptFingerprint: String
     ) throws -> ResolvedTranscript {
+        let artifactFingerprint = try artifactStore.fingerprint(artifact: artifact)
         if let resolved = try resolvedStore.loadValid(
             from: session.resolvedTranscriptURL,
             transcript: transcript,
-            artifact: artifact
+            artifact: artifact,
+            transcriptFingerprint: transcriptFingerprint,
+            artifactFingerprint: artifactFingerprint
         ) {
             return resolved
         }
         return try resolvePersisted(
             session: session,
             transcript: transcript,
-            artifact: artifact
+            artifact: artifact,
+            transcriptFingerprint: transcriptFingerprint,
+            artifactFingerprint: artifactFingerprint
         )
     }
 

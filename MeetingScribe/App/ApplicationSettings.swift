@@ -60,6 +60,7 @@ enum AppUserMessage: Equatable, Sendable {
     case captureFailedSafeStop
     case captureStalledSafeStop
     case lowStorageSafeStop
+    case storageCheckFailedSafeStop
     case chooseOutputFolderTitle
     case choose
     case importFluidAudioModelTitle(String)
@@ -231,6 +232,13 @@ enum AppLocalization {
                 "Recording was stopped safely because free disk space became critically low. Existing audio was preserved.",
                 "Nahrávanie bolo bezpečne zastavené pre kriticky nízke voľné miesto na disku. Existujúce audio zostalo zachované.",
                 "Nahrávání bylo bezpečně zastaveno kvůli kriticky nízkému volnému místu na disku. Existující audio zůstalo zachované.",
+                language
+            )
+        case .storageCheckFailedSafeStop:
+            return pick(
+                "Recording was stopped safely because free disk space could not be verified. Existing audio was preserved.",
+                "Nahrávanie bolo bezpečne zastavené, pretože voľné miesto na disku nebolo možné overiť. Existujúce audio zostalo zachované.",
+                "Nahrávání bylo bezpečně zastaveno, protože volné místo na disku nebylo možné ověřit. Existující audio zůstalo zachované.",
                 language
             )
         case .chooseOutputFolderTitle:

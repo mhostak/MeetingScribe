@@ -89,6 +89,44 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         XCTAssertLessThan(startExit, stop)
     }
 
+    func testDelayedRecoveryFromStoppedCaptureDoesNotAffectNextCapture() async throws {
+        let notificationCenter = NotificationCenter()
+        let initialEngine = FakeMicrophoneAudioEngine()
+        let replacementEngine = FakeMicrophoneAudioEngine()
+        let factoryCalls = SynchronousCounter()
+        let capture = MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: {
+                factoryCalls.increment()
+                return replacementEngine
+            },
+            notificationCenter: notificationCenter,
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0.05,
+                maximumAttempts: 2,
+                minimumBufferCount: 1
+            ),
+            permissionRequester: {}
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureRecoveryTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await capture.start(outputURL: directory.appendingPathComponent("first.caf"))
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: initialEngine.notificationObject
+        )
+        _ = await capture.stop()
+        try await capture.start(outputURL: directory.appendingPathComponent("second.caf"))
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(factoryCalls.value, 0)
+        _ = await capture.stop()
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: () -> Bool
@@ -98,6 +136,17 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("Timed out waiting for microphone engine operation.")
+    }
+}
+
+private final class SynchronousCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int { lock.withLock { count } }
+
+    func increment() {
+        lock.withLock { count += 1 }
     }
 }
 

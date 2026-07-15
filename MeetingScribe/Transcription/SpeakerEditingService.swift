@@ -65,7 +65,8 @@ actor SpeakerEditingService {
         let values = try loadValidated(session: session)
         let resolved = try resolver.resolve(
             transcript: values.transcript,
-            artifact: values.artifact
+            artifact: values.artifact,
+            transcriptFingerprint: values.transcriptFingerprint
         )
         return SpeakerEditorSnapshot(
             sessionID: session.metadata.id,
@@ -97,7 +98,8 @@ actor SpeakerEditingService {
 
         let resolved = try resolver.resolve(
             transcript: values.transcript,
-            artifact: artifact
+            artifact: artifact,
+            transcriptFingerprint: values.transcriptFingerprint
         )
         try resolvedStore.persist(resolved, to: session.resolvedTranscriptURL)
         let markdownURL = try regenerateMarkdownIfPresent(
@@ -114,7 +116,11 @@ actor SpeakerEditingService {
 
     private func loadValidated(
         session: RecordingSession
-    ) throws -> (transcript: MergedTranscript, artifact: SpeakerDiarizationArtifact) {
+    ) throws -> (
+        transcript: MergedTranscript,
+        artifact: SpeakerDiarizationArtifact,
+        transcriptFingerprint: String
+    ) {
         guard fileManager.fileExists(atPath: session.mergedTranscriptURL.path),
               let data = try? Data(contentsOf: session.mergedTranscriptURL),
               let transcript = try? TranscriptJSONCoder.makeDecoder().decode(
@@ -130,16 +136,18 @@ actor SpeakerEditingService {
             finalization.system.fileName,
             isDirectory: false
         )
+        let transcriptFingerprint = try artifactStore.fingerprint(transcript: transcript)
         guard let artifact = try artifactStore.loadValid(
             from: session.speakerDiarizationURL,
             sessionID: session.metadata.id,
             sourceAudioURL: audioURL,
             transcript: transcript,
-            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds
+            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
+            sourceTranscriptFingerprint: transcriptFingerprint
         ) else {
             throw SpeakerEditingError.diarizationMissing
         }
-        return (transcript, artifact)
+        return (transcript, artifact, transcriptFingerprint)
     }
 
     private func regenerateMarkdownIfPresent(

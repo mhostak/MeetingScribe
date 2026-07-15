@@ -88,6 +88,10 @@ struct AudioFinalizer: AudioFinalizing {
             warnings.append(
                 "Microphone track was preserved but skipped because its timestamp did not share a plausible host-time origin with system audio."
             )
+        } else if microphoneDiagnostics.bufferCount > 0 {
+            warnings.append(
+                "Microphone track was preserved but skipped because its capture start timestamp was unavailable."
+            )
         } else if let failureReason = microphoneDiagnostics.failureReason {
             warnings.append("Microphone capture was unavailable: \(failureReason)")
         } else {

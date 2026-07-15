@@ -153,7 +153,7 @@ struct TranscriptMerger: Sendable {
         case .system:
             return "Other"
         case .microphone:
-            return "Martin"
+            return "Me"
         }
     }
 

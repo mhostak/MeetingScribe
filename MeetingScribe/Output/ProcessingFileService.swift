@@ -167,25 +167,40 @@ actor ProcessingFileService: ProcessingFileServicing {
             finalization.system.fileName,
             isDirectory: false
         )
+        guard let transcriptFingerprint = try? speakerArtifactStore.fingerprint(
+            transcript: transcript
+        ) else {
+            return (nil, nil)
+        }
         guard let artifact = try? speakerArtifactStore.loadValid(
             from: session.speakerDiarizationURL,
             sessionID: session.metadata.id,
             sourceAudioURL: audioURL,
             transcript: transcript,
-            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds
+            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
+            sourceTranscriptFingerprint: transcriptFingerprint
         ) else {
             return (nil, nil)
+        }
+        guard let artifactFingerprint = try? speakerArtifactStore.fingerprint(
+            artifact: artifact
+        ) else {
+            return (artifact, nil)
         }
         if let resolved = try? resolvedTranscriptStore.loadValid(
             from: session.resolvedTranscriptURL,
             transcript: transcript,
-            artifact: artifact
+            artifact: artifact,
+            transcriptFingerprint: transcriptFingerprint,
+            artifactFingerprint: artifactFingerprint
         ) {
             return (artifact, resolved)
         }
         guard let resolved = try? speakerResolver.resolve(
             transcript: transcript,
-            artifact: artifact
+            artifact: artifact,
+            transcriptFingerprint: transcriptFingerprint,
+            artifactFingerprint: artifactFingerprint
         ) else {
             return (artifact, nil)
         }

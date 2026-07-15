@@ -84,6 +84,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         var tapInstalled = false
         var configurationRecoveryScheduled = false
         var configurationRecoveryAttempts = 0
+        var captureGeneration: UUID?
     }
 
     private var engine: any MicrophoneAudioEngine
@@ -175,7 +176,8 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 diagnostics: AudioCaptureDiagnostics(
                     fileName: outputURL.lastPathComponent,
                     startedAt: Date()
-                )
+                ),
+                captureGeneration: UUID()
             )
             installTap(on: currentEngine)
             state.tapInstalled = true
@@ -200,6 +202,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
             state.isCapturing = false
             state.configurationRecoveryScheduled = false
+            state.captureGeneration = nil
             let currentEngine = engine
             if state.tapInstalled {
                 currentEngine.removeTap()
@@ -285,22 +288,24 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private func scheduleConfigurationRecovery() {
         writerQueue.async { [weak self] in
             guard let self else { return }
-            guard state.isCapturing, !state.configurationRecoveryScheduled else {
+            guard state.isCapturing,
+                  !state.configurationRecoveryScheduled,
+                  let generation = state.captureGeneration else {
                 return
             }
             state.configurationRecoveryScheduled = true
             writerQueue.asyncAfter(
                 deadline: .now() + recoveryConfiguration.delay
             ) { [weak self] in
-                self?.recoverFromConfigurationChange()
+                self?.recoverFromConfigurationChange(generation: generation)
             }
         }
     }
 
-    private func recoverFromConfigurationChange() {
+    private func recoverFromConfigurationChange(generation: UUID) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
         state.configurationRecoveryScheduled = false
-        guard state.isCapturing else { return }
+        guard state.isCapturing, state.captureGeneration == generation else { return }
 
         let previousEngine = engine
         if state.tapInstalled {
@@ -319,7 +324,10 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
         let format = replacementEngine.inputFormat()
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            retryConfigurationRecovery(reason: "The selected microphone is not ready.")
+            retryConfigurationRecovery(
+                reason: "The selected microphone is not ready.",
+                generation: generation
+            )
             return
         }
 
@@ -329,15 +337,15 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         replacementEngine.prepare()
         do {
             try replacementEngine.start()
-            verifyConfigurationRecovery(after: baselineBufferCount)
+            verifyConfigurationRecovery(after: baselineBufferCount, generation: generation)
         } catch {
             replacementEngine.removeTap()
             state.tapInstalled = false
-            retryConfigurationRecovery(reason: error.localizedDescription)
+            retryConfigurationRecovery(reason: error.localizedDescription, generation: generation)
         }
     }
 
-    private func verifyConfigurationRecovery(after baselineBufferCount: Int) {
+    private func verifyConfigurationRecovery(after baselineBufferCount: Int, generation: UUID) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
         state.configurationRecoveryScheduled = true
         writerQueue.asyncAfter(
@@ -345,14 +353,15 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         ) { [weak self] in
             guard let self else { return }
             state.configurationRecoveryScheduled = false
-            guard state.isCapturing else { return }
+            guard state.isCapturing, state.captureGeneration == generation else { return }
 
             guard recoveryConfiguration.hasEnoughRecoveredBuffers(
                 baseline: baselineBufferCount,
                 current: state.diagnostics.bufferCount
             ) else {
                 retryConfigurationRecovery(
-                    reason: "The audio engine started but the microphone produced no buffers."
+                    reason: "The audio engine started but the microphone produced no buffers.",
+                    generation: generation
                 )
                 return
             }
@@ -364,8 +373,9 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         }
     }
 
-    private func retryConfigurationRecovery(reason: String) {
+    private func retryConfigurationRecovery(reason: String, generation: UUID) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
+        guard state.captureGeneration == generation else { return }
         state.configurationRecoveryAttempts += 1
         guard recoveryConfiguration.shouldRetry(
             after: state.configurationRecoveryAttempts
@@ -379,7 +389,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         writerQueue.asyncAfter(
             deadline: .now() + recoveryConfiguration.delay
         ) { [weak self] in
-            self?.recoverFromConfigurationChange()
+            self?.recoverFromConfigurationChange(generation: generation)
         }
     }
 
@@ -402,6 +412,14 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         } catch {
             state.diagnostics.failureReason = error.localizedDescription
             finishWriter()
+            state.isCapturing = false
+            state.configurationRecoveryScheduled = false
+            state.captureGeneration = nil
+            if state.tapInstalled {
+                engine.removeTap()
+            }
+            engine.stop()
+            state.tapInstalled = false
         }
     }
 
