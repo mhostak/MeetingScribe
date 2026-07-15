@@ -455,8 +455,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    func closeRecoveryIssue(_ issue: SessionRecoveryIssue) async {
+        do {
+            try await sessionManager.closeRecoveryIssue(
+                directoryName: issue.directoryName
+            )
+            await refreshRecoveryCandidates()
+            lastError = nil
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
     func revealRecovery(_ candidate: SessionRecoveryCandidate) {
         NSWorkspace.shared.activateFileViewerSelecting([candidate.session.manifestURL])
+    }
+
+    func revealRecoveryIssue(_ issue: SessionRecoveryIssue) {
+        let directoryURL = sessionManager.recordingsRoot.appendingPathComponent(
+            issue.directoryName,
+            isDirectory: true
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([directoryURL])
     }
 
     func requestRecordingsOverview(for session: RecordingSession) {

@@ -38,9 +38,11 @@ struct SessionRecoveryCandidate: Identifiable, Equatable, Sendable {
     let suggestedEndAt: Date
 }
 
-struct SessionRecoveryIssue: Equatable, Sendable {
+struct SessionRecoveryIssue: Identifiable, Equatable, Sendable {
     let directoryName: String
     let reason: String
+
+    var id: String { directoryName }
 }
 
 struct SessionRecoveryScanResult: Equatable, Sendable {
@@ -49,6 +51,8 @@ struct SessionRecoveryScanResult: Equatable, Sendable {
 }
 
 struct SessionRecoveryScanner {
+    static let closedIssueMarkerFileName = ".recovery-closed"
+
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {
@@ -68,6 +72,13 @@ struct SessionRecoveryScanner {
         var issues: [SessionRecoveryIssue] = []
         for directory in directories {
             guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                continue
+            }
+            let closedIssueMarkerURL = directory.appendingPathComponent(
+                Self.closedIssueMarkerFileName,
+                isDirectory: false
+            )
+            guard !fileManager.fileExists(atPath: closedIssueMarkerURL.path) else {
                 continue
             }
             let manifestURL = directory.appendingPathComponent("session.json")
@@ -341,6 +352,7 @@ struct RecoveredAudioInspector {
 
 enum SessionRecoveryError: Error, Equatable, LocalizedError {
     case candidateNotFound
+    case issueNotFound
     case sessionNotRecoverable
     case requiredSystemAudioMissing
     case audioUnreadable(fileName: String, reason: String)
@@ -352,6 +364,8 @@ enum SessionRecoveryError: Error, Equatable, LocalizedError {
         switch self {
         case .candidateNotFound:
             return "The recovery candidate no longer exists."
+        case .issueNotFound:
+            return "The recovery issue no longer exists."
         case .sessionNotRecoverable:
             return "This session is no longer eligible for recovery."
         case .requiredSystemAudioMissing:

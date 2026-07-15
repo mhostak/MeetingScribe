@@ -375,6 +375,8 @@ enum AppLocalization {
         switch error {
         case .candidateNotFound:
             return pick("The recovery candidate no longer exists.", "Kandidát na obnovu už neexistuje.", "Kandidát na obnovu již neexistuje.", language)
+        case .issueNotFound:
+            return pick("The recovery issue no longer exists.", "Problém obnovy už neexistuje.", "Problém obnovy již neexistuje.", language)
         case .sessionNotRecoverable:
             return pick("This session is no longer eligible for recovery.", "Túto reláciu už nie je možné obnoviť.", "Tuto relaci již není možné obnovit.", language)
         case .requiredSystemAudioMissing:

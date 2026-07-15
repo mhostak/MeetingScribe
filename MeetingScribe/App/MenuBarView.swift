@@ -29,6 +29,8 @@ struct MenuBarView: View {
             Group {
                 if let candidate = activeRecoveryCandidate {
                     recoveryContent(candidate)
+                } else if let issue = activeRecoveryIssue {
+                    recoveryIssueContent(issue)
                 } else {
                     statusContent
                 }
@@ -66,6 +68,10 @@ struct MenuBarView: View {
 
     private var activeRecoveryCandidate: SessionRecoveryCandidate? {
         appState.status == .idle ? appState.recoveryCandidates.first : nil
+    }
+
+    private var activeRecoveryIssue: SessionRecoveryIssue? {
+        appState.status == .idle ? appState.recoveryIssues.first : nil
     }
 
     private var header: some View {
@@ -547,6 +553,43 @@ struct MenuBarView: View {
             .controlSize(.small)
 
             Text("Nothing is deleted when a recovery is closed.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func recoveryIssueContent(_ issue: SessionRecoveryIssue) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Recording folder needs attention", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(.orange)
+
+            Text(issue.directoryName)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+
+            Text(verbatim: issue.reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if appState.recoveryIssues.count > 1 {
+                (Text("Further folders needing attention:")
+                    + Text(verbatim: " \(appState.recoveryIssues.count - 1)"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button("Reveal") { appState.revealRecoveryIssue(issue) }
+                Spacer()
+                Button("Close") { Task { await appState.closeRecoveryIssue(issue) } }
+            }
+            .controlSize(.small)
+
+            Text("Nothing is deleted when a recovery issue is closed.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

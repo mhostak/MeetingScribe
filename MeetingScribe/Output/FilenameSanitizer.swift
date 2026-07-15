@@ -27,11 +27,10 @@ struct FilenameSanitizer: Sendable {
             "{title}": sanitizedTitle(title),
             "{id}": sanitizedTitle(sessionID),
         ]
-        var rendered = MarkdownFileNameTemplate.normalized(template)
-        for (token, value) in values {
-            rendered = rendered.replacingOccurrences(of: token, with: value)
-        }
-        rendered = sanitizedTitle(rendered)
+        let rendered = renderTemplate(
+            MarkdownFileNameTemplate.normalized(template),
+            values: values
+        )
         return "\(rendered).md"
     }
 
@@ -50,7 +49,35 @@ struct FilenameSanitizer: Sendable {
         if sanitized.isEmpty {
             sanitized = "Meeting"
         }
-        return String(sanitized.prefix(100))
+        return utf8Prefix(sanitized, maximumBytes: 100)
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+    }
+
+    private func renderTemplate(_ template: String, values: [String: String]) -> String {
+        let expression = try? NSRegularExpression(pattern: #"\{(?:date|time|title|id)\}"#)
+        let mutable = NSMutableString(string: template)
+        let matches = expression?.matches(
+            in: template,
+            range: NSRange(template.startIndex..., in: template)
+        ) ?? []
+        for match in matches.reversed() {
+            let token = mutable.substring(with: match.range)
+            if let value = values[token] {
+                mutable.replaceCharacters(in: match.range, with: value)
+            }
+        }
+        return sanitizedTitle(mutable as String)
+    }
+
+    private func utf8Prefix(_ value: String, maximumBytes: Int) -> String {
+        var result = ""
+        var byteCount = 0
+        for character in value {
+            let characterByteCount = String(character).utf8.count
+            guard byteCount + characterByteCount <= maximumBytes else { break }
+            result.append(character)
+            byteCount += characterByteCount
+        }
+        return result
     }
 }

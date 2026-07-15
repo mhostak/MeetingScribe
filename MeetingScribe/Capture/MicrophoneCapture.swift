@@ -186,8 +186,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             } catch {
                 currentEngine.removeTap()
                 state.diagnostics.failureReason = error.localizedDescription
-                state.writer?.finish()
-                state.writer = nil
+                finishWriter()
                 state.isCapturing = false
                 state.tapInstalled = false
                 throw error
@@ -207,8 +206,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             }
             currentEngine.stop()
 
-            state.writer?.finish()
-            state.writer = nil
+            finishWriter()
             state.tapInstalled = false
             return state.diagnostics
         }
@@ -237,6 +235,18 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         writerQueue.sync {
             state = failedState(error: error, outputURL: outputURL)
         }
+    }
+
+    private func finishWriter() {
+        guard let writer = state.writer else { return }
+        do {
+            try writer.finish()
+        } catch {
+            if state.diagnostics.failureReason == nil {
+                state.diagnostics.failureReason = error.localizedDescription
+            }
+        }
+        state.writer = nil
     }
 
     private func failedState(error: Error, outputURL: URL) -> State {
@@ -382,6 +392,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
         do {
             let result = try writer.write(buffer)
+            guard result.frameCount > 0 else { return }
             state.diagnostics.registerBuffer(
                 frameCount: result.frameCount,
                 sampleRate: result.sampleRate,
@@ -390,12 +401,12 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             )
         } catch {
             state.diagnostics.failureReason = error.localizedDescription
-            state.writer?.finish()
-            state.writer = nil
+            finishWriter()
         }
     }
 
     private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard source.frameLength > 0 else { return nil }
         guard let copy = AVAudioPCMBuffer(
             pcmFormat: source.format,
             frameCapacity: source.frameLength

@@ -39,7 +39,7 @@ final class LongSessionStabilityTests: XCTestCase {
         for _ in 0..<seconds {
             _ = try writer.write(buffer)
         }
-        writer.finish()
+        try writer.finish()
 
         let file = try AVAudioFile(forReading: outputURL)
         XCTAssertEqual(

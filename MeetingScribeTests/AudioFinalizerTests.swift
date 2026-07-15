@@ -412,7 +412,7 @@ final class AudioFinalizerTests: XCTestCase {
         buffer.floatChannelData?[0].initialize(repeating: 0.2, count: Int(frameCount))
         let writer = AudioFileWriter(outputURL: url)
         _ = try writer.write(buffer)
-        writer.finish()
+        try writer.finish()
     }
 
     private func diagnostics(

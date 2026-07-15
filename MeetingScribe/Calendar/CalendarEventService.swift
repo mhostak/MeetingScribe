@@ -54,7 +54,11 @@ final class CalendarEventService: CalendarEventProviding {
         guard event.status != .canceled else { return nil }
         let normalizedTitle = event.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let title = normalizedTitle.isEmpty ? "Untitled calendar event" : normalizedTitle
-        let eventID = event.eventIdentifier ?? UUID().uuidString
+        let eventID = CalendarEventIdentity.candidateID(
+            eventIdentifier: event.eventIdentifier,
+            calendarItemIdentifier: event.calendarItemIdentifier,
+            startsAt: event.startDate
+        )
 
         let attendees: [EKParticipant] = event.attendees ?? []
         let participants: [CalendarParticipantCandidate] = attendees.enumerated().compactMap {

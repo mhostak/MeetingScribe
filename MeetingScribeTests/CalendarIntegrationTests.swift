@@ -39,6 +39,37 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertEqual(sorted.map(\.id), ["overlap", "nearby", "all-day"])
     }
 
+    func testCalendarFallbackIdentityIsStablePerOccurrence() {
+        let start = Date(timeIntervalSinceReferenceDate: 12_345.678)
+
+        let first = CalendarEventIdentity.candidateID(
+            eventIdentifier: nil,
+            calendarItemIdentifier: "calendar-item-1",
+            startsAt: start
+        )
+        let second = CalendarEventIdentity.candidateID(
+            eventIdentifier: nil,
+            calendarItemIdentifier: "calendar-item-1",
+            startsAt: start
+        )
+        let anotherOccurrence = CalendarEventIdentity.candidateID(
+            eventIdentifier: nil,
+            calendarItemIdentifier: "calendar-item-1",
+            startsAt: start.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertNotEqual(first, anotherOccurrence)
+        XCTAssertEqual(
+            CalendarEventIdentity.candidateID(
+                eventIdentifier: "event-42",
+                calendarItemIdentifier: "calendar-item-1",
+                startsAt: start
+            ),
+            "event-42"
+        )
+    }
+
     @MainActor
     func testCalendarIntegrationSettingDefaultsOffAndPersistsOptIn() {
         let suiteName = "CalendarIntegrationTests-\(UUID().uuidString)"
