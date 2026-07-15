@@ -11,7 +11,7 @@ final class ProcessingLoggerTests: XCTestCase {
         let session = RecordingSession(
             metadata: SessionMetadata(
                 id: "session-1",
-                title: "Private transcript title",
+                title: "Dôverná: fúzia",
                 status: .recording,
                 createdAt: Date()
             ),
@@ -23,8 +23,12 @@ final class ProcessingLoggerTests: XCTestCase {
             .processingFailed,
             for: session,
             attributes: [
-                .model("model.bin"),
-                .reason("Bearer abc.def and sk-supersecret123456789\nsecond line"),
+                .model(
+                    "Bearer abc.def and sk-supersecret123456789\n"
+                        + "\(root.path)/2026-07-15 - Dôverná fúzia.md"
+                ),
+                .errorDomain("MeetingScribeTests.ExportError"),
+                .errorCode(17),
             ]
         )
         try await logger.log(
@@ -52,7 +56,11 @@ final class ProcessingLoggerTests: XCTestCase {
         XCTAssertTrue(content.contains("[REDACTED]"))
         XCTAssertFalse(content.contains("abc.def"))
         XCTAssertFalse(content.contains("sk-supersecret"))
-        XCTAssertFalse(content.contains("Private transcript title"))
+        XCTAssertFalse(content.contains("Dôverná: fúzia"))
+        XCTAssertFalse(content.contains("Dôverná fúzia"))
+        XCTAssertFalse(content.contains(root.path))
+        XCTAssertTrue(content.contains(#""errorDomain":"MeetingScribeTests.ExportError""#))
+        XCTAssertTrue(content.contains(#""errorCode":"17""#))
         XCTAssertEqual(content.split(separator: "\n").count, 2)
         XCTAssertTrue(content.contains(#""systemChunkCount":"1""#))
         XCTAssertTrue(content.contains(#""microphoneChunkCount":"3""#))

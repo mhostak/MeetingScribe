@@ -267,7 +267,7 @@ final class AppState: ObservableObject {
                 try? await processingLogger.log(
                     .captureFailed,
                     for: session,
-                    attributes: [.reason(error.localizedDescription)]
+                    attributes: processingErrorAttributes(error)
                 )
                 throw error
             }
@@ -1027,7 +1027,7 @@ final class AppState: ObservableObject {
             try? await processingLogger.log(
                 .processingFailed,
                 for: failedSession ?? session,
-                attributes: [.reason(error.localizedDescription)]
+                attributes: processingErrorAttributes(error)
             )
             setFailure(error)
             return
@@ -1100,7 +1100,6 @@ final class AppState: ObservableObject {
                     for: session,
                     attributes: [
                         .model(transcription.metadata.model),
-                        .reason(transcription.metadata.failureReason ?? "Transcription unavailable"),
                     ]
                 )
             }
@@ -1114,7 +1113,6 @@ final class AppState: ObservableObject {
                     attributes: [
                         .model(diarization.model),
                         .segmentCount(diarization.segmentCount ?? 0),
-                        .reason(diarization.failureReason ?? "none"),
                     ]
                 )
             }
@@ -1145,7 +1143,6 @@ final class AppState: ObservableObject {
                     for: session,
                     attributes: [
                         .model(metadata.model),
-                        .reason(metadata.failureReason ?? "none"),
                     ]
                 )
             }
@@ -1171,8 +1168,7 @@ final class AppState: ObservableObject {
                 )
                 try? await processingLogger.log(
                     output.status == .completed ? .exportCompleted : .exportFailed,
-                    for: session,
-                    attributes: output.failureReason.map { [.reason($0)] } ?? []
+                    for: session
                 )
             } else {
                 setProcessingStep(.exporting, to: .skipped)
@@ -1215,7 +1211,7 @@ final class AppState: ObservableObject {
             try? await processingLogger.log(
                 .processingFailed,
                 for: lastCompletedSession ?? session,
-                attributes: [.reason(error.localizedDescription)]
+                attributes: processingErrorAttributes(error)
             )
             setFailure(error)
         }
@@ -1256,7 +1252,7 @@ final class AppState: ObservableObject {
             try? await processingLogger.log(
                 .sourceAudioCleanupFailed,
                 for: updated,
-                attributes: [.reason(error.localizedDescription)]
+                attributes: processingErrorAttributes(error)
             )
             if lastError == nil {
                 lastError = localized(.sourceCAFPreserved(localized(error)))
@@ -1586,6 +1582,14 @@ final class AppState: ObservableObject {
         AppLocalization.error(error, language: selectedAppLanguage)
     }
 
+    private func processingErrorAttributes(_ error: Error) -> [ProcessingLogAttribute] {
+        let error = error as NSError
+        return [
+            .errorDomain(error.domain),
+            .errorCode(error.code),
+        ]
+    }
+
     private func resetProcessingProgress() {
         processingSteps = ProcessingStep.initial
     }
@@ -1621,10 +1625,7 @@ final class AppState: ObservableObject {
                 }
 
                 if systemAudioHealth == .failed {
-                    let reason = self.captureDiagnostics.systemAudio.failureReason
-                        ?? "System audio capture failed."
                     if await self.stopRecordingForCaptureFailure(
-                        reason: reason,
                         message: self.localized(.captureFailedSafeStop)
                     ) {
                         break
@@ -1637,9 +1638,7 @@ final class AppState: ObservableObject {
                 )
                 if systemAudioHealth == .stalled,
                    self.stalledSystemAudioCheckTick >= stalledCheckCount {
-                    let reason = "System audio capture stopped producing buffers."
                     if await self.stopRecordingForCaptureFailure(
-                        reason: reason,
                         message: self.localized(.captureStalledSafeStop)
                     ) {
                         break
@@ -1682,10 +1681,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func stopRecordingForCaptureFailure(
-        reason: String,
-        message: String
-    ) async -> Bool {
+    private func stopRecordingForCaptureFailure(message: String) async -> Bool {
         guard !isStoppingForCaptureFailure, status == .recording else {
             return false
         }
@@ -1694,8 +1690,7 @@ final class AppState: ObservableObject {
         if let session = currentSession {
             try? await processingLogger.log(
                 .captureFailed,
-                for: session,
-                attributes: [.reason(reason)]
+                for: session
             )
         }
         lastError = message

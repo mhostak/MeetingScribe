@@ -59,7 +59,7 @@ New recordings no longer create full-quality CAF files. The persisted **Delete l
 
 Recording requires at least 1 GB of free space. Capacity is checked before creating a session and every five seconds while recording. If available storage becomes critical, capture is stopped and finalized through the normal safe-stop pipeline.
 
-Each session has a newline-delimited JSON `processing.log`. It contains only technical events and bounded diagnostic fields such as timestamps, models, frame counts, sample rates, durations, and sanitized error messages. Transcript text, audio data, API requests, meeting titles, and API keys are not logged; token-like values are redacted.
+Each session has a newline-delimited JSON `processing.log`. It contains only technical events and bounded diagnostic fields such as timestamps, models, frame counts, sample rates, durations, and error domain/code pairs. Transcript text, audio data, API requests, free-form error messages, meeting titles, file paths, and API keys are not logged; token-like values are redacted.
 
 ## Stabilization testing
 
@@ -93,7 +93,7 @@ A second 62-minute legacy-pipeline signed-build run validated the optimized tran
 
 The Apple Calendar integration is off by default. MeetingScribe does not query EventKit at launch: the user must first enable the integration and grant macOS full Calendar access in **MeetingScribe Settings → Calendar**, then explicitly choose an event for the current meeting. The menu-bar Calendar action routes to that Settings section until access is configured; the event picker itself contains no integration or permission controls. The picker is an independent foreground window that remains open until it is confirmed or cancelled. After either action, the recording popover is shown again. The picker is available before and during recording. Choosing an event never silently replaces a manually entered meeting title, and every attendee starts unchecked so the user confirms who actually participated.
 
-Only the confirmed snapshot is written to schema-10 session metadata: the event title, start and end time, confirmation time, confirmed attendee display names, and the per-meeting AI-sharing choice. MeetingScribe does not persist attendee email addresses, event or calendar identifiers, calendar names, locations, notes, URLs, organizer data, or the unconfirmed candidate list. Turning the integration off prevents future reads without altering snapshots already stored with recordings.
+Only the confirmed snapshot is written to schema-13 session metadata: the event title, start and end time, confirmation time, confirmed attendee display names, and the per-meeting AI-sharing choice. MeetingScribe does not persist attendee email addresses, event or calendar identifiers, calendar names, locations, notes, URLs, organizer data, or the unconfirmed candidate list. Turning the integration off prevents future reads without altering snapshots already stored with recordings.
 
 Confirmed attendee names populate Markdown participants. They remain local unless AI analysis is enabled and the user separately opts to share the selected names for that meeting. Automatic anonymous diarization is now available independently; speaker-to-person assignment remains outside Phase A and will require explicit confirmation in Phase B.
 

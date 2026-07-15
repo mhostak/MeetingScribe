@@ -428,7 +428,8 @@ final class AppStateResilienceTests: XCTestCase {
             )
         )
         let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
-        XCTAssertTrue(log.contains("System audio capture stopped producing buffers."))
+        XCTAssertTrue(log.contains(#""event":"captureFailed""#))
+        XCTAssertFalse(log.contains("System audio capture stopped producing buffers."))
     }
 
     private func makeSessionManager(root: URL) -> SessionManager {
