@@ -11,13 +11,16 @@ let package = Package(
         .library(name: "MeetingScribe", targets: ["MeetingScribe"])
     ],
     dependencies: [
-        .package(path: "Packages/WhisperBinary")
+        .package(
+            url: "https://github.com/FluidInference/FluidAudio.git",
+            exact: "0.15.5"
+        )
     ],
     targets: [
         .target(
             name: "MeetingScribe",
             dependencies: [
-                .product(name: "whisper", package: "WhisperBinary")
+                .product(name: "FluidAudio", package: "FluidAudio")
             ],
             path: "MeetingScribe",
             exclude: [
@@ -28,7 +31,8 @@ let package = Package(
                 "App/CalendarEventPickerView.swift",
                 "App/SettingsView.swift",
                 "App/RecordingsWindow.swift",
-                "App/RecordingsWindowModel.swift"
+                "App/RecordingsWindowModel.swift",
+                "App/SpeakerEditorView.swift"
             ]
         ),
         .testTarget(

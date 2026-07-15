@@ -23,6 +23,8 @@ struct OutputExporter: Sendable {
     func export(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript? = nil,
+        resolvedTranscript: ResolvedTranscript? = nil,
         analysis: MeetingAnalysis? = nil,
         to directoryURL: URL
     ) throws -> MarkdownExportResult {
@@ -48,6 +50,8 @@ struct OutputExporter: Sendable {
         let markdown = renderer.render(
             session: session,
             transcript: transcript,
+            utteranceTranscript: utteranceTranscript,
+            resolvedTranscript: resolvedTranscript,
             analysis: analysis
         )
         guard let data = markdown.data(using: .utf8) else {

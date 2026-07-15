@@ -4,7 +4,7 @@ import XCTest
 @testable import MeetingScribe
 
 final class AudioFileWriterTests: XCTestCase {
-    func testWritesPCMBufferToReadableWhisperWAVFile() throws {
+    func testWritesPCMBufferToReadableTranscriptionWAVFile() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeAudioWriter-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -23,7 +23,7 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(file.fileFormat.commonFormat, .pcmFormatInt16)
     }
 
-    func testWritesAVAudioPCMBufferToReadableWhisperWAVFile() throws {
+    func testWritesAVAudioPCMBufferToReadableTranscriptionWAVFile() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeMicrophoneWriter-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -55,7 +55,7 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(file.processingFormat.channelCount, 1)
     }
 
-    func testConvertsChangedMicrophoneFormatIntoStableWhisperFormat() throws {
+    func testConvertsChangedMicrophoneFormatIntoStableTranscriptionFormat() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeRouteChange-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
@@ -84,7 +84,7 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(Double(file.length) / 16_000, 0.2, accuracy: 0.01)
     }
 
-    func testConvertsChangedSystemSampleBufferFormatIntoStableWhisperFormat() throws {
+    func testConvertsChangedSystemSampleBufferFormatIntoStableTranscriptionFormat() throws {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeSystemRouteChange-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }

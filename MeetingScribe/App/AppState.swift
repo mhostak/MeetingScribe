@@ -22,9 +22,18 @@ final class AppState: ObservableObject {
     @Published private(set) var lastCompletedSession: RecordingSession?
     @Published private(set) var lastError: String?
     @Published private(set) var captureDiagnostics = CaptureSessionDiagnostics.empty
-    @Published private(set) var whisperModelStatus: WhisperModelStatus = .missing
-    @Published private(set) var isDownloadingWhisperModel = false
-    @Published private(set) var whisperModelDownloadProgress: Double?
+    @Published private(set) var fluidAudioASRModelStatus: FluidAudioModelStatus = .missing
+    @Published private(set) var fluidAudioASRDownloadProgress: FluidAudioModelDownloadProgress?
+    @Published private(set) var isInstallingFluidAudioASRModel = false
+    @Published private(set) var fluidAudioDiarizationModelStatus: FluidAudioModelStatus = .missing
+    @Published private(set) var fluidAudioDiarizationDownloadProgress: FluidAudioModelDownloadProgress?
+    @Published private(set) var isInstallingFluidAudioDiarizationModel = false
+    @Published private(set) var legacyModelCleanupReport = LegacyModelCleanupReport(
+        fileCount: 0,
+        totalBytes: 0
+    )
+    @Published private(set) var isRemovingLegacyModels = false
+    @Published private(set) var fluidAudioReprocessingSessionID: String?
     @Published private(set) var outputFolderURL: URL?
     @Published private(set) var lastMarkdownURL: URL?
     @Published private(set) var hasOpenAIAPIKey = false
@@ -40,7 +49,6 @@ final class AppState: ObservableObject {
     @Published private(set) var isLoadingCalendarEvents = false
     @Published private(set) var isRequestingCalendarAccess = false
     @Published private(set) var calendarAccessError: String?
-    @Published var selectedWhisperModelID = WhisperModelDescriptor.largeV3Turbo.id
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
     @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
@@ -59,14 +67,15 @@ final class AppState: ObservableObject {
     private let sessionManager: SessionManager
     private let captureCoordinator: CaptureCoordinator
     private let audioFinalizer: any AudioFinalizing
-    private let modelManager: WhisperModelManager
+    private let fluidAudioModelManager: any FluidAudioModelManaging
+    private let legacyModelCleaner: LegacyModelCleaner
     private let sessionTranscriber: any SessionTranscribing
     private let processingFileService: any ProcessingFileServicing
     private let outputFolderStore: OutputFolderStore
     private let obsidianService: ObsidianService
     private let apiKeyStore: any APIKeyStoring
     private let analysisSettingsStore: AnalysisSettingsStore
-    private let whisperSettingsStore: WhisperSettingsStore
+    private let transcriptionSettingsStore: TranscriptionSettingsStore
     private let audioRetentionSettingsStore: AudioRetentionSettingsStore
     private let applicationSettingsStore: ApplicationSettingsStore
     private let calendarEventProvider: any CalendarEventProviding
@@ -75,7 +84,6 @@ final class AppState: ObservableObject {
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
     private let storageStatusProvider: @Sendable () async throws -> StorageStatus
-    private let automaticallyManageVADModel: Bool
     private var captureMonitorTask: Task<Void, Never>?
     private var storageCheckTick = 0
     private var stalledSystemAudioCheckTick = 0
@@ -83,20 +91,22 @@ final class AppState: ObservableObject {
     private var isStoppingForCaptureFailure = false
     private var hasPreparedStorage = false
     private var isPreparingStorage = false
+    private var fluidAudioInstallTasks: [FluidAudioModelKind: Task<Void, Never>] = [:]
 
     init(
         sessionManager: SessionManager = SessionManager(),
         captureCoordinator: CaptureCoordinator = CaptureCoordinator(),
         audioFinalizer: any AudioFinalizing = AudioFinalizer(),
-        modelManager: WhisperModelManager = WhisperModelManager(),
-        sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
+        fluidAudioModelManager: (any FluidAudioModelManaging)? = nil,
+        legacyModelCleaner: LegacyModelCleaner = LegacyModelCleaner(),
+        sessionTranscriber: (any SessionTranscribing)? = nil,
         outputExporter: OutputExporter = OutputExporter(),
         processingFileService: (any ProcessingFileServicing)? = nil,
         outputFolderStore: OutputFolderStore? = nil,
         obsidianService: ObsidianService? = nil,
         apiKeyStore: (any APIKeyStoring)? = nil,
         analysisSettingsStore: AnalysisSettingsStore? = nil,
-        whisperSettingsStore: WhisperSettingsStore? = nil,
+        transcriptionSettingsStore: TranscriptionSettingsStore? = nil,
         audioRetentionSettingsStore: AudioRetentionSettingsStore? = nil,
         applicationSettingsStore: ApplicationSettingsStore? = nil,
         calendarEventProvider: (any CalendarEventProviding)? = nil,
@@ -104,21 +114,22 @@ final class AppState: ObservableObject {
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
-        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
-        automaticallyManageVADModel: Bool = true
+        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
         self.audioFinalizer = audioFinalizer
-        self.modelManager = modelManager
-        self.sessionTranscriber = sessionTranscriber
+        self.fluidAudioModelManager = fluidAudioModelManager ?? FluidAudioModelManager()
+        self.legacyModelCleaner = legacyModelCleaner
+        self.sessionTranscriber = sessionTranscriber ?? SessionTranscriber()
         self.processingFileService = processingFileService
             ?? ProcessingFileService(outputExporter: outputExporter)
         self.outputFolderStore = outputFolderStore ?? OutputFolderStore()
         self.obsidianService = obsidianService ?? ObsidianService()
         self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
-        self.whisperSettingsStore = whisperSettingsStore ?? WhisperSettingsStore()
+        self.transcriptionSettingsStore = transcriptionSettingsStore
+            ?? TranscriptionSettingsStore()
         self.audioRetentionSettingsStore = audioRetentionSettingsStore
             ?? AudioRetentionSettingsStore()
         self.applicationSettingsStore = applicationSettingsStore
@@ -128,7 +139,6 @@ final class AppState: ObservableObject {
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
-        self.automaticallyManageVADModel = automaticallyManageVADModel
         self.storageStatusProvider = storageStatusProvider ?? {
             try await sessionManager.storageStatus()
         }
@@ -141,18 +151,14 @@ final class AppState: ObservableObject {
 
         do {
             try await sessionManager.prepareStorage()
-            try await modelManager.prepareStorage()
+            try await fluidAudioModelManager.prepareStorage()
         } catch {
             setFailure(error)
             return
         }
 
         outputFolderURL = outputFolderStore.restoreFolder()
-        let storedWhisperModelID = whisperSettingsStore.selectedModelID
-        selectedWhisperModelID = WhisperModelDescriptor.supported.contains {
-            $0.id == storedWhisperModelID
-        } ? storedWhisperModelID : WhisperModelDescriptor.largeV3Turbo.id
-        selectedTranscriptionLanguage = whisperSettingsStore.selectedLanguage
+        selectedTranscriptionLanguage = self.transcriptionSettingsStore.selectedLanguage
         selectedAppLanguage = applicationSettingsStore.appLanguage
         selectedOutputLanguage = applicationSettingsStore.outputLanguage
         markdownFileNameTemplate = applicationSettingsStore.markdownFileNameTemplate
@@ -175,9 +181,47 @@ final class AppState: ObservableObject {
             lastError = localized(.openAIKeyLoad(localized(error)))
         }
 
-        await refreshWhisperModelStatus()
+        await refreshFluidAudioModelStatuses()
+        refreshLegacyModelCleanupReport()
         await refreshRecoveryCandidates()
         hasPreparedStorage = true
+    }
+
+    func reprocessWithFluidAudio(
+        session: RecordingSession
+    ) async throws -> TranscriptionRevisionResult {
+        guard status != .recording, !status.isProcessing,
+              fluidAudioReprocessingSessionID == nil else {
+            throw TranscriptionRevisionError.applicationBusy
+        }
+        let descriptor = FluidAudioModelDescriptor.parakeetV3
+        let modelStatus = await fluidAudioModelManager.status(for: descriptor)
+        fluidAudioASRModelStatus = modelStatus
+        guard case let .ready(bundleURL, _) = modelStatus else {
+            if case .missing = modelStatus {
+                lastError = localized(.fluidAudioTranscriptionModelRequired)
+            } else {
+                lastError = localized(.recordingSaved(localized(.fluidAudioModelInvalid)))
+            }
+            throw TranscriptionError.modelBundleCouldNotBeLoaded(
+                name: descriptor.displayName
+            )
+        }
+
+        fluidAudioReprocessingSessionID = session.metadata.id
+        defer { fluidAudioReprocessingSessionID = nil }
+        do {
+            let diarizationModelBundleURL = await availableDiarizationBundleURL()
+            return try await FluidAudioTranscriptionRevisionService().reprocess(
+                session: session,
+                modelBundleURL: bundleURL,
+                diarizationModelBundleURL: diarizationModelBundleURL,
+                descriptor: descriptor
+            )
+        } catch {
+            lastError = localized(.recordingSavedTranscription(localized(error)))
+            throw error
+        }
     }
 
     func startRecording() async {
@@ -312,6 +356,17 @@ final class AppState: ObservableObject {
                 setProcessingStep(.preparingAudio, to: .completed)
                 let diagnostics = recoveredMetadataDiagnostics(for: session)
                 captureDiagnostics = diagnostics
+                let speakerProcessing: SpeakerProcessingResult?
+                if let finalization = session.metadata.audioFinalization {
+                    speakerProcessing = try await sessionTranscriber.processSpeakers(
+                        session: session,
+                        transcript: recoveredArtifacts.transcript,
+                        finalization: finalization,
+                        diarizationModelBundleURL: await availableDiarizationBundleURL()
+                    )
+                } else {
+                    speakerProcessing = nil
+                }
                 await completeProcessedSession(
                     session: session,
                     diagnostics: diagnostics,
@@ -319,7 +374,12 @@ final class AppState: ObservableObject {
                     finalization: session.metadata.audioFinalization,
                     transcription: recoveredTranscriptionOutcome(
                         session: session,
-                        transcript: recoveredArtifacts.transcript
+                        transcript: recoveredArtifacts.transcript,
+                        utteranceTranscript: recoveredArtifacts.utteranceTranscript,
+                        diarizationMetadata: speakerProcessing?.metadata
+                            ?? session.metadata.diarization,
+                        resolvedTranscript: speakerProcessing?.resolvedTranscript
+                            ?? recoveredArtifacts.resolvedTranscript
                     ),
                     recoveredAnalysis: recoveredAnalysisOutcome(
                         session: session,
@@ -497,11 +557,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    var selectedWhisperModel: WhisperModelDescriptor {
-        WhisperModelDescriptor.supported.first { $0.id == selectedWhisperModelID }
-            ?? .largeV3Turbo
-    }
-
     var canEditSessionConfiguration: Bool {
         switch status {
         case .idle, .completed, .failed:
@@ -511,12 +566,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    func persistWhisperModelSelection() {
-        whisperSettingsStore.setSelectedModelID(selectedWhisperModelID)
-    }
-
     func persistTranscriptionLanguageSelection() {
-        whisperSettingsStore.setSelectedLanguage(selectedTranscriptionLanguage)
+        transcriptionSettingsStore.setSelectedLanguage(selectedTranscriptionLanguage)
     }
 
     func persistAudioRetentionSettings() {
@@ -737,49 +788,73 @@ final class AppState: ObservableObject {
         return nil
     }
 
-    func refreshWhisperModelStatus() async {
-        do {
-            let status = try await modelManager.status(for: selectedWhisperModel)
-            if case .invalid = status {
-                whisperModelStatus = .invalid(reason: localized(.whisperModelInvalidFile))
-            } else {
-                whisperModelStatus = status
-            }
-        } catch {
-            whisperModelStatus = .invalid(reason: localized(error))
-        }
+    var fluidAudioASRDescriptor: FluidAudioModelDescriptor {
+        .parakeetV3
     }
 
-    func downloadSelectedWhisperModel() async {
-        guard !isDownloadingWhisperModel else { return }
-        isDownloadingWhisperModel = true
-        whisperModelDownloadProgress = 0
+    var fluidAudioDiarizationDescriptor: FluidAudioModelDescriptor {
+        .speakerDiarization
+    }
+
+    func refreshFluidAudioModelStatuses() async {
+        fluidAudioASRModelStatus = localizedFluidAudioStatus(
+            await fluidAudioModelManager.status(for: fluidAudioASRDescriptor)
+        )
+        fluidAudioDiarizationModelStatus = localizedFluidAudioStatus(
+            await fluidAudioModelManager.status(for: fluidAudioDiarizationDescriptor)
+        )
+    }
+
+    func refreshLegacyModelCleanupReport() {
+        legacyModelCleanupReport = legacyModelCleaner.report()
+    }
+
+    func removeLegacyModels() {
+        guard !isRemovingLegacyModels else { return }
+        isRemovingLegacyModels = true
+        defer { isRemovingLegacyModels = false }
+        do {
+            try legacyModelCleaner.remove()
+            lastError = nil
+        } catch {
+            lastError = localized(.legacyModelDelete(localized(error)))
+        }
+        refreshLegacyModelCleanupReport()
+    }
+
+    func installFluidAudioModel(
+        _ kind: FluidAudioModelKind,
+        repair: Bool = false
+    ) {
+        guard fluidAudioInstallTasks[kind] == nil else { return }
+        setFluidAudioInstalling(true, kind: kind)
+        setFluidAudioProgress(
+            .init(
+                fractionCompleted: 0,
+                downloadedBytes: 0,
+                totalBytes: descriptor(for: kind).approximateSizeBytes
+            ),
+            kind: kind
+        )
         lastError = nil
-        defer {
-            isDownloadingWhisperModel = false
-            whisperModelDownloadProgress = nil
-        }
-        do {
-            _ = try await modelManager.download(selectedWhisperModel) { [weak self] progress in
-                Task { @MainActor in
-                    self?.whisperModelDownloadProgress = progress
-                }
-            }
-            await refreshWhisperModelStatus()
-        } catch {
-            lastError = localized(.whisperModelDownload(localized(error)))
-            await refreshWhisperModelStatus()
+        fluidAudioInstallTasks[kind] = Task { [weak self] in
+            await self?.performFluidAudioInstallation(kind: kind, repair: repair)
         }
     }
 
-    func importSelectedWhisperModel() async {
+    func cancelFluidAudioModelInstallation(_ kind: FluidAudioModelKind) {
+        fluidAudioInstallTasks[kind]?.cancel()
+    }
+
+    func importFluidAudioModel(_ kind: FluidAudioModelKind) async {
+        guard fluidAudioInstallTasks[kind] == nil else { return }
+        let descriptor = descriptor(for: kind)
         let panel = NSOpenPanel()
-        panel.title = localized(.importWhisperModelTitle)
+        panel.title = localized(.importFluidAudioModelTitle(descriptor.displayName))
         panel.prompt = localized(.importAction)
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.data]
 
         guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
         let hasSecurityAccess = sourceURL.startAccessingSecurityScopedResource()
@@ -787,25 +862,119 @@ final class AppState: ObservableObject {
             if hasSecurityAccess { sourceURL.stopAccessingSecurityScopedResource() }
         }
 
+        setFluidAudioInstalling(true, kind: kind)
+        defer { setFluidAudioInstalling(false, kind: kind) }
         do {
-            _ = try await modelManager.importModel(from: sourceURL, as: selectedWhisperModel)
+            _ = try await fluidAudioModelManager.importBundle(
+                from: sourceURL,
+                as: descriptor
+            )
             lastError = nil
-            await refreshWhisperModelStatus()
         } catch {
-            lastError = localized(.whisperModelImport(localized(error)))
-            await refreshWhisperModelStatus()
+            lastError = localized(.fluidAudioModelImport(
+                descriptor.displayName,
+                localized(error)
+            ))
+        }
+        await refreshFluidAudioModelStatus(kind)
+    }
+
+    func deleteFluidAudioModel(_ kind: FluidAudioModelKind) async {
+        guard fluidAudioInstallTasks[kind] == nil else { return }
+        let descriptor = descriptor(for: kind)
+        do {
+            try await fluidAudioModelManager.removeModel(descriptor)
+            lastError = nil
+        } catch {
+            lastError = localized(.fluidAudioModelDelete(
+                descriptor.displayName,
+                localized(error)
+            ))
+        }
+        await refreshFluidAudioModelStatus(kind)
+    }
+
+    private func performFluidAudioInstallation(
+        kind: FluidAudioModelKind,
+        repair: Bool
+    ) async {
+        let descriptor = descriptor(for: kind)
+        defer {
+            fluidAudioInstallTasks[kind] = nil
+            setFluidAudioInstalling(false, kind: kind)
+            setFluidAudioProgress(nil, kind: kind)
+        }
+        do {
+            _ = try await fluidAudioModelManager.install(
+                descriptor,
+                repair: repair
+            ) { [weak self] progress in
+                Task { @MainActor in
+                    self?.setFluidAudioProgress(progress, kind: kind)
+                }
+            }
+            lastError = nil
+        } catch is CancellationError {
+            lastError = nil
+        } catch {
+            lastError = localized(.fluidAudioModelDownload(
+                descriptor.displayName,
+                localized(error)
+            ))
+        }
+        await refreshFluidAudioModelStatus(kind)
+    }
+
+    private func refreshFluidAudioModelStatus(_ kind: FluidAudioModelKind) async {
+        let status = localizedFluidAudioStatus(
+            await fluidAudioModelManager.status(for: descriptor(for: kind))
+        )
+        switch kind {
+        case .transcription:
+            fluidAudioASRModelStatus = status
+        case .diarization:
+            fluidAudioDiarizationModelStatus = status
         }
     }
 
-    func deleteSelectedWhisperModel() async {
-        do {
-            try await modelManager.removeModel(selectedWhisperModel)
-            lastError = nil
-            await refreshWhisperModelStatus()
-        } catch {
-            lastError = localized(.whisperModelDelete(localized(error)))
-            await refreshWhisperModelStatus()
+    private func descriptor(
+        for kind: FluidAudioModelKind
+    ) -> FluidAudioModelDescriptor {
+        switch kind {
+        case .transcription: return fluidAudioASRDescriptor
+        case .diarization: return fluidAudioDiarizationDescriptor
         }
+    }
+
+    private func setFluidAudioInstalling(
+        _ installing: Bool,
+        kind: FluidAudioModelKind
+    ) {
+        switch kind {
+        case .transcription:
+            isInstallingFluidAudioASRModel = installing
+        case .diarization:
+            isInstallingFluidAudioDiarizationModel = installing
+        }
+    }
+
+    private func setFluidAudioProgress(
+        _ progress: FluidAudioModelDownloadProgress?,
+        kind: FluidAudioModelKind
+    ) {
+        switch kind {
+        case .transcription:
+            fluidAudioASRDownloadProgress = progress
+        case .diarization:
+            fluidAudioDiarizationDownloadProgress = progress
+        }
+    }
+
+    private func localizedFluidAudioStatus(
+        _ status: FluidAudioModelStatus
+    ) -> FluidAudioModelStatus {
+        guard case .invalid = status else { return status }
+        return .invalid(reason: localized(.fluidAudioModelInvalid))
     }
 
     private func refreshRecoveryCandidates() async {
@@ -867,7 +1036,7 @@ final class AppState: ObservableObject {
         try? await processingLogger.log(
             .transcriptionStarted,
             for: session,
-            attributes: [.model(selectedWhisperModel.fileName)]
+            attributes: [.model(FluidAudioModelDescriptor.parakeetV3.repository)]
         )
         let transcription = await transcribeIfPossible(
             session: session,
@@ -936,13 +1105,34 @@ final class AppState: ObservableObject {
                 )
             }
 
+            if let diarization = transcription.diarizationMetadata {
+                try? await processingLogger.log(
+                    diarization.status == .completed
+                        ? .diarizationCompleted
+                        : .diarizationFailed,
+                    for: session,
+                    attributes: [
+                        .model(diarization.model),
+                        .segmentCount(diarization.segmentCount ?? 0),
+                        .reason(diarization.failureReason ?? "none"),
+                    ]
+                )
+            }
+
             let analysis: AnalysisOutcome
             if let recoveredAnalysis {
                 analysis = recoveredAnalysis
             } else {
+                let analysisTranscript: MergedTranscript?
+                if let raw = transcription.mergedTranscript,
+                   let resolved = transcription.resolvedTranscript {
+                    analysisTranscript = resolved.asMergedTranscript(basedOn: raw)
+                } else {
+                    analysisTranscript = transcription.mergedTranscript
+                }
                 analysis = await analyzeIfPossible(
                     session: session,
-                    transcript: transcription.mergedTranscript
+                    transcript: analysisTranscript
                 )
             }
             if let metadata = analysis.metadata {
@@ -970,6 +1160,8 @@ final class AppState: ObservableObject {
             let output = await exportMarkdownIfPossible(
                 session: exportSession,
                 transcript: transcription.mergedTranscript,
+                utteranceTranscript: transcription.utteranceTranscript,
+                resolvedTranscript: transcription.resolvedTranscript,
                 analysis: analysis.analysis
             )
             if let output {
@@ -992,6 +1184,7 @@ final class AppState: ObservableObject {
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
                 audioFinalization: finalization,
                 transcription: transcription.metadata,
+                diarization: transcription.diarizationMetadata,
                 analysis: analysis.metadata,
                 output: output
             )
@@ -1074,7 +1267,10 @@ final class AppState: ObservableObject {
 
     private func recoveredTranscriptionOutcome(
         session: RecordingSession,
-        transcript: MergedTranscript
+        transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        diarizationMetadata: SessionDiarizationMetadata?,
+        resolvedTranscript: ResolvedTranscript?
     ) -> TranscriptionOutcome {
         let metadata = session.metadata.transcription.flatMap {
             $0.status == .completed ? $0 : nil
@@ -1089,7 +1285,13 @@ final class AppState: ObservableObject {
             warnings: ["Reused a merged transcript found during session recovery."],
             failureReason: nil
         )
-        return TranscriptionOutcome(metadata: metadata, mergedTranscript: transcript)
+        return TranscriptionOutcome(
+            metadata: metadata,
+            mergedTranscript: transcript,
+            utteranceTranscript: utteranceTranscript,
+            diarizationMetadata: diarizationMetadata,
+            resolvedTranscript: resolvedTranscript
+        )
     }
 
     private func recoveredAnalysisOutcome(
@@ -1159,105 +1361,74 @@ final class AppState: ObservableObject {
         finalization: AudioFinalizationMetadata
     ) async -> TranscriptionOutcome {
         setProcessingStep(.transcribing, to: .active)
-        let descriptor = selectedWhisperModel
-        let modelStatus: WhisperModelStatus
-        do {
-            modelStatus = try await modelManager.status(for: descriptor)
-            whisperModelStatus = modelStatus
-        } catch {
-            lastError = localized(.recordingSavedModelCheck(localized(error)))
-            return TranscriptionOutcome(
-                metadata: SessionTranscriptionMetadata(
-                    status: .failed,
-                    model: descriptor.fileName,
-                    startedAt: nil,
-                    completedAt: Date(),
-                    systemSegmentCount: nil,
-                    microphoneSegmentCount: nil,
-                    warnings: [],
-                    failureReason: error.localizedDescription
-                ),
-                mergedTranscript: nil
-            )
-        }
+        let descriptor = FluidAudioModelDescriptor.parakeetV3
+        let provenance = TranscriptionProvenance.fluidAudioParakeetV3(
+            descriptor: descriptor
+        )
+        let modelStatus = await fluidAudioModelManager.status(for: descriptor)
+        fluidAudioASRModelStatus = modelStatus
 
-        guard case let .ready(modelURL, _) = modelStatus else {
+        guard case let .ready(bundleURL, _) = modelStatus else {
             let reason: String
-            if case let .invalid(invalidReason) = modelStatus {
+            switch modelStatus {
+            case .missing:
+                reason = "Download or import the verified Parakeet v3 model bundle to transcribe this recording."
+                lastError = localized(.fluidAudioTranscriptionModelRequired)
+            case let .invalid(invalidReason):
                 reason = invalidReason
-            } else {
-                reason = "Download or import the selected Whisper model to transcribe this recording."
-            }
-            if case .invalid = modelStatus {
-                lastError = localized(
-                    .recordingSaved(localized(.whisperModelInvalidFile))
-                )
-            } else {
-                lastError = localized(.whisperModelRequired)
+                lastError = localized(.recordingSaved(localized(.fluidAudioModelInvalid)))
+            case .ready:
+                preconditionFailure("The ready model status was handled by the guard.")
             }
             return TranscriptionOutcome(
                 metadata: SessionTranscriptionMetadata(
                     status: .modelMissing,
-                    model: descriptor.fileName,
+                    model: descriptor.repository,
                     startedAt: nil,
                     completedAt: Date(),
                     systemSegmentCount: nil,
                     microphoneSegmentCount: nil,
                     warnings: [],
-                    failureReason: reason
+                    failureReason: reason,
+                    provenance: provenance
                 ),
                 mergedTranscript: nil
             )
         }
 
-        if automaticallyManageVADModel {
-            do {
-                _ = try await modelManager.download(.sileroVAD)
-            } catch {
-                let reason = "The voice activity detection model could not be prepared: "
-                    + error.localizedDescription
-                let localizedReason = localized(.vadModelPreparation(localized(error)))
-                lastError = localized(.recordingSaved(localizedReason))
-                return TranscriptionOutcome(
-                    metadata: SessionTranscriptionMetadata(
-                        status: .failed,
-                        model: descriptor.fileName,
-                        startedAt: nil,
-                        completedAt: Date(),
-                        systemSegmentCount: nil,
-                        microphoneSegmentCount: nil,
-                        warnings: [],
-                        failureReason: reason
-                    ),
-                    mergedTranscript: nil
-                )
-            }
-        }
-
         do {
             try transition(to: .transcribing)
+            let diarizationModelBundleURL = await availableDiarizationBundleURL()
             let result = try await sessionTranscriber.transcribe(
                 session: session,
                 finalization: finalization,
-                modelURL: modelURL,
-                language: session.metadata.language
+                model: .fluidAudioParakeetV3(
+                    bundleURL: bundleURL,
+                    descriptor: descriptor
+                ),
+                language: session.metadata.language,
+                diarizationModelBundleURL: diarizationModelBundleURL
             )
             return TranscriptionOutcome(
                 metadata: result.metadata,
-                mergedTranscript: result.mergedTranscript
+                mergedTranscript: result.mergedTranscript,
+                utteranceTranscript: result.utteranceTranscript,
+                diarizationMetadata: result.diarizationMetadata,
+                resolvedTranscript: result.resolvedTranscript
             )
         } catch {
             lastError = localized(.recordingSavedTranscription(localized(error)))
             return TranscriptionOutcome(
                 metadata: SessionTranscriptionMetadata(
                     status: .failed,
-                    model: descriptor.fileName,
+                    model: descriptor.repository,
                     startedAt: nil,
                     completedAt: Date(),
                     systemSegmentCount: nil,
                     microphoneSegmentCount: nil,
                     warnings: [],
-                    failureReason: error.localizedDescription
+                    failureReason: error.localizedDescription,
+                    provenance: provenance
                 ),
                 mergedTranscript: nil
             )
@@ -1267,6 +1438,8 @@ final class AppState: ObservableObject {
     private func exportMarkdownIfPossible(
         session: RecordingSession,
         transcript: MergedTranscript?,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        resolvedTranscript: ResolvedTranscript?,
         analysis: MeetingAnalysis?
     ) async -> SessionOutputMetadata? {
         guard let transcript else { return nil }
@@ -1278,6 +1451,8 @@ final class AppState: ObservableObject {
                 try await processingFileService.exportMarkdown(
                     session: session.metadata,
                     transcript: transcript,
+                    utteranceTranscript: utteranceTranscript,
+                    resolvedTranscript: resolvedTranscript,
                     analysis: analysis,
                     to: destination
                 )
@@ -1376,6 +1551,14 @@ final class AppState: ObservableObject {
                 analysis: nil
             )
         }
+    }
+
+    private func availableDiarizationBundleURL() async -> URL? {
+        let descriptor = FluidAudioModelDescriptor.speakerDiarization
+        let status = await fluidAudioModelManager.status(for: descriptor)
+        fluidAudioDiarizationModelStatus = localizedFluidAudioStatus(status)
+        guard case let .ready(bundleURL, _) = status else { return nil }
+        return bundleURL
     }
 
     private func setFailure(_ error: Error) {
@@ -1530,6 +1713,23 @@ final class AppState: ObservableObject {
 private struct TranscriptionOutcome: Sendable {
     let metadata: SessionTranscriptionMetadata
     let mergedTranscript: MergedTranscript?
+    let utteranceTranscript: ContinuousUtteranceTranscript?
+    let diarizationMetadata: SessionDiarizationMetadata?
+    let resolvedTranscript: ResolvedTranscript?
+
+    init(
+        metadata: SessionTranscriptionMetadata,
+        mergedTranscript: MergedTranscript?,
+        utteranceTranscript: ContinuousUtteranceTranscript? = nil,
+        diarizationMetadata: SessionDiarizationMetadata? = nil,
+        resolvedTranscript: ResolvedTranscript? = nil
+    ) {
+        self.metadata = metadata
+        self.mergedTranscript = mergedTranscript
+        self.utteranceTranscript = utteranceTranscript
+        self.diarizationMetadata = diarizationMetadata
+        self.resolvedTranscript = resolvedTranscript
+    }
 }
 
 private struct AnalysisOutcome: Sendable {

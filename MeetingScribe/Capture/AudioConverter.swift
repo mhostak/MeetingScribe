@@ -59,7 +59,7 @@ struct AudioConverterDrainPolicy: Sendable {
     }
 }
 
-/// Converts one captured CAF into the 16 kHz mono PCM format expected by Whisper.
+/// Converts one captured CAF into the engine-neutral 16 kHz mono PCM working format.
 struct WorkingAudioConverter: Sendable {
     static let targetSampleRate = 16_000.0
     static let targetChannelCount: AVAudioChannelCount = 1

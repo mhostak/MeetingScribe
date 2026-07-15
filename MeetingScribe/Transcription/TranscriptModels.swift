@@ -5,6 +5,13 @@ enum TranscriptSource: String, Codable, CaseIterable, Sendable {
     case microphone
 }
 
+struct TranscriptWord: Codable, Equatable, Sendable {
+    let start: Double
+    let end: Double
+    let text: String
+    let confidence: Double?
+}
+
 struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let source: TranscriptSource
@@ -14,6 +21,29 @@ struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
     let language: String
     let text: String
     let confidence: Double?
+    let words: [TranscriptWord]?
+
+    init(
+        id: String,
+        source: TranscriptSource,
+        speaker: String,
+        start: Double,
+        end: Double,
+        language: String,
+        text: String,
+        confidence: Double?,
+        words: [TranscriptWord]? = nil
+    ) {
+        self.id = id
+        self.source = source
+        self.speaker = speaker
+        self.start = start
+        self.end = end
+        self.language = language
+        self.text = text
+        self.confidence = confidence
+        self.words = words
+    }
 }
 
 struct TrackTranscriptionPerformance: Codable, Equatable, Sendable {
@@ -23,6 +53,14 @@ struct TrackTranscriptionPerformance: Codable, Equatable, Sendable {
     let inferenceInputDurationSeconds: Double
     let chunkCount: Int
     let wallTimeSeconds: Double
+
+    var realTimeFactor: Double? {
+        guard wallTimeSeconds > 0, wallTimeSeconds.isFinite,
+              audioDurationSeconds >= 0, audioDurationSeconds.isFinite else {
+            return nil
+        }
+        return audioDurationSeconds / wallTimeSeconds
+    }
 }
 
 struct TrackTranscript: Codable, Equatable, Sendable {
@@ -34,6 +72,7 @@ struct TrackTranscript: Codable, Equatable, Sendable {
     let completedAt: Date
     let segments: [TranscriptSegment]
     let performance: TrackTranscriptionPerformance?
+    let provenance: TranscriptionProvenance?
 
     init(
         schemaVersion: Int = 2,
@@ -43,9 +82,10 @@ struct TrackTranscript: Codable, Equatable, Sendable {
         detectedLanguage: String,
         completedAt: Date,
         segments: [TranscriptSegment],
-        performance: TrackTranscriptionPerformance? = nil
+        performance: TrackTranscriptionPerformance? = nil,
+        provenance: TranscriptionProvenance? = nil
     ) {
-        self.schemaVersion = schemaVersion
+        self.schemaVersion = provenance == nil ? schemaVersion : max(schemaVersion, 3)
         self.source = source
         self.model = model
         self.requestedLanguage = requestedLanguage
@@ -53,6 +93,21 @@ struct TrackTranscript: Codable, Equatable, Sendable {
         self.completedAt = completedAt
         self.segments = segments
         self.performance = performance
+        self.provenance = provenance
+    }
+
+    func recording(provenance: TranscriptionProvenance) -> TrackTranscript {
+        TrackTranscript(
+            schemaVersion: max(schemaVersion, 3),
+            source: source,
+            model: model,
+            requestedLanguage: requestedLanguage,
+            detectedLanguage: detectedLanguage,
+            completedAt: completedAt,
+            segments: segments,
+            performance: performance,
+            provenance: provenance
+        )
     }
 }
 
@@ -62,6 +117,23 @@ struct MergedTranscriptTrack: Codable, Equatable, Sendable {
     let requestedLanguage: TranscriptionLanguage
     let detectedLanguage: String
     let segmentCount: Int
+    let provenance: TranscriptionProvenance?
+
+    init(
+        source: TranscriptSource,
+        model: String,
+        requestedLanguage: TranscriptionLanguage,
+        detectedLanguage: String,
+        segmentCount: Int,
+        provenance: TranscriptionProvenance? = nil
+    ) {
+        self.source = source
+        self.model = model
+        self.requestedLanguage = requestedLanguage
+        self.detectedLanguage = detectedLanguage
+        self.segmentCount = segmentCount
+        self.provenance = provenance
+    }
 }
 
 struct MergedTranscript: Codable, Equatable, Sendable {

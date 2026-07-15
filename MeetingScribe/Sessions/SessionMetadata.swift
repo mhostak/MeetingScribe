@@ -29,13 +29,13 @@ enum TranscriptionLanguage: String, Codable, CaseIterable, Hashable, Identifiabl
     var selectionHint: String {
         switch self {
         case .automatic:
-            return "Best for mixed-language meetings. Whisper selects one dominant language per audio track."
+            return "Best for mixed-language meetings. No language hint is forced on the transcription engine."
         case .czech:
-            return "Force Czech transcription for meetings spoken primarily in Czech."
+            return "Prefer Czech transcription for meetings spoken primarily in Czech."
         case .slovak:
-            return "Force Slovak transcription for meetings spoken primarily in Slovak."
+            return "Prefer Slovak transcription for meetings spoken primarily in Slovak."
         case .english:
-            return "Force English transcription for meetings spoken primarily in English."
+            return "Prefer English transcription for meetings spoken primarily in English."
         }
     }
 }
@@ -52,6 +52,10 @@ struct SessionTranscriptFiles: Codable, Equatable, Sendable {
     var systemTrack = "system-transcript.json"
     var microphoneTrack = "microphone-transcript.json"
     var merged = "transcript.json"
+    var speakerTurns: String? = "speaker-turns.json"
+    var utterances: String? = "utterance-transcript.json"
+    var speakerDiarization: String? = "speaker-diarization.json"
+    var resolved: String? = "resolved-transcript.json"
     var analysis: String? = "analysis.json"
 }
 
@@ -110,8 +114,36 @@ struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
     var systemSegmentCount: Int?
     var microphoneSegmentCount: Int?
     var mergedSegmentCount: Int? = nil
+    var utteranceCount: Int? = nil
+    var turnBoundaryCount: Int? = nil
+    var turnDetectionModel: String? = nil
+    var utteranceFallbackUsed: Bool? = nil
     var systemPerformance: TrackTranscriptionPerformance? = nil
     var microphonePerformance: TrackTranscriptionPerformance? = nil
+    var warnings: [String]
+    var failureReason: String?
+    var provenance: TranscriptionProvenance? = nil
+}
+
+enum SessionDiarizationStatus: String, Codable, Sendable {
+    case completed
+    case failed
+    case modelMissing
+    case unavailable
+}
+
+struct SessionDiarizationMetadata: Codable, Equatable, Sendable {
+    var status: SessionDiarizationStatus
+    var engine: String
+    var model: String
+    var configurationRevision: String
+    var startedAt: Date?
+    var completedAt: Date?
+    var speakerCount: Int?
+    var segmentCount: Int?
+    var audioDurationSeconds: Double?
+    var wallTimeSeconds: Double?
+    var sourceAudioFingerprint: String?
     var warnings: [String]
     var failureReason: String?
 }
@@ -182,13 +214,14 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var audioFinalization: AudioFinalizationMetadata?
     var audioSourceCleanup: AudioSourceCleanupMetadata?
     var transcription: SessionTranscriptionMetadata?
+    var diarization: SessionDiarizationMetadata?
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
     var recovery: SessionRecoveryMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 10,
+        schemaVersion: Int = 13,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -206,6 +239,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         audioFinalization: AudioFinalizationMetadata? = nil,
         audioSourceCleanup: AudioSourceCleanupMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
+        diarization: SessionDiarizationMetadata? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
         recovery: SessionRecoveryMetadata? = nil,
@@ -229,6 +263,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.audioFinalization = audioFinalization
         self.audioSourceCleanup = audioSourceCleanup
         self.transcription = transcription
+        self.diarization = diarization
         self.analysis = analysis
         self.output = output
         self.recovery = recovery

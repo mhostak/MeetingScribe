@@ -58,6 +58,8 @@ final class ProcessingFileServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(recovered.transcript, transcript)
+        XCTAssertEqual(recovered.utteranceTranscript?.utterances.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.utteranceTranscriptURL.path))
         XCTAssertEqual(recovered.analysis, analysis)
         let markdown = try String(contentsOf: export.fileURL, encoding: .utf8)
         XCTAssertTrue(markdown.contains("Background I/O transcript"))

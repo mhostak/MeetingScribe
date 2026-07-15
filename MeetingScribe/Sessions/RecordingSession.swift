@@ -55,6 +55,34 @@ struct RecordingSession: Equatable, Sendable {
         )
     }
 
+    var speakerTurnsURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.speakerTurns ?? "speaker-turns.json",
+            isDirectory: false
+        )
+    }
+
+    var utteranceTranscriptURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.utterances ?? "utterance-transcript.json",
+            isDirectory: false
+        )
+    }
+
+    var speakerDiarizationURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.speakerDiarization ?? "speaker-diarization.json",
+            isDirectory: false
+        )
+    }
+
+    var resolvedTranscriptURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.transcriptFiles?.resolved ?? "resolved-transcript.json",
+            isDirectory: false
+        )
+    }
+
     var analysisURL: URL {
         directoryURL.appendingPathComponent(
             metadata.transcriptFiles?.analysis ?? "analysis.json",

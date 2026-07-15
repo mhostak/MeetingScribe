@@ -30,7 +30,7 @@ final class SessionTranscriberTests: XCTestCase {
         let result = try await transcriber.transcribe(
             session: session,
             finalization: finalization(),
-            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            model: fluidAudioModel(),
             language: .automatic
         )
 
@@ -44,12 +44,23 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.utteranceTranscriptURL.path))
+        XCTAssertEqual(result.metadata.utteranceCount, 2)
+        XCTAssertEqual(result.metadata.utteranceFallbackUsed, true)
+        XCTAssertEqual(result.metadata.provenance?.engine, "FluidAudio")
+        XCTAssertEqual(result.metadata.provenance?.engineVersion, "0.15.5")
+        XCTAssertEqual(result.systemTranscript.schemaVersion, 3)
+        XCTAssertEqual(result.systemTranscript.provenance, result.metadata.provenance)
+        XCTAssertEqual(
+            result.mergedTranscript.tracks.map(\.provenance),
+            [result.metadata.provenance, result.metadata.provenance]
+        )
 
         let options = await service.receivedOptions
         XCTAssertEqual(options.map(\.source), [.system, .microphone])
         XCTAssertEqual(options.map(\.language), [.automatic, .automatic])
         XCTAssertEqual(options.map(\.timelineOffsetSeconds), [0, 0.25])
-        XCTAssertEqual(options.map(\.speaker), ["Other", "Martin"])
+        XCTAssertEqual(options.map(\.speaker), ["Other", "Me"])
         let audioURLs = await service.receivedAudioURLs
         XCTAssertEqual(
             audioURLs.map(\.lastPathComponent),
@@ -82,7 +93,7 @@ final class SessionTranscriberTests: XCTestCase {
         let result = try await transcriber.transcribe(
             session: session,
             finalization: finalization(),
-            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            model: fluidAudioModel(),
             language: .slovak
         )
 
@@ -107,7 +118,7 @@ final class SessionTranscriberTests: XCTestCase {
         let result = try await transcriber.transcribe(
             session: session,
             finalization: finalization(),
-            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            model: fluidAudioModel(),
             language: .czech
         )
 
@@ -127,7 +138,7 @@ final class SessionTranscriberTests: XCTestCase {
         let result = try await transcriber.transcribe(
             session: session,
             finalization: finalization(),
-            modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+            model: fluidAudioModel(),
             language: .czech
         )
 
@@ -148,7 +159,7 @@ final class SessionTranscriberTests: XCTestCase {
             _ = try await transcriber.transcribe(
                 session: session,
                 finalization: finalization(),
-                modelURL: temporaryRoot.appendingPathComponent("ggml-test.bin"),
+                model: fluidAudioModel(),
                 language: .slovak
             )
             XCTFail("Expected transcription cancellation.")
@@ -178,6 +189,12 @@ final class SessionTranscriberTests: XCTestCase {
         )
     }
 
+    private func fluidAudioModel() -> TranscriptionModelReference {
+        .fluidAudioParakeetV3(
+            bundleURL: temporaryRoot.appendingPathComponent("parakeet-v3", isDirectory: true)
+        )
+    }
+
     private func finalization() -> AudioFinalizationMetadata {
         AudioFinalizationMetadata(
             completedAt: Date(),
@@ -203,7 +220,7 @@ final class SessionTranscriberTests: XCTestCase {
     }
 }
 
-private actor MockTranscriptionService: TranscriptionService {
+private actor MockTranscriptionService: SpeechTranscribing {
     let failMicrophone: Bool
     let cancelAfterSystem: Bool
     let emptyMicrophone: Bool
@@ -224,15 +241,15 @@ private actor MockTranscriptionService: TranscriptionService {
         self.forcedDetectedLanguage = forcedDetectedLanguage
     }
 
-    func transcribe(
-        audioURL: URL,
-        modelURL: URL,
-        options: TranscriptionOptions
-    ) async throws -> TrackTranscript {
-        receivedAudioURLs.append(audioURL)
+    func transcribe(_ request: SpeechTranscriptionRequest) async throws -> TrackTranscript {
+        let options = request.options
+        receivedAudioURLs.append(request.audioURL)
         receivedOptions.append(options)
         if failMicrophone, options.source == .microphone {
-            throw TranscriptionError.inferenceFailed(code: -1)
+            throw TranscriptionError.engineInferenceFailed(
+                engine: "Test",
+                detail: "Simulated failure"
+            )
         }
         let segments = emptyMicrophone && options.source == .microphone ? [] : [
             TranscriptSegment(
@@ -248,7 +265,7 @@ private actor MockTranscriptionService: TranscriptionService {
         ]
         let transcript = TrackTranscript(
             source: options.source,
-            model: modelURL.lastPathComponent,
+            model: request.model.provenance.model,
             requestedLanguage: options.language,
             detectedLanguage: forcedDetectedLanguage
                 ?? (options.language == .automatic ? "sk" : options.language.rawValue),
@@ -261,7 +278,8 @@ private actor MockTranscriptionService: TranscriptionService {
                 inferenceInputDurationSeconds: options.source == .system ? 46 : 10,
                 chunkCount: options.source == .system ? 2 : 1,
                 wallTimeSeconds: options.source == .system ? 8 : 2
-            )
+            ),
+            provenance: request.model.provenance
         )
         if cancelAfterSystem, options.source == .system {
             withUnsafeCurrentTask { task in

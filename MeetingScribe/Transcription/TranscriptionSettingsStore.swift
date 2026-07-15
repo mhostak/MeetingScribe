@@ -1,9 +1,8 @@
 import Foundation
 
 @MainActor
-final class WhisperSettingsStore {
+final class TranscriptionSettingsStore {
     private enum Key {
-        static let selectedModelID = "selectedWhisperModelID"
         static let selectedLanguage = "selectedTranscriptionLanguage"
     }
 
@@ -11,15 +10,6 @@ final class WhisperSettingsStore {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-    }
-
-    var selectedModelID: String {
-        defaults.string(forKey: Key.selectedModelID)
-            ?? WhisperModelDescriptor.largeV3Turbo.id
-    }
-
-    func setSelectedModelID(_ modelID: String) {
-        defaults.set(modelID, forKey: Key.selectedModelID)
     }
 
     var selectedLanguage: TranscriptionLanguage {

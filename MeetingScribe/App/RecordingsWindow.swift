@@ -42,7 +42,9 @@ struct RecordingsWindow: View {
                                 RecordingSessionRow(
                                     entry: entry,
                                     liveStatus: liveStatus(for: entry),
-                                    isFocused: entry.id == focusedSessionID
+                                    isFocused: entry.id == focusedSessionID,
+                                    appState: appState,
+                                    reload: { await model.reload() }
                                 )
                                 .id(entry.id)
                             }
@@ -152,6 +154,10 @@ private struct RecordingSessionRow: View {
     let entry: SessionCatalogEntry
     let liveStatus: AppStatus?
     let isFocused: Bool
+    @ObservedObject var appState: AppState
+    let reload: () async -> Void
+    @State private var reprocessingError: String?
+    @State private var isShowingSpeakerEditor = false
 
     private let obsidianService = ObsidianService()
 
@@ -199,6 +205,13 @@ private struct RecordingSessionRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if let reprocessingError {
+                Label(reprocessingError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             HStack(spacing: 6) {
                 ArtifactBadge(title: "Audio", state: entry.audio)
                 ArtifactBadge(title: "Transcript", state: entry.transcript)
@@ -227,6 +240,47 @@ private struct RecordingSessionRow: View {
                 }
                 .disabled(markdownURL == nil)
 
+                Button {
+                    isShowingSpeakerEditor = true
+                } label: {
+                    Label("Edit speakers", systemImage: "person.2.badge.gearshape")
+                }
+                .disabled(
+                    appState.status == .recording
+                        || appState.status.isProcessing
+                        || !hasSpeakerArtifact
+                )
+
+                Button {
+                    Task {
+                        do {
+                            reprocessingError = nil
+                            let result = try await appState.reprocessWithFluidAudio(
+                                session: entry.session
+                            )
+                            await reload()
+                            NSWorkspace.shared.activateFileViewerSelecting([
+                                result.directoryURL
+                            ])
+                        } catch {
+                            reprocessingError = error.localizedDescription
+                        }
+                    }
+                } label: {
+                    if appState.fluidAudioReprocessingSessionID == entry.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Reprocess with FluidAudio", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                }
+                .disabled(
+                    appState.status == .recording
+                        || appState.status.isProcessing
+                        || appState.fluidAudioReprocessingSessionID != nil
+                        || entry.session.metadata.audioFinalization == nil
+                )
+
                 Spacer()
 
                 Button {
@@ -249,6 +303,9 @@ private struct RecordingSessionRow: View {
             }
         }
         .contextMenu { actionItems }
+        .sheet(isPresented: $isShowingSpeakerEditor) {
+            SpeakerEditorView(session: entry.session, onSaved: reload)
+        }
     }
 
     private var timeText: String {
@@ -292,6 +349,10 @@ private struct RecordingSessionRow: View {
         markdownURL ?? entry.session.manifestURL
     }
 
+    private var hasSpeakerArtifact: Bool {
+        FileManager.default.fileExists(atPath: entry.session.speakerDiarizationURL.path)
+    }
+
     @ViewBuilder
     private var actionItems: some View {
         Button("Show session in Finder") {
@@ -306,6 +367,12 @@ private struct RecordingSessionRow: View {
                 Button("Open in Obsidian") {
                     NSWorkspace.shared.open(obsidianURL)
                 }
+            }
+        }
+
+        if hasSpeakerArtifact {
+            Button("Edit speakers") {
+                isShowingSpeakerEditor = true
             }
         }
     }

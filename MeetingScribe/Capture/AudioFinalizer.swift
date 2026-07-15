@@ -14,7 +14,7 @@ protocol AudioFinalizing: Sendable {
 /// only when it has buffers and its host-time start is within the plausibility
 /// guard of the system start. The origin is `min(valid track starts)` and each
 /// output offset is `max(0, trackStart - origin)`. No silence is inserted into
-/// the WAV files; the offset is added later to Whisper segment timestamps.
+/// the WAV files; the offset is added later to transcription segment timestamps.
 struct AudioFinalizer: AudioFinalizing {
     static let maximumPlausibleTrackStartDifference: TimeInterval = 60
 
@@ -127,7 +127,7 @@ struct AudioFinalizer: AudioFinalizing {
         try repairer.repairIfNeeded(at: inputURL)
         let converted: ConvertedAudioFile
         let finalizedURL: URL
-        if let captured = try inspectWhisperReadyAudio(at: inputURL) {
+        if let captured = try inspectTranscriptionReadyAudio(at: inputURL) {
             converted = captured
             finalizedURL = inputURL
         } else {
@@ -144,7 +144,7 @@ struct AudioFinalizer: AudioFinalizing {
         )
     }
 
-    private func inspectWhisperReadyAudio(at url: URL) throws -> ConvertedAudioFile? {
+    private func inspectTranscriptionReadyAudio(at url: URL) throws -> ConvertedAudioFile? {
         let file: AVAudioFile
         do {
             file = try AVAudioFile(forReading: url)
@@ -259,7 +259,7 @@ struct AudioSourceCleaner: AudioSourceCleaning, @unchecked Sendable {
                 candidate.finalized.fileName,
                 isDirectory: false
             )
-            try validateWhisperAudio(finalizedURL, expected: candidate.finalized)
+            try validateTranscriptionAudio(finalizedURL, expected: candidate.finalized)
         }
 
         var deletedFiles: [String] = []
@@ -295,7 +295,7 @@ struct AudioSourceCleaner: AudioSourceCleaning, @unchecked Sendable {
         }
     }
 
-    private func validateWhisperAudio(
+    private func validateTranscriptionAudio(
         _ url: URL,
         expected: FinalizedAudioTrackMetadata
     ) throws {

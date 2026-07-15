@@ -175,7 +175,7 @@ actor SessionCatalog {
             case .failed:
                 return (.failed, transcription.failureReason ?? "Transcription failed.")
             case .modelMissing:
-                return (.needsModel, transcription.failureReason ?? "A Whisper model is required.")
+                return (.needsModel, transcription.failureReason ?? "A transcription model is required.")
             case .completed:
                 break
             }

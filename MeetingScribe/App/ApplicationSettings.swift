@@ -41,21 +41,20 @@ enum AppUserMessage: Equatable, Sendable {
     case openAIKeySave(String)
     case openAIKeyRemove(String)
     case launchAtLogin(String)
-    case whisperModelDownload(String)
-    case whisperModelImport(String)
-    case whisperModelDelete(String)
-    case whisperModelInvalidFile
+    case fluidAudioModelDownload(String, String)
+    case fluidAudioModelImport(String, String)
+    case fluidAudioModelDelete(String, String)
+    case fluidAudioModelInvalid
+    case legacyModelDelete(String)
     case recoveryIssues
     case recoveryScan(String)
     case sourceCAFPreserved(String)
-    case recordingSavedModelCheck(String)
-    case whisperModelRequired
+    case fluidAudioTranscriptionModelRequired
     case recordingSaved(String)
     case recordingSavedTranscription(String)
     case transcriptSavedMarkdown(String)
     case transcriptSavedAnalysisSkipped(String)
     case transcriptSavedAnalysisFailed(String)
-    case vadModelPreparation(String)
     case unsupportedToken(String)
     case unknownError
     case captureFailedSafeStop
@@ -63,7 +62,7 @@ enum AppUserMessage: Equatable, Sendable {
     case lowStorageSafeStop
     case chooseOutputFolderTitle
     case choose
-    case importWhisperModelTitle
+    case importFluidAudioModelTitle(String)
     case importAction
 }
 
@@ -106,32 +105,39 @@ enum AppLocalization {
                 "Spouštění po přihlášení se nepodařilo aktualizovat: \(detail)",
                 language
             )
-        case let .whisperModelDownload(detail):
+        case let .fluidAudioModelDownload(model, detail):
             return pick(
-                "The Whisper model could not be downloaded: \(detail)",
-                "Model Whisper sa nepodarilo stiahnuť: \(detail)",
-                "Model Whisper se nepodařilo stáhnout: \(detail)",
+                "The FluidAudio model \(model) could not be installed: \(detail)",
+                "Model FluidAudio \(model) sa nepodarilo nainštalovať: \(detail)",
+                "Model FluidAudio \(model) se nepodařilo nainstalovat: \(detail)",
                 language
             )
-        case let .whisperModelImport(detail):
+        case let .fluidAudioModelImport(model, detail):
             return pick(
-                "The Whisper model could not be imported: \(detail)",
-                "Model Whisper sa nepodarilo importovať: \(detail)",
-                "Model Whisper se nepodařilo importovat: \(detail)",
+                "The FluidAudio model \(model) could not be imported: \(detail)",
+                "Model FluidAudio \(model) sa nepodarilo importovať: \(detail)",
+                "Model FluidAudio \(model) se nepodařilo importovat: \(detail)",
                 language
             )
-        case let .whisperModelDelete(detail):
+        case let .fluidAudioModelDelete(model, detail):
             return pick(
-                "The Whisper model could not be deleted: \(detail)",
-                "Model Whisper sa nepodarilo odstrániť: \(detail)",
-                "Model Whisper se nepodařilo odstranit: \(detail)",
+                "The FluidAudio model \(model) could not be deleted: \(detail)",
+                "Model FluidAudio \(model) sa nepodarilo odstrániť: \(detail)",
+                "Model FluidAudio \(model) se nepodařilo odstranit: \(detail)",
                 language
             )
-        case .whisperModelInvalidFile:
+        case .fluidAudioModelInvalid:
             return pick(
-                "The model file is empty or is not a regular file.",
-                "Súbor modelu je prázdny alebo nejde o bežný súbor.",
-                "Soubor modelu je prázdný nebo nejde o běžný soubor.",
+                "The installed model is incomplete or does not match the pinned revision.",
+                "Nainštalovaný model je neúplný alebo nezodpovedá pripnutej revízii.",
+                "Nainstalovaný model je neúplný nebo neodpovídá připnuté revizi.",
+                language
+            )
+        case let .legacyModelDelete(detail):
+            return pick(
+                "Unused legacy models could not be removed: \(detail)",
+                "Nepoužívané staré modely sa nepodarilo odstrániť: \(detail)",
+                "Nepoužívané staré modely se nepodařilo odstranit: \(detail)",
                 language
             )
         case .recoveryIssues:
@@ -155,18 +161,11 @@ enum AppLocalization {
                 "Zpracování bylo dokončeno, ale zdrojové soubory CAF zůstaly zachované: \(detail)",
                 language
             )
-        case let .recordingSavedModelCheck(detail):
+        case .fluidAudioTranscriptionModelRequired:
             return pick(
-                "Recording saved. Whisper model check failed: \(detail)",
-                "Nahrávka bola uložená. Kontrola modelu Whisper zlyhala: \(detail)",
-                "Nahrávka byla uložena. Kontrola modelu Whisper selhala: \(detail)",
-                language
-            )
-        case .whisperModelRequired:
-            return pick(
-                "Recording saved. Download or import the selected Whisper model to transcribe this recording.",
-                "Nahrávka bola uložená. Na jej prepis stiahnite alebo importujte vybraný model Whisper.",
-                "Nahrávka byla uložena. Pro její přepis stáhněte nebo importujte vybraný model Whisper.",
+                "Recording saved. Download or import the verified Parakeet v3 model to transcribe this recording.",
+                "Nahrávka bola uložená. Na jej prepis stiahnite alebo importujte overený model Parakeet v3.",
+                "Nahrávka byla uložena. Pro její přepis stáhněte nebo importujte ověřený model Parakeet v3.",
                 language
             )
         case let .recordingSaved(detail):
@@ -204,13 +203,6 @@ enum AppLocalization {
                 "Přepis byl uložen. AI analýza selhala: \(detail)",
                 language
             )
-        case let .vadModelPreparation(detail):
-            return pick(
-                "The voice activity detection model could not be prepared: \(detail)",
-                "Model detekcie hlasovej aktivity sa nepodarilo pripraviť: \(detail)",
-                "Model detekce hlasové aktivity se nepodařilo připravit: \(detail)",
-                language
-            )
         case let .unsupportedToken(detail):
             return pick(
                 "Unsupported token: \(detail)",
@@ -245,8 +237,13 @@ enum AppLocalization {
             return pick("Choose Markdown output folder", "Vyberte výstupný priečinok pre Markdown", "Vyberte výstupní složku pro Markdown", language)
         case .choose:
             return pick("Choose", "Vybrať", "Vybrat", language)
-        case .importWhisperModelTitle:
-            return pick("Import Whisper model", "Importovať model Whisper", "Importovat model Whisper", language)
+        case let .importFluidAudioModelTitle(model):
+            return pick(
+                "Import \(model)",
+                "Importovať \(model)",
+                "Importovat \(model)",
+                language
+            )
         case .importAction:
             return pick("Import", "Importovať", "Importovat", language)
         }
@@ -276,8 +273,8 @@ enum AppLocalization {
             return outputError(error, language: language)
         case let error as TranscriptionError:
             return transcriptionError(error, language: language)
-        case let error as WhisperModelManagerError:
-            return whisperModelError(error, language: language)
+        case let error as FluidAudioModelManagerError:
+            return fluidAudioModelError(error, language: language)
         case let error as AudioFinalizerError:
             return audioFinalizerError(error, language: language)
         case let error as AudioSourceCleanupError:
@@ -446,24 +443,72 @@ enum AppLocalization {
     private static func transcriptionError(_ error: TranscriptionError, language: AppLanguage) -> String {
         switch error {
         case let .invalidAudioFormat(sampleRate, channelCount):
-            return pick("Whisper requires 16 kHz mono audio, but received \(sampleRate) Hz with \(channelCount) channels.", "Whisper vyžaduje mono zvuk 16 kHz, ale dostal \(sampleRate) Hz s \(channelCount) kanálmi.", "Whisper vyžaduje mono zvuk 16 kHz, ale dostal \(sampleRate) Hz s \(channelCount) kanály.", language)
+            return pick("Transcription requires 16 kHz mono audio, but received \(sampleRate) Hz with \(channelCount) channels.", "Prepis vyžaduje mono zvuk 16 kHz, ale dostal \(sampleRate) Hz s \(channelCount) kanálmi.", "Přepis vyžaduje mono zvuk 16 kHz, ale dostal \(sampleRate) Hz s \(channelCount) kanály.", language)
         case .emptyAudio:
             return pick("The working audio file contains no samples.", "Pracovný zvukový súbor neobsahuje žiadne vzorky.", "Pracovní zvukový soubor neobsahuje žádné vzorky.", language)
-        case let .modelCouldNotBeLoaded(fileName):
-            return pick("The Whisper model \(fileName) could not be loaded.", "Model Whisper \(fileName) sa nepodarilo načítať.", "Model Whisper \(fileName) se nepodařilo načíst.", language)
-        case let .inferenceFailed(code):
-            return pick("Whisper transcription failed with code \(code).", "Prepis Whisper zlyhal s kódom \(code).", "Přepis Whisper selhal s kódem \(code).", language)
+        case let .modelBundleCouldNotBeLoaded(name):
+            return pick("The transcription model bundle \(name) could not be loaded.", "Balík modelu prepisu \(name) sa nepodarilo načítať.", "Balík modelu přepisu \(name) se nepodařilo načíst.", language)
+        case let .engineInferenceFailed(engine, detail):
+            return pick("\(engine) transcription failed: \(detail)", "Prepis pomocou \(engine) zlyhal: \(detail)", "Přepis pomocí \(engine) selhal: \(detail)", language)
+        case let .unsupportedEngine(engine):
+            return pick("The transcription engine \(engine) is not supported.", "Engine prepisu \(engine) nie je podporovaný.", "Engine přepisu \(engine) není podporovaný.", language)
         }
     }
 
-    private static func whisperModelError(_ error: WhisperModelManagerError, language: AppLanguage) -> String {
+    private static func fluidAudioModelError(
+        _ error: FluidAudioModelManagerError,
+        language: AppLanguage
+    ) -> String {
         switch error {
-        case .downloadFailed:
-            return pick("The Whisper model download failed.", "Sťahovanie modelu Whisper zlyhalo.", "Stahování modelu Whisper selhalo.", language)
-        case .invalidResumeResponse:
-            return pick("The Whisper model server returned an invalid resume response.", "Server modelu Whisper vrátil neplatnú odpoveď pri pokračovaní sťahovania.", "Server modelu Whisper vrátil neplatnou odpověď při pokračování stahování.", language)
-        case let .checksumMismatch(expected, actual):
-            return pick("The Whisper model checksum is invalid. Expected \(expected), received \(actual).", "Kontrolný súčet modelu Whisper je neplatný. Očakávaný: \(expected), prijatý: \(actual).", "Kontrolní součet modelu Whisper je neplatný. Očekávaný: \(expected), přijatý: \(actual).", language)
+        case let .invalidRemoteURL(path):
+            return pick(
+                "The pinned model URL is invalid for \(path).",
+                "Pripnutá adresa modelu pre \(path) je neplatná.",
+                "Připnutá adresa modelu pro \(path) je neplatná.",
+                language
+            )
+        case let .downloadFailed(path):
+            return pick(
+                "The model download failed for \(path).",
+                "Sťahovanie modelu pre \(path) zlyhalo.",
+                "Stahování modelu pro \(path) selhalo.",
+                language
+            )
+        case .manifestMissing:
+            return pick(
+                "The verified model manifest is missing.",
+                "Chýba overený manifest modelu.",
+                "Chybí ověřený manifest modelu.",
+                language
+            )
+        case .manifestMismatch:
+            return pick(
+                "The installed model does not match the pinned revision.",
+                "Nainštalovaný model nezodpovedá pripnutej revízii.",
+                "Nainstalovaný model neodpovídá připnuté revizi.",
+                language
+            )
+        case let .fileMissing(path):
+            return pick(
+                "The model file \(path) is missing.",
+                "Chýba súbor modelu \(path).",
+                "Chybí soubor modelu \(path).",
+                language
+            )
+        case let .invalidSize(path, expected, actual):
+            return pick(
+                "The model file \(path) has size \(actual), expected \(expected).",
+                "Súbor modelu \(path) má veľkosť \(actual), očakávaná je \(expected).",
+                "Soubor modelu \(path) má velikost \(actual), očekávána je \(expected).",
+                language
+            )
+        case let .checksumMismatch(path, expected, actual):
+            return pick(
+                "The model file \(path) has SHA-256 \(actual), expected \(expected).",
+                "Súbor modelu \(path) má SHA-256 \(actual), očakávaný je \(expected).",
+                "Soubor modelu \(path) má SHA-256 \(actual), očekáván je \(expected).",
+                language
+            )
         }
     }
 

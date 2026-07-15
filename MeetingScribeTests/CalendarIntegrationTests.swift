@@ -74,8 +74,7 @@ final class CalendarIntegrationTests: XCTestCase {
         let appState = AppState(
             sessionManager: SessionManager(recordingsRoot: root),
             applicationSettingsStore: ApplicationSettingsStore(defaults: defaults),
-            calendarEventProvider: FakeCalendarEventProvider(candidates: [event]),
-            automaticallyManageVADModel: false
+            calendarEventProvider: FakeCalendarEventProvider(candidates: [event])
         )
         appState.meetingTitle = "Manual title"
         appState.setCalendarIntegrationEnabled(true)
@@ -112,8 +111,7 @@ final class CalendarIntegrationTests: XCTestCase {
         let appState = AppState(
             sessionManager: SessionManager(recordingsRoot: root),
             applicationSettingsStore: ApplicationSettingsStore(defaults: defaults),
-            calendarEventProvider: provider,
-            automaticallyManageVADModel: false
+            calendarEventProvider: provider
         )
         appState.setCalendarIntegrationEnabled(true)
 
@@ -141,8 +139,7 @@ final class CalendarIntegrationTests: XCTestCase {
         let appState = AppState(
             sessionManager: SessionManager(recordingsRoot: root),
             applicationSettingsStore: ApplicationSettingsStore(defaults: defaults),
-            calendarEventProvider: provider,
-            automaticallyManageVADModel: false
+            calendarEventProvider: provider
         )
         appState.setCalendarIntegrationEnabled(true)
 

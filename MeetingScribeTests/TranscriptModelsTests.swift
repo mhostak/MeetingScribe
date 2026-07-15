@@ -3,21 +3,28 @@ import XCTest
 @testable import MeetingScribe
 
 final class TranscriptModelsTests: XCTestCase {
-    func testWhisperTranscriptSanitizerRemovesEmptyAndNonSpeechMarkers() {
-        XCTAssertNil(WhisperTranscriptSanitizer.meaningfulText(from: "  \n"))
-        XCTAssertNil(WhisperTranscriptSanitizer.meaningfulText(from: "[BLANK_AUDIO]"))
-        XCTAssertNil(WhisperTranscriptSanitizer.meaningfulText(from: " [Silence] "))
-        XCTAssertNil(WhisperTranscriptSanitizer.meaningfulText(from: "(silence)"))
+    func testTranscriptSanitizerRemovesEmptyAndNonSpeechMarkers() {
+        XCTAssertNil(TranscriptSanitizer.meaningfulText(from: "  \n"))
+        XCTAssertNil(TranscriptSanitizer.meaningfulText(from: "[BLANK_AUDIO]"))
+        XCTAssertNil(TranscriptSanitizer.meaningfulText(from: " [Silence] "))
+        XCTAssertNil(TranscriptSanitizer.meaningfulText(from: "(silence)"))
         XCTAssertEqual(
-            WhisperTranscriptSanitizer.meaningfulText(from: "  Dobrý deň. \n"),
+            TranscriptSanitizer.meaningfulText(from: "  Dobrý deň. \n"),
             "Dobrý deň."
         )
     }
 
     func testTrackTranscriptJSONRoundTripPreservesTimestampedSegment() throws {
+        let provenance = TranscriptionProvenance(
+            engine: "FluidAudio",
+            engineVersion: "0.15.5",
+            model: "parakeet-tdt-0.6b-v3-coreml",
+            modelRevision: "reviewed-revision",
+            configurationRevision: "parakeet-v3-long-input-v1"
+        )
         let transcript = TrackTranscript(
             source: .microphone,
-            model: "ggml-large-v3-turbo.bin",
+            model: provenance.model,
             requestedLanguage: .automatic,
             detectedLanguage: "sk",
             completedAt: Date(timeIntervalSince1970: 1_725_876_700),
@@ -40,7 +47,8 @@ final class TranscriptModelsTests: XCTestCase {
                 inferenceInputDurationSeconds: 21,
                 chunkCount: 2,
                 wallTimeSeconds: 4
-            )
+            ),
+            provenance: provenance
         )
 
         let data = try TranscriptJSONCoder.makeEncoder().encode(transcript)
@@ -50,58 +58,8 @@ final class TranscriptModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(decoded, transcript)
-    }
-
-    func testHallucinationDetectorRecognizesDominantRepeatedPhrase() {
-        let transcript = makeTranscript(
-            texts: Array(repeating: "Titulky vytvořil Jirka Kováček.", count: 45)
-        )
-
-        XCTAssertTrue(WhisperHallucinationDetector.isStronglyRepetitive(transcript))
-    }
-
-    func testHallucinationDetectorIgnoresShortOrVariedTranscript() {
-        let short = makeTranscript(texts: Array(repeating: "Áno.", count: 5))
-        let varied = makeTranscript(texts: (0..<43).map { index in
-            index < 2 ? "Ďakujem za pozornosť." : "Rozličná veta číslo \(index)."
-        })
-
-        XCTAssertFalse(WhisperHallucinationDetector.isStronglyRepetitive(short))
-        XCTAssertFalse(WhisperHallucinationDetector.isStronglyRepetitive(varied))
-    }
-
-    func testHallucinationDetectorUsesOnlyImprovedAutomaticFallback() {
-        let original = makeTranscript(texts: Array(repeating: "Opakovaná veta.", count: 12))
-        let improved = makeTranscript(
-            language: .automatic,
-            detectedLanguage: "sk",
-            texts: (0..<12).map { "Skutočná veta \($0)." }
-        )
-        let stillRepetitive = makeTranscript(
-            language: .automatic,
-            detectedLanguage: "sk",
-            texts: Array(repeating: "Iná opakovaná veta.", count: 12)
-        )
-        let empty = makeTranscript(language: .automatic, detectedLanguage: "sk", texts: [])
-
-        XCTAssertTrue(
-            WhisperHallucinationDetector.shouldUseAutomaticFallback(
-                original: original,
-                fallback: improved
-            )
-        )
-        XCTAssertFalse(
-            WhisperHallucinationDetector.shouldUseAutomaticFallback(
-                original: original,
-                fallback: stillRepetitive
-            )
-        )
-        XCTAssertFalse(
-            WhisperHallucinationDetector.shouldUseAutomaticFallback(
-                original: original,
-                fallback: empty
-            )
-        )
+        XCTAssertEqual(decoded.schemaVersion, 3)
+        XCTAssertEqual(decoded.provenance, provenance)
     }
 
     func testMergedTranscriptJSONRoundTripPreservesTrackMetadata() throws {
@@ -130,29 +88,195 @@ final class TranscriptModelsTests: XCTestCase {
         XCTAssertEqual(decoded, transcript)
     }
 
-    private func makeTranscript(
-        language: TranscriptionLanguage = .czech,
-        detectedLanguage: String = "cs",
-        texts: [String]
-    ) -> TrackTranscript {
-        TrackTranscript(
-            source: .system,
-            model: "ggml-test.bin",
-            requestedLanguage: language,
-            detectedLanguage: detectedLanguage,
+    func testContinuousUtteranceGroupingUsesSpeakerTurnsAndPreservesSourceMappings() throws {
+        let transcript = MergedTranscript(
+            sessionID: "session-1",
+            title: "Grouping",
             completedAt: Date(timeIntervalSince1970: 1_725_876_700),
-            segments: texts.enumerated().map { index, text in
-                TranscriptSegment(
-                    id: "system-\(index)",
-                    source: .system,
-                    speaker: "Other",
-                    start: Double(index),
-                    end: Double(index + 1),
-                    language: detectedLanguage,
-                    text: text,
-                    confidence: nil
-                )
-            }
+            tracks: [],
+            segments: [
+                segment("system-0", .system, 0, 1, "Prvá veta."),
+                segment("microphone-0", .microphone, 0.5, 1.2, "Moja"),
+                segment("system-1", .system, 1.05, 2, "Druhá veta."),
+                segment("microphone-1", .microphone, 1.25, 2, "súvislá veta."),
+            ]
+        )
+        let turns = SpeakerTurnArtifact(
+            sessionID: transcript.sessionID,
+            sourceFingerprint: "audio",
+            engine: "test-turn-detector",
+            model: "test-tdrz.bin",
+            completedAt: transcript.completedAt,
+            boundaries: [
+                SpeakerTurnBoundary(source: .system, time: 1, confidence: nil),
+            ]
+        )
+
+        let result = try UtteranceArtifactStore().makeArtifact(
+            transcript: transcript,
+            turnArtifact: turns
+        )
+
+        XCTAssertEqual(result.utterances.count, 3)
+        XCTAssertEqual(result.utterances[0].sourceSegmentIDs, ["system-0"])
+        XCTAssertEqual(result.utterances[1].sourceSegmentIDs, ["microphone-0", "microphone-1"])
+        XCTAssertEqual(result.utterances[1].text, "Moja súvislá veta.")
+        XCTAssertEqual(result.utterances[2].sourceSegmentIDs, ["system-1"])
+        XCTAssertEqual(result.utterances[2].precedingBoundary, .speakerTurn)
+        XCTAssertEqual(result.turnDetectionModel, "test-tdrz.bin")
+    }
+
+    func testSpeakerTurnMarkerMapsToOnlyOneNearestRawSegmentBoundary() throws {
+        let transcript = MergedTranscript(
+            sessionID: "session-one-to-one",
+            title: "One-to-one turns",
+            completedAt: Date(),
+            tracks: [],
+            segments: [
+                segment("s0", .system, 0, 1.8, "Prvá"),
+                segment("s1", .system, 1.9, 2.1, "druhá"),
+                segment("s2", .system, 2.2, 3, "tretia"),
+            ]
+        )
+        let turns = SpeakerTurnArtifact(
+            sessionID: transcript.sessionID,
+            sourceFingerprint: "audio",
+            engine: "test-turn-detector",
+            model: "test-tdrz.bin",
+            completedAt: transcript.completedAt,
+            boundaries: [
+                SpeakerTurnBoundary(source: .system, time: 2, confidence: nil),
+            ]
+        )
+
+        let result = try UtteranceArtifactStore().makeArtifact(
+            transcript: transcript,
+            turnArtifact: turns
+        )
+
+        XCTAssertEqual(result.utterances.count, 2)
+        XCTAssertEqual(result.utterances[0].sourceSegmentIDs, ["s0"])
+        XCTAssertEqual(result.utterances[1].sourceSegmentIDs, ["s1", "s2"])
+        XCTAssertEqual(result.utterances[1].precedingBoundary, .speakerTurn)
+    }
+
+    func testSpeakerTurnMarkerInsideLongRawSegmentAwayFromEdgeIsIgnored() throws {
+        let transcript = MergedTranscript(
+            sessionID: "session-distant-turn",
+            title: "Distant turn",
+            completedAt: Date(),
+            tracks: [],
+            segments: [
+                segment("s0", .system, 0, 10, "Dlhý segment"),
+                segment("s1", .system, 10.1, 11, "pokračuje."),
+            ]
+        )
+        let turns = SpeakerTurnArtifact(
+            sessionID: transcript.sessionID,
+            sourceFingerprint: "audio",
+            engine: "test-turn-detector",
+            model: "test-tdrz.bin",
+            completedAt: transcript.completedAt,
+            boundaries: [
+                SpeakerTurnBoundary(source: .system, time: 5, confidence: nil),
+            ]
+        )
+
+        let result = try UtteranceArtifactStore().makeArtifact(
+            transcript: transcript,
+            turnArtifact: turns
+        )
+
+        XCTAssertEqual(result.utterances.count, 1)
+        XCTAssertEqual(result.utterances[0].sourceSegmentIDs, ["s0", "s1"])
+    }
+
+    func testContinuousUtteranceFallbackSplitsOnPauseOverlapAndMaximumDuration() throws {
+        let configuration = ContinuousUtteranceConfiguration(
+            maximumGapSeconds: 1.5,
+            sentencePauseSeconds: 0.7,
+            maximumDurationSeconds: 3,
+            speakerTurnToleranceSeconds: 0.35
+        )
+        let transcript = MergedTranscript(
+            sessionID: "session-2",
+            title: "Fallback",
+            completedAt: Date(),
+            tracks: [],
+            segments: [
+                segment("s0", .system, 0, 1, "Prvá veta."),
+                segment("s1", .system, 1.8, 2.4, "Druhá veta"),
+                segment("s2", .system, 4.1, 5, "Po tichu"),
+                segment("s3", .system, 4.9, 5.6, "Prekrytie"),
+                segment("s4", .system, 7.5, 8.2, "Ďalší blok"),
+                segment("s5", .system, 8.3, 11.5, "Príliš dlhý blok"),
+            ]
+        )
+
+        let result = ContinuousUtteranceGrouper(configuration: configuration).group(
+            transcript: transcript,
+            sourceFingerprint: "raw"
+        )
+
+        XCTAssertEqual(
+            result.utterances.map(\.precedingBoundary),
+            [.trackStart, .sentencePause, .silenceGap, .overlap, .silenceGap, .maximumDuration]
+        )
+        XCTAssertTrue(result.utterances.allSatisfy { !$0.sourceSegmentIDs.isEmpty })
+        XCTAssertNil(result.turnDetectionModel)
+    }
+
+    func testUtteranceArtifactFingerprintInvalidatesAfterRawTranscriptChange() throws {
+        let store = UtteranceArtifactStore()
+        let transcript = MergedTranscript(
+            sessionID: "session-3",
+            title: "Original",
+            completedAt: Date(),
+            tracks: [],
+            segments: [segment("s0", .system, 0, 1, "Original")]
+        )
+        let artifact = try store.makeArtifact(transcript: transcript)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeUtterance-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try store.persist(artifact, to: url)
+
+        XCTAssertNotNil(try store.loadValidArtifact(
+            from: url,
+            transcript: transcript,
+            turnArtifact: nil
+        ))
+
+        let changed = MergedTranscript(
+            sessionID: transcript.sessionID,
+            title: transcript.title,
+            completedAt: transcript.completedAt,
+            tracks: transcript.tracks,
+            segments: [segment("s0", .system, 0, 1, "Changed")]
+        )
+        XCTAssertNil(try store.loadValidArtifact(
+            from: url,
+            transcript: changed,
+            turnArtifact: nil
+        ))
+    }
+
+    private func segment(
+        _ id: String,
+        _ source: TranscriptSource,
+        _ start: Double,
+        _ end: Double,
+        _ text: String
+    ) -> TranscriptSegment {
+        TranscriptSegment(
+            id: id,
+            source: source,
+            speaker: source == .system ? "Other" : "Martin",
+            start: start,
+            end: end,
+            language: "sk",
+            text: text,
+            confidence: nil
         )
     }
 }

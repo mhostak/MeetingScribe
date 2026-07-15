@@ -2,7 +2,7 @@ import AVFoundation
 import CoreMedia
 import Foundation
 
-/// Incrementally converts capture buffers into Whisper-ready PCM and stores
+/// Incrementally converts capture buffers into transcription-ready PCM and stores
 /// them in a crash-recoverable WAV file.
 ///
 /// AVAudioFile only finalizes the WAV length fields when it is closed. A hard

@@ -57,6 +57,45 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.hasSuffix("Začnime dnešným stavom.\n"))
     }
 
+    func testRenderUsesContinuousUtterancesWhenValidArtifactIsProvided() throws {
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "SOFA weekly",
+            status: .recorded,
+            createdAt: startedAt
+        )
+        let transcript = makeTranscript(segments: [
+            segment(
+                id: "segment-000000",
+                source: .system,
+                speaker: "Other",
+                start: 1,
+                end: 2,
+                language: "sk",
+                text: "Toto je prvá časť."
+            ),
+            segment(
+                id: "segment-000001",
+                source: .system,
+                speaker: "Other",
+                start: 2.1,
+                end: 3,
+                language: "sk",
+                text: "A toto jej pokračovanie."
+            ),
+        ])
+        let utterances = try UtteranceArtifactStore().makeArtifact(transcript: transcript)
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: transcript,
+            utteranceTranscript: utterances
+        )
+
+        XCTAssertTrue(markdown.contains("Toto je prvá časť. A toto jej pokračovanie."))
+        XCTAssertEqual(markdown.components(separatedBy: "### 00:00:").count - 1, 1)
+    }
+
     func testRenderEscapesYAMLAndHandlesEmptyTranscript() {
         let session = SessionMetadata(
             id: "id:1",
@@ -301,6 +340,73 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertFalse(markdown.contains("[BLANK_AUDIO]"))
         XCTAssertTrue(merged.segments.allSatisfy { markdown.contains($0.text) })
         XCTAssertEqual(try String(contentsOf: result.fileURL, encoding: .utf8), markdown)
+    }
+
+    func testExportsContinuousUtterancePreviewForExistingSessionWhenPathsAreProvided() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let sessionPath = environment["MEETINGSCRIBE_SESSION_PATH"],
+              !sessionPath.isEmpty,
+              let outputPath = environment["MEETINGSCRIBE_MARKDOWN_OUTPUT_DIRECTORY"],
+              !outputPath.isEmpty else {
+            throw XCTSkip(
+                "Set MEETINGSCRIBE_SESSION_PATH and MEETINGSCRIBE_MARKDOWN_OUTPUT_DIRECTORY "
+                    + "for a real continuous-utterance export test."
+            )
+        }
+
+        let sessionDirectory = URL(fileURLWithPath: sessionPath, isDirectory: true)
+        let outputDirectory = URL(fileURLWithPath: outputPath, isDirectory: true)
+        let metadata = try decode(
+            SessionMetadata.self,
+            at: sessionDirectory.appendingPathComponent("session.json"),
+            decoder: SessionJSONCoder.makeDecoder()
+        )
+        let transcript = try decode(
+            MergedTranscript.self,
+            at: sessionDirectory.appendingPathComponent("transcript.json"),
+            decoder: TranscriptJSONCoder.makeDecoder()
+        )
+        let utteranceTranscript = try UtteranceArtifactStore().makeArtifact(
+            transcript: transcript
+        )
+
+        let mappedSegmentIDs = utteranceTranscript.utterances
+            .flatMap(\.sourceSegmentIDs)
+            .sorted()
+        XCTAssertEqual(mappedSegmentIDs, transcript.segments.map(\.id).sorted())
+        XCTAssertLessThan(utteranceTranscript.utterances.count, transcript.segments.count)
+        XCTAssertNil(utteranceTranscript.turnDetectionEngine)
+        XCTAssertNil(utteranceTranscript.turnDetectionModel)
+
+        let result = try OutputExporter().export(
+            session: metadata,
+            transcript: transcript,
+            utteranceTranscript: utteranceTranscript,
+            to: outputDirectory
+        )
+        let markdown = try String(contentsOf: result.fileURL, encoding: .utf8)
+        XCTAssertTrue(
+            ["## Prepis", "## Přepis", "## Transcript"].contains {
+                markdown.contains($0)
+            }
+        )
+        XCTAssertEqual(
+            markdown.components(separatedBy: "\n### ").count - 1,
+            utteranceTranscript.utterances.count
+        )
+        for segment in transcript.segments {
+            XCTAssertTrue(
+                markdown.contains(
+                    segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                ),
+                "Export is missing source segment \(segment.id)."
+            )
+        }
+        XCTAssertNotEqual(result.fileURL.path, metadata.output?.markdownPath)
+
+        print("MEETINGSCRIBE_S0_OUTPUT=\(result.fileURL.path)")
+        print("MEETINGSCRIBE_S0_SEGMENTS=\(transcript.segments.count)")
+        print("MEETINGSCRIBE_S0_UTTERANCES=\(utteranceTranscript.utterances.count)")
     }
 
     func testRenderUsesSelectedCzechOutputLanguage() {

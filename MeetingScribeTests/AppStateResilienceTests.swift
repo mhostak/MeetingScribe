@@ -27,6 +27,20 @@ final class AppStateResilienceTests: XCTestCase {
             AppLocalization.message(.captureStalledSafeStop, language: .czech),
             "Nahrávání bylo bezpečně zastaveno, protože zachytávání systémového zvuku přestalo přijímat data. Existující audio zůstalo zachované."
         )
+        XCTAssertEqual(
+            AppLocalization.message(
+                .fluidAudioModelDownload("Parakeet", "detail-42"),
+                language: .slovak
+            ),
+            "Model FluidAudio Parakeet sa nepodarilo nainštalovať: detail-42"
+        )
+        XCTAssertEqual(
+            AppLocalization.error(
+                FluidAudioModelManagerError.manifestMismatch,
+                language: .czech
+            ),
+            "Nainstalovaný model neodpovídá připnuté revizi."
+        )
     }
 
     func testAllApplicationLanguagesResolveToAConcreteLocalization() {
@@ -47,7 +61,7 @@ final class AppStateResilienceTests: XCTestCase {
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
             ),
-            modelManager: WhisperModelManager(
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
             defaults: fixture.defaults
@@ -65,7 +79,7 @@ final class AppStateResilienceTests: XCTestCase {
         defer { fixture.cleanup() }
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
-        WhisperSettingsStore(defaults: fixture.defaults).setSelectedLanguage(.czech)
+        TranscriptionSettingsStore(defaults: fixture.defaults).setSelectedLanguage(.czech)
         let applicationSettings = ApplicationSettingsStore(defaults: fixture.defaults)
         applicationSettings.setOutputLanguage(.english)
         applicationSettings.setMarkdownFileNameTemplate("{date} - {title} - {id}")
@@ -77,7 +91,7 @@ final class AppStateResilienceTests: XCTestCase {
                 microphoneCapture: ResilienceCaptureService()
             ),
             audioFinalizer: ResilienceAudioFinalizer(),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(modelsRoot: modelsRoot),
             monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
             defaults: fixture.defaults
         )
@@ -114,7 +128,7 @@ final class AppStateResilienceTests: XCTestCase {
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
             ),
-            modelManager: WhisperModelManager(
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
             apiKeyStore: apiKeyStore,
@@ -127,6 +141,10 @@ final class AppStateResilienceTests: XCTestCase {
         let loadCount = await apiKeyStore.loadCount()
         XCTAssertEqual(loadCount, 1)
         XCTAssertEqual(appState.status, .idle)
+        XCTAssertEqual(appState.fluidAudioASRModelStatus, .missing)
+        XCTAssertEqual(appState.fluidAudioDiarizationModelStatus, .missing)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root
+            .appendingPathComponent("Models/FluidAudio/.staging", isDirectory: true).path))
     }
 
     func testPrepareStorageTreatsKeychainFailureAsNonfatal() async throws {
@@ -137,7 +155,7 @@ final class AppStateResilienceTests: XCTestCase {
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
             ),
-            modelManager: WhisperModelManager(
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
             apiKeyStore: FailingResilienceAPIKeyStore(),
@@ -174,7 +192,7 @@ final class AppStateResilienceTests: XCTestCase {
 
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(modelsRoot: modelsRoot),
             defaults: fixture.defaults
         )
 
@@ -221,7 +239,7 @@ final class AppStateResilienceTests: XCTestCase {
         let fileService = BlockingExportProcessingFileService(gate: gate)
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
-            modelManager: WhisperModelManager(
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
             processingFileService: fileService,
@@ -245,10 +263,6 @@ final class AppStateResilienceTests: XCTestCase {
         defer { fixture.cleanup() }
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
-        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
-        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
-
         let systemCapture = ResilienceCaptureService()
         let microphoneCapture = ResilienceCaptureService()
         let appState = makeAppState(
@@ -258,7 +272,10 @@ final class AppStateResilienceTests: XCTestCase {
                 microphoneCapture: microphoneCapture
             ),
             audioFinalizer: ResilienceAudioFinalizer(),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
             sessionTranscriber: ResilienceSessionTranscriber(),
             monitoring: CaptureMonitoringConfiguration(
                 interval: .milliseconds(5),
@@ -295,10 +312,6 @@ final class AppStateResilienceTests: XCTestCase {
         defer { fixture.cleanup() }
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
-        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
-        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
-
         let storageCheck = SuspendedLowStorageCheck()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
@@ -307,7 +320,10 @@ final class AppStateResilienceTests: XCTestCase {
                 microphoneCapture: ResilienceCaptureService()
             ),
             audioFinalizer: ResilienceAudioFinalizer(),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
             sessionTranscriber: ResilienceSessionTranscriber(),
             monitoring: CaptureMonitoringConfiguration(
                 interval: .milliseconds(5),
@@ -336,10 +352,6 @@ final class AppStateResilienceTests: XCTestCase {
         defer { fixture.cleanup() }
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
-        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
-        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
-
         let systemCapture = ResilienceCaptureService()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
@@ -348,7 +360,10 @@ final class AppStateResilienceTests: XCTestCase {
                 microphoneCapture: ResilienceCaptureService()
             ),
             audioFinalizer: ResilienceAudioFinalizer(),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
             sessionTranscriber: ResilienceSessionTranscriber(),
             monitoring: CaptureMonitoringConfiguration(
                 interval: .milliseconds(5),
@@ -376,10 +391,6 @@ final class AppStateResilienceTests: XCTestCase {
         defer { fixture.cleanup() }
         let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
         let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
-        try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
-        let modelURL = modelsRoot.appendingPathComponent(WhisperModelDescriptor.largeV3Turbo.fileName)
-        try Data(repeating: 0x42, count: 2_048).write(to: modelURL)
-
         let systemCapture = ResilienceCaptureService()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
@@ -388,7 +399,10 @@ final class AppStateResilienceTests: XCTestCase {
                 microphoneCapture: ResilienceCaptureService()
             ),
             audioFinalizer: ResilienceAudioFinalizer(),
-            modelManager: WhisperModelManager(modelsRoot: modelsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
             sessionTranscriber: ResilienceSessionTranscriber(),
             monitoring: CaptureMonitoringConfiguration(
                 interval: .milliseconds(5),
@@ -431,7 +445,7 @@ final class AppStateResilienceTests: XCTestCase {
         sessionManager: SessionManager,
         captureCoordinator: CaptureCoordinator = CaptureCoordinator(),
         audioFinalizer: any AudioFinalizing = AudioFinalizer(),
-        modelManager: WhisperModelManager,
+        fluidAudioModelManager: any FluidAudioModelManaging,
         sessionTranscriber: any SessionTranscribing = SessionTranscriber(),
         processingFileService: (any ProcessingFileServicing)? = nil,
         monitoring: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
@@ -445,18 +459,17 @@ final class AppStateResilienceTests: XCTestCase {
             sessionManager: sessionManager,
             captureCoordinator: captureCoordinator,
             audioFinalizer: audioFinalizer,
-            modelManager: modelManager,
+            fluidAudioModelManager: fluidAudioModelManager,
             sessionTranscriber: sessionTranscriber,
             processingFileService: processingFileService,
             outputFolderStore: OutputFolderStore(defaults: defaults),
             apiKeyStore: apiKeyStore,
             analysisSettingsStore: AnalysisSettingsStore(defaults: defaults),
-            whisperSettingsStore: WhisperSettingsStore(defaults: defaults),
+            transcriptionSettingsStore: TranscriptionSettingsStore(defaults: defaults),
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
             captureMonitoringConfiguration: monitoring,
-            storageStatusProvider: storageStatusProvider,
-            automaticallyManageVADModel: false
+            storageStatusProvider: storageStatusProvider
         )
     }
 
@@ -620,6 +633,64 @@ private struct ResilienceTestFixture {
     }
 }
 
+private actor ResilienceFluidAudioModelManager: FluidAudioModelManaging {
+    private let modelsRoot: URL
+    private var isTranscriptionReady: Bool
+
+    init(modelsRoot: URL, isTranscriptionReady: Bool = false) {
+        self.modelsRoot = modelsRoot.appendingPathComponent("FluidAudio", isDirectory: true)
+        self.isTranscriptionReady = isTranscriptionReady
+    }
+
+    func prepareStorage() throws {
+        try FileManager.default.createDirectory(
+            at: modelsRoot.appendingPathComponent(".staging", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+    }
+
+    func status(for descriptor: FluidAudioModelDescriptor) -> FluidAudioModelStatus {
+        guard descriptor.kind == .transcription, isTranscriptionReady else { return .missing }
+        return .ready(
+            bundleURL: modelsRoot.appendingPathComponent(
+                descriptor.installationFolderName,
+                isDirectory: true
+            ),
+            sizeBytes: descriptor.approximateSizeBytes
+        )
+    }
+
+    func validateInstalledModel(_ descriptor: FluidAudioModelDescriptor) throws -> URL {
+        modelsRoot.appendingPathComponent(descriptor.installationFolderName, isDirectory: true)
+    }
+
+    func install(
+        _ descriptor: FluidAudioModelDescriptor,
+        repair: Bool,
+        progress: @escaping @Sendable (FluidAudioModelDownloadProgress) -> Void
+    ) throws -> URL {
+        isTranscriptionReady = descriptor.kind == .transcription
+        progress(.init(
+            fractionCompleted: 1,
+            downloadedBytes: descriptor.approximateSizeBytes,
+            totalBytes: descriptor.approximateSizeBytes
+        ))
+        return modelsRoot.appendingPathComponent(descriptor.installationFolderName, isDirectory: true)
+    }
+
+    func importBundle(
+        from sourceBundleURL: URL,
+        as descriptor: FluidAudioModelDescriptor
+    ) throws -> URL {
+        isTranscriptionReady = descriptor.kind == .transcription
+        return modelsRoot.appendingPathComponent(descriptor.installationFolderName, isDirectory: true)
+    }
+
+    func removeModel(_ descriptor: FluidAudioModelDescriptor) {
+        if descriptor.kind == .transcription { isTranscriptionReady = false }
+    }
+}
+
 private struct AppStateCapacityProvider: StorageCapacityProviding {
     func availableCapacity(at url: URL) throws -> Int64 { 1_000_000 }
 }
@@ -712,7 +783,7 @@ private actor ResilienceSessionTranscriber: SessionTranscribing {
     func transcribe(
         session: RecordingSession,
         finalization: AudioFinalizationMetadata,
-        modelURL: URL,
+        model: TranscriptionModelReference,
         language: TranscriptionLanguage
     ) async throws -> SessionTranscriptionResult {
         let segment = TranscriptSegment(
@@ -727,7 +798,7 @@ private actor ResilienceSessionTranscriber: SessionTranscribing {
         )
         let track = TrackTranscript(
             source: .system,
-            model: modelURL.lastPathComponent,
+            model: model.provenance.model,
             requestedLanguage: language,
             detectedLanguage: "sk",
             completedAt: Date(),
@@ -743,12 +814,13 @@ private actor ResilienceSessionTranscriber: SessionTranscribing {
         return SessionTranscriptionResult(
             metadata: SessionTranscriptionMetadata(
                 status: .completed,
-                model: modelURL.lastPathComponent,
+                model: model.provenance.model,
                 systemSegmentCount: 1,
                 microphoneSegmentCount: 0,
                 mergedSegmentCount: 1,
                 warnings: [],
-                failureReason: nil
+                failureReason: nil,
+                provenance: model.provenance
             ),
             systemTranscript: track,
             microphoneTranscript: nil,

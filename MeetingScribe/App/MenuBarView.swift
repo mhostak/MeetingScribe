@@ -133,7 +133,7 @@ struct MenuBarView: View {
 
             HStack(spacing: 7) {
                 settingsChip(
-                    appState.selectedWhisperModel.displayName,
+                    appState.fluidAudioASRDescriptor.displayName,
                     icon: "waveform",
                     section: "transcription",
                     localizeTitle: false

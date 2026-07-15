@@ -11,6 +11,8 @@ enum ProcessingLogEvent: String, Codable, Sendable {
     case transcriptionStarted
     case transcriptionCompleted
     case transcriptionFailed
+    case diarizationCompleted
+    case diarizationFailed
     case analysisCompleted
     case analysisFailed
     case exportCompleted

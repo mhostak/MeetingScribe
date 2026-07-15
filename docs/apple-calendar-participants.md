@@ -7,9 +7,9 @@ Status date: 2026-07-15
 | Phase | Status | Delivery boundary |
 | --- | --- | --- |
 | Phase A — consent-first Calendar metadata | Complete | Select one nearby event, explicitly confirm attendees, and persist a privacy-minimized snapshot for the recording. |
-| Phase B — attendee-to-speaker mapping | Deferred | Map confirmed attendees to anonymous diarization clusters and regenerate speaker-resolved output without retranscribing audio. |
+| Phase B — attendee-to-speaker mapping | Deferred by product decision; prerequisite complete | Map confirmed attendees to anonymous diarization clusters and regenerate speaker-resolved output without retranscribing audio. |
 
-Phase B is intentionally deferred. It depends on the separate [Speaker recognition and management implementation plan](speaker-recognition-management-plan.md), because Calendar attendees are only candidate names and cannot identify voices by themselves.
+Phase B remains intentionally deferred. Its separate [Speaker recognition and management](speaker-recognition-management-plan.md) prerequisite is now implemented: MeetingScribe persists stable anonymous speaker IDs, resolves transcript words to those speakers, and exposes a session editor. Calendar attendees are still only candidate names and cannot identify voices by themselves, so attendee-to-speaker mapping remains an explicit future consent step rather than an automatic consequence of diarization.
 
 ## Phase A — complete
 
@@ -42,17 +42,20 @@ Phase B will not attempt to infer a person's identity from Calendar membership. 
 
 The mapping remains local session data. Calendar names are sent to an external AI provider only when the existing per-meeting participant-sharing consent is enabled.
 
-## Resume criteria for Phase B
+## Phase B prerequisite status
 
-Phase B can start only when the speaker prerequisite provides all of the following:
+The speaker prerequisite now provides every required handoff contract:
 
-- stable session-scoped speaker identifiers independent of display names;
-- a persisted diarization artifact tied to a fingerprint of the source transcript/audio;
-- deterministic assignment of transcript segments to anonymous speakers, including an explicit ambiguous or unknown state;
-- a speaker-management UI that can rename and merge clusters;
-- a derived speaker-resolved transcript that can be regenerated without changing raw track transcripts;
-- backward-compatible loading of sessions that contain no speaker artifacts;
-- tests proving that rename and mapping operations cannot silently change raw transcription data.
+- [x] stable session-scoped speaker identifiers independent of display names;
+- [x] a persisted diarization artifact tied to fingerprints of the source transcript and audio;
+- [x] deterministic word-level assignment to anonymous speakers, including explicit overlapping and unmatched states;
+- [x] a speaker-management UI that can rename, classify, and merge clusters;
+- [x] a derived speaker-resolved transcript and Markdown that can be regenerated without changing raw track transcripts;
+- [x] backward-compatible loading of sessions that contain no speaker artifacts;
+- [x] missing-model, failure, cancellation, and checkpoint recovery fallbacks;
+- [x] tests proving that saved speaker edits cannot silently change raw transcription data.
+
+Phase B may therefore start when it is reprioritized; no further diarization data-model migration is required. Final labeled DER, oldest-hardware memory, and signed long-session measurements remain release-quality gates for diarization, but they do not block implementation of the explicit attendee-mapping UI and persistence contract.
 
 ## Invariants
 

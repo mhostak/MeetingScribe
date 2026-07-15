@@ -150,7 +150,7 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
-    func testFinalizerUsesDirectWhisperWAVWithoutCreatingDuplicateWorkingFile() async throws {
+    func testFinalizerUsesDirectTranscriptionWAVWithoutCreatingDuplicateWorkingFile() async throws {
         let session = RecordingSession(
             metadata: SessionMetadata(
                 id: "direct-pcm",
@@ -161,7 +161,7 @@ final class AudioFinalizerTests: XCTestCase {
             ),
             directoryURL: temporaryRoot
         )
-        try writeWhisperWAV(to: session.systemAudioURL, duration: 1)
+        try writeTranscriptionWAV(to: session.systemAudioURL, duration: 1)
 
         let metadata = try await AudioFinalizer().finalize(
             session: session,
@@ -398,7 +398,7 @@ final class AudioFinalizerTests: XCTestCase {
         return session
     }
 
-    private func writeWhisperWAV(to url: URL, duration: Double) throws {
+    private func writeTranscriptionWAV(to url: URL, duration: Double) throws {
         let format = try XCTUnwrap(AVAudioFormat(
             standardFormatWithSampleRate: 48_000,
             channels: 1

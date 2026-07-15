@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var appState: AppState
     @State private var isShowingCAFDeletionWarning = false
+    @State private var isShowingLegacyModelDeletionWarning = false
 
     var body: some View {
         TabView(selection: $appState.selectedSettingsSection) {
@@ -47,6 +48,18 @@ struct SettingsView: View {
         } message: {
             Text("Failed or incomplete sessions always keep their source audio.")
         }
+        .confirmationDialog(
+            "Remove unused legacy models?",
+            isPresented: $isShowingLegacyModelDeletionWarning,
+            titleVisibility: .visible
+        ) {
+            Button("Remove unused legacy models", role: .destructive) {
+                appState.removeLegacyModels()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes only old model files. Existing recordings, transcripts, and Markdown are not changed.")
+        }
     }
 
     private var generalSettings: some View {
@@ -81,7 +94,7 @@ struct SettingsView: View {
                     appState.persistTranscriptionLanguageSelection()
                 }
 
-                Text("Controls the language Whisper expects in the recorded audio. Auto is best for mixed-language meetings.")
+                Text("Controls the language expected in the recorded audio. Auto is best for mixed-language meetings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -102,58 +115,63 @@ struct SettingsView: View {
 
     private var transcriptionSettings: some View {
         settingsForm {
-            Section("Whisper") {
-                Picker("Model", selection: $appState.selectedWhisperModelID) {
-                    ForEach(WhisperModelDescriptor.supported) { model in
-                        Text(model.displayName).tag(model.id)
-                    }
-                }
-                .onChange(of: appState.selectedWhisperModelID) {
-                    appState.persistWhisperModelSelection()
-                    Task { await appState.refreshWhisperModelStatus() }
-                }
+            Section("FluidAudio") {
+                Text("MeetingScribe uses pinned FluidAudio model bundles for local transcription and speaker diarization. Models are downloaded only when you request them and are verified before installation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-                LabeledContent("Status") {
-                    Label {
-                        whisperModelStatusLabel
-                    } icon: {
-                        Image(systemName: whisperModelIcon)
-                    }
-                        .foregroundStyle(whisperModelColor)
-                }
+            Section("Transcription model") {
+                fluidAudioModelControls(
+                    descriptor: appState.fluidAudioASRDescriptor,
+                    status: appState.fluidAudioASRModelStatus,
+                    progress: appState.fluidAudioASRDownloadProgress,
+                    isInstalling: appState.isInstallingFluidAudioASRModel,
+                    kind: .transcription
+                )
+            }
 
-                if let progress = appState.whisperModelDownloadProgress {
-                    ProgressView(value: progress) {
-                        Text("Downloading")
-                            + Text(verbatim: " \(progress.formatted(.percent.precision(.fractionLength(0))))")
-                    }
-                }
+            Section("Speaker diarization model") {
+                fluidAudioModelControls(
+                    descriptor: appState.fluidAudioDiarizationDescriptor,
+                    status: appState.fluidAudioDiarizationModelStatus,
+                    progress: appState.fluidAudioDiarizationDownloadProgress,
+                    isInstalling: appState.isInstallingFluidAudioDiarizationModel,
+                    kind: .diarization
+                )
+            }
 
-                if case .ready = appState.whisperModelStatus {
-                    HStack {
-                        Button("Replace from file…") {
-                            Task { await appState.importSelectedWhisperModel() }
-                        }
-                        Button("Delete model", role: .destructive) {
-                            Task { await appState.deleteSelectedWhisperModel() }
-                        }
+            Section("Storage and attribution") {
+                LabeledContent("Combined download size") {
+                    Text(verbatim: ByteCountFormatter.string(
+                        fromByteCount: fluidAudioCombinedSize,
+                        countStyle: .file
+                    ))
+                }
+                Text("Finalized audio and inference stay on this Mac. Network access is used only for an explicit model installation or repair.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Legacy model files from older versions are not used and are never removed automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if appState.legacyModelCleanupReport.fileCount > 0 {
+                    Button(role: .destructive) {
+                        isShowingLegacyModelDeletionWarning = true
+                    } label: {
+                        Label(
+                            "Remove unused legacy models (\(ByteCountFormatter.string(fromByteCount: appState.legacyModelCleanupReport.totalBytes, countStyle: .file)))",
+                            systemImage: "trash"
+                        )
                     }
-                } else {
-                    HStack {
-                        Button {
-                            Task { await appState.downloadSelectedWhisperModel() }
-                        } label: {
-                            downloadModelButtonLabel
-                        }
-                        Button("Import from file…") {
-                            Task { await appState.importSelectedWhisperModel() }
-                        }
-                    }
-                    .disabled(appState.isDownloadingWhisperModel)
+                    .disabled(appState.isRemovingLegacyModels)
                 }
             }
         }
         .disabled(!appState.canEditSessionConfiguration)
+        .task {
+            await appState.refreshFluidAudioModelStatuses()
+            appState.refreshLegacyModelCleanupReport()
+        }
     }
 
     private var aiSettings: some View {
@@ -389,19 +407,94 @@ struct SettingsView: View {
         Task { await appState.persistApplicationSettings() }
     }
 
-    private var whisperModelIcon: String {
-        if case .ready = appState.whisperModelStatus { return "checkmark.circle.fill" }
-        return "arrow.down.circle"
-    }
+    @ViewBuilder
+    private func fluidAudioModelControls(
+        descriptor: FluidAudioModelDescriptor,
+        status: FluidAudioModelStatus,
+        progress: FluidAudioModelDownloadProgress?,
+        isInstalling: Bool,
+        kind: FluidAudioModelKind
+    ) -> some View {
+        LabeledContent("Model") {
+            Text(verbatim: descriptor.displayName)
+        }
 
-    private var whisperModelColor: Color {
-        if case .ready = appState.whisperModelStatus { return .green }
-        return .secondary
+        LabeledContent("Status") {
+            Label {
+                fluidAudioModelStatusLabel(status)
+            } icon: {
+                Image(systemName: fluidAudioModelIcon(status))
+            }
+            .foregroundStyle(fluidAudioModelColor(status))
+        }
+
+        if let progress {
+            ProgressView(value: progress.fractionCompleted) {
+                Text("Installing")
+                    + Text(verbatim: " \(progress.fractionCompleted.formatted(.percent.precision(.fractionLength(0))))")
+            } currentValueLabel: {
+                Text(verbatim:
+                    "\(ByteCountFormatter.string(fromByteCount: progress.downloadedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file))"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+
+        HStack {
+            if isInstalling {
+                Button("Cancel", role: .cancel) {
+                    appState.cancelFluidAudioModelInstallation(kind)
+                }
+            } else {
+                switch status {
+                case .ready:
+                    Button("Verify and repair") {
+                        appState.installFluidAudioModel(kind, repair: true)
+                    }
+                    Button("Import verified folder…") {
+                        Task { await appState.importFluidAudioModel(kind) }
+                    }
+                    Button("Delete model", role: .destructive) {
+                        Task { await appState.deleteFluidAudioModel(kind) }
+                    }
+                case .missing:
+                    Button {
+                        appState.installFluidAudioModel(kind)
+                    } label: {
+                        Text("Download")
+                            + Text(verbatim: " (\(modelSize(descriptor)))")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Import verified folder…") {
+                        Task { await appState.importFluidAudioModel(kind) }
+                    }
+                case .invalid:
+                    Button("Repair") {
+                        appState.installFluidAudioModel(kind, repair: true)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Import verified folder…") {
+                        Task { await appState.importFluidAudioModel(kind) }
+                    }
+                    Button("Delete invalid model", role: .destructive) {
+                        Task { await appState.deleteFluidAudioModel(kind) }
+                    }
+                }
+            }
+        }
+
+        HStack(spacing: 12) {
+            Link("Model source", destination: descriptor.sourceURL)
+            Text(verbatim: descriptor.licenseName)
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
     }
 
     @ViewBuilder
-    private var whisperModelStatusLabel: some View {
-        switch appState.whisperModelStatus {
+    private func fluidAudioModelStatusLabel(_ status: FluidAudioModelStatus) -> some View {
+        switch status {
         case .missing:
             Text("Missing")
         case let .ready(_, sizeBytes):
@@ -413,22 +506,32 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var downloadModelButtonLabel: some View {
-        if appState.isDownloadingWhisperModel {
-            Text("Downloading Whisper model…")
-        } else {
-            Text("Download")
-                + Text(verbatim: " \(appState.selectedWhisperModel.displayName) (\(selectedWhisperModelSize))")
+    private func fluidAudioModelIcon(_ status: FluidAudioModelStatus) -> String {
+        switch status {
+        case .ready: return "checkmark.circle.fill"
+        case .invalid: return "exclamationmark.triangle.fill"
+        case .missing: return "arrow.down.circle"
         }
     }
 
-    private var selectedWhisperModelSize: String {
-        let size = ByteCountFormatter.string(
-            fromByteCount: appState.selectedWhisperModel.approximateSizeBytes,
+    private func fluidAudioModelColor(_ status: FluidAudioModelStatus) -> Color {
+        switch status {
+        case .ready: return .green
+        case .invalid: return .orange
+        case .missing: return .secondary
+        }
+    }
+
+    private func modelSize(_ descriptor: FluidAudioModelDescriptor) -> String {
+        ByteCountFormatter.string(
+            fromByteCount: descriptor.approximateSizeBytes,
             countStyle: .file
         )
-        return size
+    }
+
+    private var fluidAudioCombinedSize: Int64 {
+        appState.fluidAudioASRDescriptor.approximateSizeBytes
+            + appState.fluidAudioDiarizationDescriptor.approximateSizeBytes
     }
 
     private var cannotSaveOpenAIAPIKey: Bool {

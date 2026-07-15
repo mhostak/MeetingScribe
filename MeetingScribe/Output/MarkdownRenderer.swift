@@ -10,19 +10,26 @@ struct MarkdownRenderer: Sendable {
     func render(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript? = nil,
+        resolvedTranscript: ResolvedTranscript? = nil,
         analysis: MeetingAnalysis? = nil
     ) -> String {
+        let renderedSegments = renderableSegments(
+            transcript: transcript,
+            utteranceTranscript: utteranceTranscript,
+            resolvedTranscript: resolvedTranscript
+        )
         let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let startedAt = session.startedAt ?? session.createdAt
         let endedAt = session.endedAt ?? transcript.completedAt
         let durationSeconds = max(0, endedAt.timeIntervalSince(startedAt))
         let durationMinutes = Int(ceil(durationSeconds / 60))
         let languages = uniqueValues(
-            transcript.segments.map(\.language) + transcript.tracks.map(\.detectedLanguage)
+            renderedSegments.map(\.language) + transcript.tracks.map(\.detectedLanguage)
         )
         let participants = session.calendarEvent.map { snapshot in
             uniqueValues(snapshot.participants.map(\.displayName))
-        } ?? uniqueValues(transcript.segments.map(\.speaker))
+        } ?? uniqueValues(renderedSegments.map(\.speaker))
 
         var lines = [
             "---",
@@ -82,13 +89,13 @@ struct MarkdownRenderer: Sendable {
         )
         lines.append(contentsOf: ["## \(vocabulary.transcript)", ""])
 
-        if transcript.segments.isEmpty {
+        if renderedSegments.isEmpty {
             lines.append("_\(vocabulary.emptyTranscript)_")
         } else {
             let overlappingIndices = TranscriptOverlapDetector().overlappingIndices(
-                in: transcript.segments
+                in: renderedSegments
             )
-            for (index, segment) in transcript.segments.enumerated() {
+            for (index, segment) in renderedSegments.enumerated() {
                 let overlap = overlappingIndices.contains(index)
                     ? " *(\(vocabulary.speechOverlap))*"
                     : ""
@@ -102,6 +109,33 @@ struct MarkdownRenderer: Sendable {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
+    }
+
+    private func renderableSegments(
+        transcript: MergedTranscript,
+        utteranceTranscript: ContinuousUtteranceTranscript?,
+        resolvedTranscript: ResolvedTranscript?
+    ) -> [TranscriptSegment] {
+        if let resolvedTranscript,
+           resolvedTranscript.sessionID == transcript.sessionID {
+            return resolvedTranscript.asMergedTranscript(basedOn: transcript).segments
+        }
+        guard let utteranceTranscript,
+              utteranceTranscript.sessionID == transcript.sessionID else {
+            return transcript.segments
+        }
+        return utteranceTranscript.utterances.map { utterance in
+            TranscriptSegment(
+                id: utterance.id,
+                source: utterance.source,
+                speaker: utterance.speaker,
+                start: utterance.start,
+                end: utterance.end,
+                language: utterance.language,
+                text: utterance.text,
+                confidence: utterance.confidence
+            )
+        }
     }
 
     private func appendSummary(

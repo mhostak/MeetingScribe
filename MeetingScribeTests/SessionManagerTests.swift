@@ -38,7 +38,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 10)
+        XCTAssertEqual(metadata.schemaVersion, 13)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
         XCTAssertNil(metadata.audioFiles.systemWorking)
@@ -46,6 +46,8 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.transcriptFiles?.systemTrack, "system-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.microphoneTrack, "microphone-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.merged, "transcript.json")
+        XCTAssertEqual(metadata.transcriptFiles?.speakerTurns, "speaker-turns.json")
+        XCTAssertEqual(metadata.transcriptFiles?.utterances, "utterance-transcript.json")
         XCTAssertEqual(metadata.transcriptFiles?.analysis, "analysis.json")
         XCTAssertEqual(metadata.resolvedOutputLanguage, .english)
         XCTAssertEqual(metadata.resolvedOutputFileNameTemplate, "{date} - {title} - {id}")
@@ -286,6 +288,32 @@ final class SessionManagerTests: XCTestCase {
 
         XCTAssertEqual(metadata.status, .completed)
         XCTAssertNil(metadata.mergedSegmentCount)
+        XCTAssertNil(metadata.provenance)
+    }
+
+    func testSessionMetadataDecodesSchemaElevenWithoutTranscriptionProvenance() throws {
+        let legacy = SessionMetadata(
+            schemaVersion: 11,
+            id: "schema-11-session",
+            title: "Legacy grouping session",
+            status: .recorded,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            transcription: SessionTranscriptionMetadata(
+                status: .completed,
+                model: "ggml-large-v3-turbo.bin",
+                systemSegmentCount: 1,
+                microphoneSegmentCount: 0,
+                warnings: [],
+                failureReason: nil
+            )
+        )
+
+        let data = try SessionJSONCoder.makeEncoder().encode(legacy)
+        let decoded = try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: data)
+
+        XCTAssertEqual(decoded.schemaVersion, 11)
+        XCTAssertEqual(decoded.transcription?.model, "ggml-large-v3-turbo.bin")
+        XCTAssertNil(decoded.transcription?.provenance)
     }
 
     func testSessionMetadataDecodesSchemaEightWithoutOutputSettings() throws {

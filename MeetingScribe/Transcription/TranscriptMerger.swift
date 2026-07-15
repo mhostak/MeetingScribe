@@ -47,7 +47,8 @@ struct TranscriptMerger: Sendable {
                 end: candidate.end,
                 language: candidate.language,
                 text: candidate.text,
-                confidence: candidate.confidence
+                confidence: candidate.confidence,
+                words: candidate.words
             )
         }
 
@@ -66,7 +67,8 @@ struct TranscriptMerger: Sendable {
             model: transcript.model,
             requestedLanguage: transcript.requestedLanguage,
             detectedLanguage: transcript.detectedLanguage,
-            segmentCount: transcript.segments.count
+            segmentCount: transcript.segments.count,
+            provenance: transcript.provenance
         )
     }
 
@@ -85,7 +87,7 @@ struct TranscriptMerger: Sendable {
                 throw TranscriptMergeError.invalidTimestamp(segmentID: segment.id)
             }
 
-            guard let text = WhisperTranscriptSanitizer.meaningfulText(from: segment.text) else {
+            guard let text = TranscriptSanitizer.meaningfulText(from: segment.text) else {
                 return nil
             }
 
@@ -96,6 +98,12 @@ struct TranscriptMerger: Sendable {
             let speaker = normalizedSpeaker.isEmpty
                 ? defaultSpeaker(for: segment.source)
                 : normalizedSpeaker
+            let words = try normalizedWords(
+                segment.words,
+                segmentID: segment.id,
+                segmentStart: start,
+                segmentEnd: end
+            )
 
             return Candidate(
                 originalID: segment.id,
@@ -105,7 +113,33 @@ struct TranscriptMerger: Sendable {
                 end: end,
                 language: segment.language.trimmingCharacters(in: .whitespacesAndNewlines),
                 text: text,
-                confidence: segment.confidence
+                confidence: segment.confidence,
+                words: words
+            )
+        }
+    }
+
+    private func normalizedWords(
+        _ words: [TranscriptWord]?,
+        segmentID: String,
+        segmentStart: Double,
+        segmentEnd: Double
+    ) throws -> [TranscriptWord]? {
+        guard let words else { return nil }
+        return try words.compactMap { word in
+            guard word.start.isFinite, word.end.isFinite else {
+                throw TranscriptMergeError.invalidTimestamp(segmentID: segmentID)
+            }
+            guard let text = TranscriptSanitizer.meaningfulText(from: word.text) else {
+                return nil
+            }
+            let start = min(segmentEnd, max(segmentStart, normalizedTimestamp(word.start)))
+            let end = min(segmentEnd, max(start, normalizedTimestamp(word.end)))
+            return TranscriptWord(
+                start: start,
+                end: end,
+                text: text,
+                confidence: word.confidence
             )
         }
     }
@@ -161,4 +195,5 @@ private struct Candidate: Sendable {
     let language: String
     let text: String
     let confidence: Double?
+    let words: [TranscriptWord]?
 }

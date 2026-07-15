@@ -78,6 +78,7 @@ actor SessionManager {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
+        diarization: SessionDiarizationMetadata? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil
     ) throws -> RecordingSession {
@@ -91,6 +92,7 @@ actor SessionManager {
         session.metadata.microphoneAudio = microphoneAudio
         session.metadata.audioFinalization = audioFinalization
         session.metadata.transcription = transcription
+        session.metadata.diarization = diarization
         session.metadata.analysis = analysis
         session.metadata.output = output
         if session.metadata.recovery?.status == .inProgress {
