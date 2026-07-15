@@ -48,7 +48,8 @@ enum ProcessingLogAttribute: Sendable {
     case microphoneChunkCount(Int)
     case model(String)
     case segmentCount(Int)
-    case reason(String)
+    case errorDomain(String)
+    case errorCode(Int)
 
     fileprivate var pair: (String, String) {
         switch self {
@@ -73,7 +74,8 @@ enum ProcessingLogAttribute: Sendable {
         case let .microphoneChunkCount(value): return ("microphoneChunkCount", String(value))
         case let .model(value): return ("model", value)
         case let .segmentCount(value): return ("segmentCount", String(value))
-        case let .reason(value): return ("reason", value)
+        case let .errorDomain(value): return ("errorDomain", value)
+        case let .errorCode(value): return ("errorCode", String(value))
         }
     }
 }
@@ -98,7 +100,7 @@ actor ProcessingLogger {
         var details: [String: String] = [:]
         for attribute in attributes {
             let (key, value) = attribute.pair
-            details[key] = sanitize(value)
+            details[key] = sanitize(value, for: session)
         }
         let entry = ProcessingLogEntry(
             timestamp: now(),
@@ -122,7 +124,7 @@ actor ProcessingLogger {
         try handle.write(contentsOf: data)
     }
 
-    private func sanitize(_ value: String) -> String {
+    private func sanitize(_ value: String, for session: RecordingSession) -> String {
         var result = value
             .replacingOccurrences(of: "[\\r\\n\\t]+", with: " ", options: .regularExpression)
             .replacingOccurrences(
@@ -135,6 +137,26 @@ actor ProcessingLogger {
                 with: "[REDACTED]",
                 options: .regularExpression
             )
+
+        let title = session.metadata.title
+        let sanitizedTitle = title.isEmpty
+            ? ""
+            : FilenameSanitizer().sanitizedTitle(title)
+        let sensitiveValues = [
+            session.directoryURL.standardizedFileURL.path,
+            title,
+            sanitizedTitle,
+        ]
+            .filter { !$0.isEmpty }
+            .sorted { $0.count > $1.count }
+
+        for sensitiveValue in sensitiveValues {
+            result = result.replacingOccurrences(
+                of: sensitiveValue,
+                with: "[REDACTED]",
+                options: [.caseInsensitive, .literal]
+            )
+        }
         if result.count > 500 {
             result = String(result.prefix(500)) + "…"
         }
