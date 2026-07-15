@@ -335,6 +335,7 @@ actor SessionTranscriber: SessionTranscribing {
                 finalization.system.fileName,
                 isDirectory: false
             ),
+            systemTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
             modelBundleURL: diarizationModelBundleURL
         )
     }

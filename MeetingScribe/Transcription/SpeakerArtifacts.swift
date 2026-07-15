@@ -24,15 +24,20 @@ struct SpeakerProfile: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct SpeakerDiarizationArtifact: Codable, Equatable, Sendable {
-    let schemaVersion: Int
+    var schemaVersion: Int
     let sessionID: String
     let createdAt: Date
     var modifiedAt: Date
     let sourceAudioFingerprint: String
     let sourceTranscriptFingerprint: String
+    var sourceTimelineOffsetSeconds: Double?
     let configurationRevision: String
     let result: SpeakerDiarizationResult
     var speakers: [SpeakerProfile]
+
+    var effectiveTimelineOffsetSeconds: Double {
+        sourceTimelineOffsetSeconds ?? 0
+    }
 }
 
 enum ResolvedSpeakerAmbiguity: String, Codable, Sendable {
@@ -90,6 +95,7 @@ enum SpeakerArtifactError: Error, Equatable, LocalizedError {
     case wrongSession
     case staleAudio
     case staleTranscript
+    case invalidTimelineOffset
     case invalidSpeaker(String)
     case invalidMerge(String)
 
@@ -101,6 +107,8 @@ enum SpeakerArtifactError: Error, Equatable, LocalizedError {
             return "The speaker artifact no longer matches the source audio."
         case .staleTranscript:
             return "The speaker artifact no longer matches the source transcript."
+        case .invalidTimelineOffset:
+            return "The speaker artifact contains an invalid source timeline offset."
         case let .invalidSpeaker(id):
             return "The speaker profile \(id) is invalid."
         case let .invalidMerge(id):
@@ -126,8 +134,10 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         result: SpeakerDiarizationResult,
         sourceAudioURL: URL,
         transcript: MergedTranscript,
+        sourceTimelineOffsetSeconds: Double,
         configurationRevision: String
     ) throws -> SpeakerDiarizationArtifact {
+        try validateTimelineOffset(sourceTimelineOffsetSeconds)
         let orderedClusterIDs = result.segments.reduce(into: [String]()) { ids, segment in
             if !ids.contains(segment.speakerID) { ids.append(segment.speakerID) }
         }
@@ -170,12 +180,13 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         ))
         let timestamp = now()
         return SpeakerDiarizationArtifact(
-            schemaVersion: 1,
+            schemaVersion: 2,
             sessionID: sessionID,
             createdAt: timestamp,
             modifiedAt: timestamp,
             sourceAudioFingerprint: try fingerprint(fileAt: sourceAudioURL),
             sourceTranscriptFingerprint: try fingerprint(transcript: transcript),
+            sourceTimelineOffsetSeconds: sourceTimelineOffsetSeconds,
             configurationRevision: configurationRevision,
             result: stableResult,
             speakers: profiles
@@ -183,6 +194,7 @@ struct SpeakerArtifactStore: @unchecked Sendable {
     }
 
     func persist(_ artifact: SpeakerDiarizationArtifact, to url: URL) throws {
+        try validateTimelineOffset(artifact.effectiveTimelineOffsetSeconds)
         try validateProfiles(artifact.speakers)
         let data = try TranscriptJSONCoder.makeEncoder().encode(artifact)
         try data.write(to: url, options: .atomic)
@@ -194,6 +206,7 @@ struct SpeakerArtifactStore: @unchecked Sendable {
             SpeakerDiarizationArtifact.self,
             from: data
         )
+        try validateTimelineOffset(artifact.effectiveTimelineOffsetSeconds)
         try validateProfiles(artifact.speakers)
         return artifact
     }
@@ -202,16 +215,27 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         from url: URL,
         sessionID: String,
         sourceAudioURL: URL,
-        transcript: MergedTranscript
+        transcript: MergedTranscript,
+        expectedTimelineOffsetSeconds: Double? = nil
     ) throws -> SpeakerDiarizationArtifact? {
         guard fileManager.fileExists(atPath: url.path) else { return nil }
-        let artifact = try load(from: url)
+        var artifact = try load(from: url)
         guard artifact.sessionID == sessionID else { throw SpeakerArtifactError.wrongSession }
         guard artifact.sourceAudioFingerprint == (try fingerprint(fileAt: sourceAudioURL)) else {
             throw SpeakerArtifactError.staleAudio
         }
         guard artifact.sourceTranscriptFingerprint == (try fingerprint(transcript: transcript)) else {
             throw SpeakerArtifactError.staleTranscript
+        }
+        if let expectedTimelineOffsetSeconds {
+            try validateTimelineOffset(expectedTimelineOffsetSeconds)
+            if artifact.schemaVersion < 2
+                || artifact.sourceTimelineOffsetSeconds != expectedTimelineOffsetSeconds {
+                artifact.schemaVersion = 2
+                artifact.sourceTimelineOffsetSeconds = expectedTimelineOffsetSeconds
+                artifact.modifiedAt = now()
+                try persist(artifact, to: url)
+            }
         }
         return artifact
     }
@@ -271,6 +295,12 @@ struct SpeakerArtifactStore: @unchecked Sendable {
                 }
                 next = profiles.first(where: { $0.id == current })?.mergedIntoSpeakerID
             }
+        }
+    }
+
+    private func validateTimelineOffset(_ value: Double) throws {
+        guard value.isFinite, value >= 0 else {
+            throw SpeakerArtifactError.invalidTimelineOffset
         }
     }
 

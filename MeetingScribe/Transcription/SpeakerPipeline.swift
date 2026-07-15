@@ -39,6 +39,7 @@ actor SpeakerPipeline {
         session: RecordingSession,
         transcript: MergedTranscript,
         systemAudioURL: URL,
+        systemTimelineOffsetSeconds: Double,
         modelBundleURL: URL?
     ) async throws -> SpeakerProcessingResult {
         try Task.checkCancellation()
@@ -46,7 +47,8 @@ actor SpeakerPipeline {
             from: session.speakerDiarizationURL,
             sessionID: session.metadata.id,
             sourceAudioURL: systemAudioURL,
-            transcript: transcript
+            transcript: transcript,
+            expectedTimelineOffsetSeconds: systemTimelineOffsetSeconds
         ) {
             let resolved = try loadOrResolve(
                 session: session,
@@ -102,6 +104,7 @@ actor SpeakerPipeline {
                 result: result,
                 sourceAudioURL: systemAudioURL,
                 transcript: transcript,
+                sourceTimelineOffsetSeconds: systemTimelineOffsetSeconds,
                 configurationRevision: configuration.revision
             )
             try artifactStore.persist(artifact, to: session.speakerDiarizationURL)

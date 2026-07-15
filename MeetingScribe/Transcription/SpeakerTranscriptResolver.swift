@@ -34,6 +34,10 @@ struct SpeakerTranscriptResolver: Sendable {
         guard transcript.sessionID == artifact.sessionID else {
             throw SpeakerArtifactError.wrongSession
         }
+        guard artifact.effectiveTimelineOffsetSeconds.isFinite,
+              artifact.effectiveTimelineOffsetSeconds >= 0 else {
+            throw SpeakerArtifactError.invalidTimelineOffset
+        }
         guard artifact.sourceTranscriptFingerprint == (try artifactStore.fingerprint(
             transcript: transcript
         )) else {
@@ -139,8 +143,14 @@ struct SpeakerTranscriptResolver: Sendable {
         end: Double,
         artifact: SpeakerDiarizationArtifact
     ) -> Assignment {
+        let timelineOffset = artifact.effectiveTimelineOffsetSeconds
+        let localStart = start - timelineOffset
+        let localEnd = end - timelineOffset
         let overlaps = artifact.result.segments.compactMap { segment -> (String, Double)? in
-            let overlap = max(0, min(end, segment.end) - max(start, segment.start))
+            let overlap = max(
+                0,
+                min(localEnd, segment.end) - max(localStart, segment.start)
+            )
             return overlap > 0 ? (segment.speakerID, overlap) : nil
         }.reduce(into: [String: Double]()) { values, item in
             values[item.0, default: 0] += item.1
