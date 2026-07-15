@@ -686,58 +686,6 @@ struct MenuBarStatusLabel: View {
     }
 }
 
-enum MenuBarIconRenderer {
-    static func image(for state: MenuBarIconState, colorScheme: ColorScheme) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSGraphicsContext.current?.shouldAntialias = true
-            let baseColor: NSColor = colorScheme == .dark ? .white : .black
-            drawWaveform(in: rect, color: baseColor)
-            drawBadge(state, in: rect)
-            return true
-        }
-        image.isTemplate = false
-        return image
-    }
-
-    private static func drawWaveform(in rect: NSRect, color: NSColor) {
-        let heights: [CGFloat] = [6, 11, 16, 10, 6]
-        color.setFill()
-        for (index, height) in heights.enumerated() {
-            let x = rect.minX + 1 + CGFloat(index) * 3.1
-            let bar = NSRect(x: x, y: rect.midY - height / 2, width: 2.1, height: height)
-            NSBezierPath(roundedRect: bar, xRadius: 1.05, yRadius: 1.05).fill()
-        }
-    }
-
-    private static func drawBadge(_ state: MenuBarIconState, in rect: NSRect) {
-        let center = NSPoint(x: rect.maxX - 3.8, y: rect.maxY - 4.6)
-        switch state {
-        case .idle:
-            break
-        case .recording:
-            drawDot(center: center, color: .systemRed)
-        case .attention:
-            drawDot(center: center, color: .systemOrange)
-        case .processing:
-            let ringRect = NSRect(x: center.x - 3.2, y: center.y - 3.2, width: 6.4, height: 6.4)
-            let ring = NSBezierPath()
-            ring.appendArc(withCenter: center, radius: 3.2, startAngle: 35, endAngle: 305)
-            ring.lineWidth = 1.8
-            ring.lineCapStyle = .round
-            NSColor.systemBlue.setStroke()
-            ring.stroke()
-            NSColor.systemBlue.setFill()
-            NSBezierPath(ovalIn: NSRect(x: ringRect.midX - 0.8, y: ringRect.midY - 0.8, width: 1.6, height: 1.6)).fill()
-        }
-    }
-
-    private static func drawDot(center: NSPoint, color: NSColor) {
-        color.setFill()
-        NSBezierPath(ovalIn: NSRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)).fill()
-    }
-}
-
 private struct RecordingDurationView: View {
     let startedAt: Date
 
