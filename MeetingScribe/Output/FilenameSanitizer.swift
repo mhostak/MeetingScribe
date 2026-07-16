@@ -35,22 +35,24 @@ struct FilenameSanitizer: Sendable {
     }
 
     func sanitizedTitle(_ title: String) -> String {
+        sanitizedTitleCandidate(title) ?? "Meeting"
+    }
+
+    func sanitizedTitleCandidate(_ title: String) -> String? {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|")
             .union(.controlCharacters)
         let scalars = title.unicodeScalars.map { scalar -> Character in
             invalidCharacters.contains(scalar) ? " " : Character(String(scalar))
         }
-        var sanitized = String(scalars)
+        let sanitized = String(scalars)
             .components(separatedBy: .whitespacesAndNewlines)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: ".- "))
-
-        if sanitized.isEmpty {
-            sanitized = "Meeting"
-        }
-        return utf8Prefix(sanitized, maximumBytes: 100)
+        guard !sanitized.isEmpty else { return nil }
+        let truncated = utf8Prefix(sanitized, maximumBytes: 100)
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return truncated.isEmpty ? nil : truncated
     }
 
     private func renderTemplate(_ template: String, values: [String: String]) -> String {

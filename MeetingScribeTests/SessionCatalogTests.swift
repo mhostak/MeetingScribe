@@ -91,6 +91,25 @@ final class SessionCatalogTests: XCTestCase {
         XCTAssertEqual(snapshot.issues.map(\.directoryName), ["unreadable", "without-manifest"])
     }
 
+    func testClosedRecoveryIssuesStayDismissedInCatalog() async throws {
+        let unreadable = root.appendingPathComponent("unreadable", isDirectory: true)
+        let withoutManifest = root.appendingPathComponent("without-manifest", isDirectory: true)
+        for directory in [unreadable, withoutManifest] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("closed".utf8).write(
+                to: directory.appendingPathComponent(
+                    SessionRecoveryScanner.closedIssueMarkerFileName
+                )
+            )
+        }
+        try Data("not json".utf8).write(to: unreadable.appendingPathComponent("session.json"))
+
+        let snapshot = try await SessionCatalog(recordingsRoot: root).load()
+
+        XCTAssertTrue(snapshot.entries.isEmpty)
+        XCTAssertTrue(snapshot.issues.isEmpty)
+    }
+
     func testClassifiesStaleRecordingManifestAsInterrupted() async throws {
         let metadata = SessionMetadata(
             id: "interrupted",

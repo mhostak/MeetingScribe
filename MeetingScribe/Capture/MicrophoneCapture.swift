@@ -304,8 +304,8 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     private func recoverFromConfigurationChange(generation: UUID) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-        state.configurationRecoveryScheduled = false
         guard state.isCapturing, state.captureGeneration == generation else { return }
+        state.configurationRecoveryScheduled = false
 
         let previousEngine = engine
         if state.tapInstalled {
