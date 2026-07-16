@@ -101,14 +101,22 @@ actor SessionCatalog {
         var entries: [SessionCatalogEntry] = []
         var issues: [SessionCatalogIssue] = []
         for directory in directories where isDirectory(directory) {
+            let recoveryIssueWasClosed = fileManager.fileExists(
+                atPath: directory.appendingPathComponent(
+                    SessionRecoveryScanner.closedIssueMarkerFileName,
+                    isDirectory: false
+                ).path
+            )
             let manifestURL = directory.appendingPathComponent("session.json", isDirectory: false)
             guard fileManager.fileExists(atPath: manifestURL.path) else {
-                issues.append(
-                    SessionCatalogIssue(
-                        directoryName: directory.lastPathComponent,
-                        message: "Session manifest is missing."
+                if !recoveryIssueWasClosed {
+                    issues.append(
+                        SessionCatalogIssue(
+                            directoryName: directory.lastPathComponent,
+                            message: "Session manifest is missing."
+                        )
                     )
-                )
+                }
                 continue
             }
 
@@ -119,12 +127,14 @@ actor SessionCatalog {
                 )
                 entries.append(makeEntry(metadata: metadata, directoryURL: directory))
             } catch {
-                issues.append(
-                    SessionCatalogIssue(
-                        directoryName: directory.lastPathComponent,
-                        message: "Session manifest is unreadable."
+                if !recoveryIssueWasClosed {
+                    issues.append(
+                        SessionCatalogIssue(
+                            directoryName: directory.lastPathComponent,
+                            message: "Session manifest is unreadable."
+                        )
                     )
-                )
+                }
             }
         }
 

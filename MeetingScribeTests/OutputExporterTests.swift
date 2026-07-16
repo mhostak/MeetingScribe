@@ -65,6 +65,22 @@ final class OutputExporterTests: XCTestCase {
         XCTAssertTrue(fileName.hasSuffix(".md"))
     }
 
+    func testOversizedSingleGraphemeUsesNonemptyFallback() {
+        let sanitizer = FilenameSanitizer(timeZone: utc)
+        let oversizedGrapheme = "a" + String(repeating: "\u{0301}", count: 60)
+
+        XCTAssertGreaterThan(oversizedGrapheme.utf8.count, 100)
+        XCTAssertEqual(sanitizer.sanitizedTitle(oversizedGrapheme), "Meeting")
+        XCTAssertEqual(
+            sanitizer.markdownFileName(
+                title: oversizedGrapheme,
+                startedAt: startedAt,
+                template: "{title}"
+            ),
+            "Meeting.md"
+        )
+    }
+
     func testExporterWritesUTF8MarkdownWithoutOverwritingExistingFile() throws {
         let exportedAt = ISO8601DateFormatter().date(from: "2026-07-10T11:00:00Z")!
         let exporter = OutputExporter(

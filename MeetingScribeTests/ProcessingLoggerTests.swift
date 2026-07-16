@@ -66,4 +66,58 @@ final class ProcessingLoggerTests: XCTestCase {
         XCTAssertTrue(content.contains(#""microphoneChunkCount":"3""#))
         XCTAssertTrue(content.contains(#""microphoneSkippedDurationSeconds":"2800.0""#))
     }
+
+    func testShortTitleDoesNotCorruptUnrelatedDiagnosticValues() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeLoggerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "session-short-title",
+                title: "2",
+                status: .recording,
+                createdAt: Date()
+            ),
+            directoryURL: root
+        )
+
+        try await ProcessingLogger().log(
+            .processingFailed,
+            for: session,
+            attributes: [
+                .durationSeconds(124.5),
+                .errorCode(42),
+            ]
+        )
+
+        let content = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+        XCTAssertTrue(content.contains(#""durationSeconds":"124.5""#))
+        XCTAssertTrue(content.contains(#""errorCode":"42""#))
+    }
+
+    func testInvalidTitleDoesNotRedactGeneratedMeetingFallback() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeLoggerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "session-invalid-title",
+                title: "???",
+                status: .recording,
+                createdAt: Date()
+            ),
+            directoryURL: root
+        )
+
+        try await ProcessingLogger().log(
+            .processingFailed,
+            for: session,
+            attributes: [.errorDomain("MeetingScribe.ExportError")]
+        )
+
+        let content = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+        XCTAssertTrue(content.contains(#""errorDomain":"MeetingScribe.ExportError""#))
+    }
 }

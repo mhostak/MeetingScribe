@@ -124,6 +124,45 @@ final class SpeakerPipelineTests: XCTestCase {
         XCTAssertEqual(persisted.sourceTimelineOffsetSeconds, 5)
     }
 
+    func testLegacyArtifactRemainsUsableWhenSchemaUpgradeCannotBePersisted() throws {
+        let fixture = try makeFixture(systemTimelineOffsetSeconds: 5)
+        let store = SpeakerArtifactStore()
+        let artifact = try store.makeArtifact(
+            sessionID: fixture.session.metadata.id,
+            result: diarizationResult(),
+            sourceAudioURL: fixture.audioURL,
+            transcript: fixture.transcript,
+            sourceTimelineOffsetSeconds: 5,
+            configurationRevision: "test"
+        )
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: TranscriptJSONCoder.makeEncoder().encode(artifact)
+            ) as? [String: Any]
+        )
+        object["schemaVersion"] = 1
+        object.removeValue(forKey: "sourceTimelineOffsetSeconds")
+        try JSONSerialization.data(withJSONObject: object)
+            .write(to: fixture.session.speakerDiarizationURL, options: .atomic)
+        let persistedLegacy = try store.load(from: fixture.session.speakerDiarizationURL)
+        let readOnlyStore = SpeakerArtifactStore(atomicWriter: { _, _ in
+            throw FixtureError.failed
+        })
+
+        let loaded = try XCTUnwrap(readOnlyStore.loadValid(
+            from: fixture.session.speakerDiarizationURL,
+            sessionID: fixture.session.metadata.id,
+            sourceAudioURL: fixture.audioURL,
+            transcript: fixture.transcript,
+            expectedTimelineOffsetSeconds: 5
+        ))
+
+        XCTAssertEqual(loaded.schemaVersion, 2)
+        XCTAssertEqual(loaded.sourceTimelineOffsetSeconds, 5)
+        XCTAssertEqual(loaded.modifiedAt, persistedLegacy.modifiedAt)
+        XCTAssertEqual(try store.load(from: fixture.session.speakerDiarizationURL).schemaVersion, 1)
+    }
+
     func testMissingModelAndDiarizationFailurePreserveFallbackPath() async throws {
         let fixture = try makeFixture()
         let missing = try await SpeakerPipeline(diarizer: FixtureDiarizer(

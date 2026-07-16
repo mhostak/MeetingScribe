@@ -139,15 +139,14 @@ actor ProcessingLogger {
             )
 
         let title = session.metadata.title
-        let sanitizedTitle = title.isEmpty
-            ? ""
-            : FilenameSanitizer().sanitizedTitle(title)
-        let sensitiveValues = [
-            session.directoryURL.standardizedFileURL.path,
+        let titleCandidates = [
             title,
-            sanitizedTitle,
-        ]
-            .filter { !$0.isEmpty }
+            FilenameSanitizer().sanitizedTitleCandidate(title),
+        ].compactMap { $0 }
+            .filter { $0.count >= 4 }
+        let sensitiveValues = ([
+            session.directoryURL.standardizedFileURL.path,
+        ] + titleCandidates)
             .sorted { $0.count > $1.count }
 
         for sensitiveValue in sensitiveValues {

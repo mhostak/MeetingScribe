@@ -120,13 +120,18 @@ enum SpeakerArtifactError: Error, Equatable, LocalizedError {
 struct SpeakerArtifactStore: @unchecked Sendable {
     private let fileManager: FileManager
     private let now: @Sendable () -> Date
+    private let atomicWriter: @Sendable (Data, URL) throws -> Void
 
     init(
         fileManager: FileManager = .default,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        atomicWriter: @escaping @Sendable (Data, URL) throws -> Void = { data, url in
+            try data.write(to: url, options: .atomic)
+        }
     ) {
         self.fileManager = fileManager
         self.now = now
+        self.atomicWriter = atomicWriter
     }
 
     func makeArtifact(
@@ -199,7 +204,7 @@ struct SpeakerArtifactStore: @unchecked Sendable {
         try validateTimelineOffset(artifact.effectiveTimelineOffsetSeconds)
         try validateProfiles(artifact.speakers)
         let data = try TranscriptJSONCoder.makeEncoder().encode(artifact)
-        try data.write(to: url, options: .atomic)
+        try atomicWriter(data, url)
     }
 
     func load(from url: URL) throws -> SpeakerDiarizationArtifact {
@@ -239,8 +244,15 @@ struct SpeakerArtifactStore: @unchecked Sendable {
                 || artifact.sourceTimelineOffsetSeconds != expectedTimelineOffsetSeconds {
                 artifact.schemaVersion = 2
                 artifact.sourceTimelineOffsetSeconds = expectedTimelineOffsetSeconds
+                let originalModifiedAt = artifact.modifiedAt
                 artifact.modifiedAt = now()
-                try persist(artifact, to: url)
+                do {
+                    try persist(artifact, to: url)
+                } catch {
+                    // Validation should not make a readable legacy artifact unusable
+                    // only because its opportunistic schema upgrade cannot be saved.
+                    artifact.modifiedAt = originalModifiedAt
+                }
             }
         }
         return artifact

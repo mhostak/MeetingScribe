@@ -127,6 +127,54 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         _ = await capture.stop()
     }
 
+    func testStaleRecoveryDoesNotClearRecoveryScheduledForNewCapture() async throws {
+        let notificationCenter = NotificationCenter()
+        let initialEngine = FakeMicrophoneAudioEngine()
+        let replacementEngine = FakeMicrophoneAudioEngine()
+        let factoryCalls = SynchronousCounter()
+        let capture = MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: {
+                factoryCalls.increment()
+                return replacementEngine
+            },
+            notificationCenter: notificationCenter,
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0.2,
+                maximumAttempts: 2,
+                minimumBufferCount: 1
+            ),
+            permissionRequester: {}
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureRecoveryTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await capture.start(outputURL: directory.appendingPathComponent("first.caf"))
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: initialEngine.notificationObject
+        )
+        _ = await capture.stop()
+        try await capture.start(outputURL: directory.appendingPathComponent("second.caf"))
+
+        try await Task.sleep(for: .milliseconds(100))
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: initialEngine.notificationObject
+        )
+        try await Task.sleep(for: .milliseconds(150))
+        notificationCenter.post(
+            name: .AVAudioEngineConfigurationChange,
+            object: initialEngine.notificationObject
+        )
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(factoryCalls.value, 1)
+        _ = await capture.stop()
+    }
+
     private func waitUntil(
         attempts: Int = 200,
         condition: () -> Bool
