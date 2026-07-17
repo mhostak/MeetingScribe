@@ -1,6 +1,6 @@
 # FluidAudio acceptance fixture matrix
 
-Status: fixture contract defined; labeled recordings still need to be captured or approved
+Status: fixture contract retained for a future model; current `community-1` diarization rejected after failed real multi-speaker validation on 2026-07-16
 
 No real recording enters this matrix without explicit consent for local evaluation. Audio and transcript ground truth remain outside Git. The repository stores only fixture IDs, non-identifying characteristics, aggregate scores, and hashes needed to reproduce a local run.
 
@@ -17,9 +17,12 @@ No real recording enters this matrix without explicit consent for local evaluati
 | `FA-NOISE-MUSIC` | synthetic | silence, music, isolated noise | 0 | nonspeech regions | hallucination and false-speaker rejection |
 | `FA-SPARSE-MIC` | synthetic or consented | less than 10% active microphone audio | 1 local | active regions and text checklist | sparse long-track cost and empty handling |
 | `FA-LONG-UNLABELED` | consented internal | CZ/SK, 60–90 minutes | unknown | aggregate content checklist only | speed, RSS, offline use, determinism |
+| `FA-REAL-MULTI-10` | consented internal | 102-minute Teams meeting, mixed CZ/SK | 10 actual speakers | direct participant count and identity-consistency review; no time-aligned RTTM | production speaker-count and qualitative identity gate |
 | `FA-RECOVERY` | derived local copy of an approved fixture | process termination at checkpoints | inherited | inherited | cancellation and recovery |
 
 The current `2026-07-15T11-03-35Z_086BA6` comparison may satisfy `FA-LONG-UNLABELED`; it cannot satisfy a labeled DER or speaker-count row merely because Calendar participants are present.
+
+`FA-REAL-MULTI-10` failed the current model: automatic output contained two system clusters, while 10 people actually spoke, and at least one known person was split across both clusters. Exact-count experiments did not restore trustworthy identities. Detailed aggregate evidence is in [FluidAudio diarization release validation](fluid-audio-diarization-release-validation-2026-07-16.md). The remaining diarization fixture work is paused until a new model is selected; ASR fixtures remain independently useful.
 
 ## Measurements per fixture
 

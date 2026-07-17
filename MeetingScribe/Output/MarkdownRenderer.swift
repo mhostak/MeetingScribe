@@ -14,12 +14,12 @@ struct MarkdownRenderer: Sendable {
         resolvedTranscript: ResolvedTranscript? = nil,
         analysis: MeetingAnalysis? = nil
     ) -> String {
+        let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let renderedSegments = renderableSegments(
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
             resolvedTranscript: resolvedTranscript
         )
-        let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let startedAt = session.startedAt ?? session.createdAt
         let endedAt = session.endedAt ?? transcript.completedAt
         let durationSeconds = max(0, endedAt.timeIntervalSince(startedAt))
@@ -29,7 +29,7 @@ struct MarkdownRenderer: Sendable {
         )
         let participants = session.calendarEvent.map { snapshot in
             uniqueValues(snapshot.participants.map(\.displayName))
-        } ?? uniqueValues(renderedSegments.map(\.speaker))
+        } ?? uniqueValues(renderedSegments.map { vocabulary.sourceLabel(for: $0.source) })
 
         var lines = [
             "---",
@@ -100,7 +100,8 @@ struct MarkdownRenderer: Sendable {
                     ? " *(\(vocabulary.speechOverlap))*"
                     : ""
                 lines.append(
-                    "### \(elapsedTime(segment.start)) — \(markdownHeading(segment.speaker))\(overlap)"
+                    "### \(elapsedTime(segment.start)) — "
+                        + "\(markdownHeading(vocabulary.sourceLabel(for: segment.source)))\(overlap)"
                 )
                 lines.append("")
                 lines.append(segment.text.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -116,15 +117,19 @@ struct MarkdownRenderer: Sendable {
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?
     ) -> [TranscriptSegment] {
-        if let resolvedTranscript,
-           resolvedTranscript.sessionID == transcript.sessionID {
-            return resolvedTranscript.asMergedTranscript(basedOn: transcript).segments
+        _ = resolvedTranscript // Legacy input is deliberately ignored for source-based output.
+        let sourceBlocks: ContinuousUtteranceTranscript
+        if let utteranceTranscript,
+           utteranceTranscript.sessionID == transcript.sessionID,
+           utteranceTranscript.configuration == .sourceBlocks {
+            sourceBlocks = utteranceTranscript
+        } else {
+            sourceBlocks = SourceConversationBlockGrouper().group(
+                transcript: transcript,
+                sourceFingerprint: "markdown-source-blocks"
+            )
         }
-        guard let utteranceTranscript,
-              utteranceTranscript.sessionID == transcript.sessionID else {
-            return transcript.segments
-        }
-        return utteranceTranscript.utterances.map { utterance in
+        return sourceBlocks.utterances.map { utterance in
             TranscriptSegment(
                 id: utterance.id,
                 source: utterance.source,
@@ -297,6 +302,15 @@ private struct MarkdownVocabulary {
     let unknownOwner: String
     let unknownDueDate: String
     let dueDate: String
+    let remoteParticipants: String
+    let onSiteParticipants: String
+
+    func sourceLabel(for source: TranscriptSource) -> String {
+        switch source {
+        case .system: return remoteParticipants
+        case .microphone: return onSiteParticipants
+        }
+    }
 
     init(language: OutputLanguage) {
         switch language {
@@ -316,7 +330,9 @@ private struct MarkdownVocabulary {
                 noneIdentified: "Neboli identifikované.",
                 unknownOwner: "Neurčené",
                 unknownDueDate: "neurčený",
-                dueDate: "termín"
+                dueDate: "termín",
+                remoteParticipants: "Vzdialení účastníci",
+                onSiteParticipants: "Účastníci na mieste"
             )
         case .czech:
             self.init(
@@ -334,7 +350,9 @@ private struct MarkdownVocabulary {
                 noneIdentified: "Nebyly identifikovány.",
                 unknownOwner: "Neurčeno",
                 unknownDueDate: "neurčený",
-                dueDate: "termín"
+                dueDate: "termín",
+                remoteParticipants: "Vzdálení účastníci",
+                onSiteParticipants: "Účastníci na místě"
             )
         case .english:
             self.init(
@@ -352,7 +370,9 @@ private struct MarkdownVocabulary {
                 noneIdentified: "None identified.",
                 unknownOwner: "Unassigned",
                 unknownDueDate: "unspecified",
-                dueDate: "due"
+                dueDate: "due",
+                remoteParticipants: "Remote participants",
+                onSiteParticipants: "On-site participants"
             )
         }
     }
@@ -372,7 +392,9 @@ private struct MarkdownVocabulary {
         noneIdentified: String,
         unknownOwner: String,
         unknownDueDate: String,
-        dueDate: String
+        dueDate: String,
+        remoteParticipants: String,
+        onSiteParticipants: String
     ) {
         self.summary = summary
         self.decisions = decisions
@@ -389,6 +411,8 @@ private struct MarkdownVocabulary {
         self.unknownOwner = unknownOwner
         self.unknownDueDate = unknownDueDate
         self.dueDate = dueDate
+        self.remoteParticipants = remoteParticipants
+        self.onSiteParticipants = onSiteParticipants
     }
 }
 

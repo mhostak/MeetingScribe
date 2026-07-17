@@ -215,11 +215,9 @@ final class AppState: ObservableObject {
         fluidAudioReprocessingSessionID = session.metadata.id
         defer { fluidAudioReprocessingSessionID = nil }
         do {
-            let diarizationModelBundleURL = await availableDiarizationBundleURL()
             return try await FluidAudioTranscriptionRevisionService().reprocess(
                 session: session,
                 modelBundleURL: bundleURL,
-                diarizationModelBundleURL: diarizationModelBundleURL,
                 descriptor: descriptor
             )
         } catch {
@@ -395,17 +393,6 @@ final class AppState: ObservableObject {
                 setProcessingStep(.preparingAudio, to: .completed)
                 let diagnostics = recoveredMetadataDiagnostics(for: session)
                 captureDiagnostics = diagnostics
-                let speakerProcessing: SpeakerProcessingResult?
-                if let finalization = session.metadata.audioFinalization {
-                    speakerProcessing = try await sessionTranscriber.processSpeakers(
-                        session: session,
-                        transcript: recoveredArtifacts.transcript,
-                        finalization: finalization,
-                        diarizationModelBundleURL: await availableDiarizationBundleURL()
-                    )
-                } else {
-                    speakerProcessing = nil
-                }
                 await completeProcessedSession(
                     session: session,
                     diagnostics: diagnostics,
@@ -415,10 +402,8 @@ final class AppState: ObservableObject {
                         session: session,
                         transcript: recoveredArtifacts.transcript,
                         utteranceTranscript: recoveredArtifacts.utteranceTranscript,
-                        diarizationMetadata: speakerProcessing?.metadata
-                            ?? session.metadata.diarization,
-                        resolvedTranscript: speakerProcessing?.resolvedTranscript
-                            ?? recoveredArtifacts.resolvedTranscript
+                        diarizationMetadata: nil,
+                        resolvedTranscript: nil
                     ),
                     recoveredAnalysis: recoveredAnalysisOutcome(
                         session: session,
@@ -860,9 +845,6 @@ final class AppState: ObservableObject {
         fluidAudioASRModelStatus = localizedFluidAudioStatus(
             await fluidAudioModelManager.status(for: fluidAudioASRDescriptor)
         )
-        fluidAudioDiarizationModelStatus = localizedFluidAudioStatus(
-            await fluidAudioModelManager.status(for: fluidAudioDiarizationDescriptor)
-        )
     }
 
     func refreshLegacyModelCleanupReport() {
@@ -1181,12 +1163,16 @@ final class AppState: ObservableObject {
             if let recoveredAnalysis {
                 analysis = recoveredAnalysis
             } else {
-                let analysisTranscript: MergedTranscript?
-                if let raw = transcription.mergedTranscript,
-                   let resolved = transcription.resolvedTranscript {
-                    analysisTranscript = resolved.asMergedTranscript(basedOn: raw)
-                } else {
-                    analysisTranscript = transcription.mergedTranscript
+                let analysisTranscript = transcription.mergedTranscript.map { raw in
+                    if let sourceBlocks = transcription.utteranceTranscript,
+                       sourceBlocks.sessionID == raw.sessionID,
+                       sourceBlocks.configuration == .sourceBlocks {
+                        return sourceBlocks.asMergedTranscript(basedOn: raw)
+                    }
+                    return SourceConversationBlockGrouper().group(
+                        transcript: raw,
+                        sourceFingerprint: "analysis-source-blocks"
+                    ).asMergedTranscript(basedOn: raw)
                 }
                 analysis = await analyzeIfPossible(
                     session: session,
@@ -1454,7 +1440,6 @@ final class AppState: ObservableObject {
 
         do {
             try transition(to: .transcribing)
-            let diarizationModelBundleURL = await availableDiarizationBundleURL()
             let result = try await sessionTranscriber.transcribe(
                 session: session,
                 finalization: finalization,
@@ -1462,8 +1447,7 @@ final class AppState: ObservableObject {
                     bundleURL: bundleURL,
                     descriptor: descriptor
                 ),
-                language: session.metadata.language,
-                diarizationModelBundleURL: diarizationModelBundleURL
+                language: session.metadata.language
             )
             return TranscriptionOutcome(
                 metadata: result.metadata,
@@ -1607,14 +1591,6 @@ final class AppState: ObservableObject {
                 analysis: nil
             )
         }
-    }
-
-    private func availableDiarizationBundleURL() async -> URL? {
-        let descriptor = FluidAudioModelDescriptor.speakerDiarization
-        let status = await fluidAudioModelManager.status(for: descriptor)
-        fluidAudioDiarizationModelStatus = localizedFluidAudioStatus(status)
-        guard case let .ready(bundleURL, _) = status else { return nil }
-        return bundleURL
     }
 
     private func setFailure(_ error: Error) {

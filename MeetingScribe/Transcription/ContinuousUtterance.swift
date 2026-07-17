@@ -52,6 +52,12 @@ struct ContinuousUtteranceConfiguration: Codable, Equatable, Sendable {
     var speakerTurnToleranceSeconds: Double = 0.35
 
     static let current = ContinuousUtteranceConfiguration()
+    static let sourceBlocks = ContinuousUtteranceConfiguration(
+        maximumGapSeconds: 86_400,
+        sentencePauseSeconds: 86_400,
+        maximumDurationSeconds: 86_400,
+        speakerTurnToleranceSeconds: 0.35
+    )
 }
 
 struct ContinuousUtterance: Codable, Equatable, Identifiable, Sendable {
@@ -309,10 +315,149 @@ struct ContinuousUtteranceGrouper: Sendable {
     }
 }
 
+extension TranscriptSource {
+    var conversationParticipantLabel: String {
+        switch self {
+        case .system: return "Remote participants"
+        case .microphone: return "On-site participants"
+        }
+    }
+}
+
+/// Groups the transcript by alternating audio source instead of attempting to
+/// infer individual people. A block ends only when the other source begins;
+/// silence and raw ASR segment boundaries do not fragment one source.
+struct SourceConversationBlockGrouper: Sendable {
+    let configuration: ContinuousUtteranceConfiguration
+
+    init(configuration: ContinuousUtteranceConfiguration = .sourceBlocks) {
+        self.configuration = configuration
+    }
+
+    func group(
+        transcript: MergedTranscript,
+        sourceFingerprint: String
+    ) -> ContinuousUtteranceTranscript {
+        let segments = transcript.segments.sorted(by: segmentComesBefore)
+        var drafts: [Draft] = []
+        var group: [TranscriptSegment] = []
+        var precedingBoundary = UtteranceBoundaryReason.trackStart
+
+        for segment in segments {
+            guard let previous = group.last else {
+                group = [segment]
+                continue
+            }
+            let boundary: UtteranceBoundaryReason? = segment.source != previous.source
+                ? .speakerLabelChange
+                : nil
+
+            if let boundary {
+                drafts.append(makeDraft(from: group, precedingBoundary: precedingBoundary))
+                group = [segment]
+                precedingBoundary = boundary
+            } else {
+                group.append(segment)
+            }
+        }
+        if !group.isEmpty {
+            drafts.append(makeDraft(from: group, precedingBoundary: precedingBoundary))
+        }
+
+        return ContinuousUtteranceTranscript(
+            sessionID: transcript.sessionID,
+            sourceFingerprint: sourceFingerprint,
+            completedAt: transcript.completedAt,
+            configuration: configuration,
+            turnDetectionEngine: nil,
+            turnDetectionModel: nil,
+            utterances: drafts.enumerated().map { index, draft in
+                ContinuousUtterance(
+                    id: String(format: "source-block-%06d", index),
+                    source: draft.source,
+                    speaker: draft.source.conversationParticipantLabel,
+                    sourceSegmentIDs: draft.sourceSegmentIDs,
+                    start: draft.start,
+                    end: draft.end,
+                    language: draft.language,
+                    text: draft.text,
+                    confidence: draft.confidence,
+                    precedingBoundary: draft.precedingBoundary
+                )
+            }
+        )
+    }
+
+    private func makeDraft(
+        from segments: [TranscriptSegment],
+        precedingBoundary: UtteranceBoundaryReason
+    ) -> Draft {
+        let languages = Set(segments.map(\.language).filter { !$0.isEmpty })
+        let confidenceValues = segments.compactMap(\.confidence)
+        return Draft(
+            source: segments[0].source,
+            sourceSegmentIDs: segments.map(\.id),
+            start: segments.map(\.start).min() ?? segments[0].start,
+            end: segments.map(\.end).max() ?? segments[0].end,
+            language: languages.count == 1 ? languages.first! : "mixed",
+            text: segments.map(\.text)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " "),
+            confidence: confidenceValues.isEmpty
+                ? nil
+                : confidenceValues.reduce(0, +) / Double(confidenceValues.count),
+            precedingBoundary: precedingBoundary
+        )
+    }
+
+    private func segmentComesBefore(_ lhs: TranscriptSegment, _ rhs: TranscriptSegment) -> Bool {
+        if lhs.start != rhs.start { return lhs.start < rhs.start }
+        if lhs.source != rhs.source { return lhs.source == .system }
+        if lhs.end != rhs.end { return lhs.end < rhs.end }
+        return lhs.id < rhs.id
+    }
+
+    private struct Draft {
+        let source: TranscriptSource
+        let sourceSegmentIDs: [String]
+        let start: Double
+        let end: Double
+        let language: String
+        let text: String
+        let confidence: Double?
+        let precedingBoundary: UtteranceBoundaryReason
+    }
+}
+
+extension ContinuousUtteranceTranscript {
+    func asMergedTranscript(basedOn transcript: MergedTranscript) -> MergedTranscript {
+        MergedTranscript(
+            schemaVersion: transcript.schemaVersion,
+            sessionID: transcript.sessionID,
+            title: transcript.title,
+            completedAt: transcript.completedAt,
+            tracks: transcript.tracks,
+            segments: utterances.map { utterance in
+                TranscriptSegment(
+                    id: utterance.id,
+                    source: utterance.source,
+                    speaker: utterance.speaker,
+                    start: utterance.start,
+                    end: utterance.end,
+                    language: utterance.language,
+                    text: utterance.text,
+                    confidence: utterance.confidence
+                )
+            }
+        )
+    }
+}
+
 struct UtteranceArtifactStore: Sendable {
     let configuration: ContinuousUtteranceConfiguration
 
-    init(configuration: ContinuousUtteranceConfiguration = .current) {
+    init(configuration: ContinuousUtteranceConfiguration = .sourceBlocks) {
         self.configuration = configuration
     }
 
@@ -324,10 +469,9 @@ struct UtteranceArtifactStore: Sendable {
             transcript: transcript,
             turnArtifact: turnArtifact
         )
-        return ContinuousUtteranceGrouper(configuration: configuration).group(
+        return SourceConversationBlockGrouper(configuration: configuration).group(
             transcript: transcript,
-            sourceFingerprint: fingerprint,
-            turnArtifact: turnArtifact
+            sourceFingerprint: fingerprint
         )
     }
 

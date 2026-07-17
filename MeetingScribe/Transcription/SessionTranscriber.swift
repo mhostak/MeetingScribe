@@ -114,20 +114,17 @@ actor SessionTranscriber: SessionTranscribing {
     private let service: any SpeechTranscribing
     private let merger: TranscriptMerger
     private let utteranceArtifactStore: UtteranceArtifactStore
-    private let speakerPipeline: SpeakerPipeline
     private let now: @Sendable () -> Date
 
     init(
         service: any SpeechTranscribing = FluidAudioTranscriptionService(),
         merger: TranscriptMerger = TranscriptMerger(),
         utteranceArtifactStore: UtteranceArtifactStore = UtteranceArtifactStore(),
-        speakerPipeline: SpeakerPipeline = SpeakerPipeline(),
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.service = service
         self.merger = merger
         self.utteranceArtifactStore = utteranceArtifactStore
-        self.speakerPipeline = speakerPipeline
         self.now = now
     }
 
@@ -153,13 +150,13 @@ actor SessionTranscriber: SessionTranscribing {
         language: TranscriptionLanguage,
         diarizationModelBundleURL: URL?
     ) async throws -> SessionTranscriptionResult {
+        _ = diarizationModelBundleURL // Retained only for protocol/source compatibility.
         do {
             let result = try await transcribeTracks(
                 session: session,
                 finalization: finalization,
                 model: model,
-                language: language,
-                diarizationModelBundleURL: diarizationModelBundleURL
+                language: language
             )
             await service.releaseResources()
             return result
@@ -173,8 +170,7 @@ actor SessionTranscriber: SessionTranscribing {
         session: RecordingSession,
         finalization: AudioFinalizationMetadata,
         model: TranscriptionModelReference,
-        language: TranscriptionLanguage,
-        diarizationModelBundleURL: URL?
+        language: TranscriptionLanguage
     ) async throws -> SessionTranscriptionResult {
         try Task.checkCancellation()
         let startedAt = now()
@@ -189,7 +185,7 @@ actor SessionTranscriber: SessionTranscribing {
                 options: TranscriptionOptions(
                     language: language,
                     source: .system,
-                    speaker: "Other",
+                    speaker: TranscriptSource.system.conversationParticipantLabel,
                     timelineOffsetSeconds: finalization.system.timelineOffsetSeconds
                 )
             )
@@ -219,7 +215,7 @@ actor SessionTranscriber: SessionTranscribing {
                         options: TranscriptionOptions(
                             language: language,
                             source: .microphone,
-                            speaker: "Me",
+                            speaker: TranscriptSource.microphone.conversationParticipantLabel,
                             timelineOffsetSeconds: microphone.timelineOffsetSeconds
                         )
                     )
@@ -256,23 +252,8 @@ actor SessionTranscriber: SessionTranscribing {
         try Task.checkCancellation()
         try persist(mergedTranscript, to: session.mergedTranscriptURL)
 
-        let speakerProcessing = try await processSpeakers(
-            session: session,
-            transcript: mergedTranscript,
-            finalization: finalization,
-            diarizationModelBundleURL: diarizationModelBundleURL
-        )
-        if diarizationModelBundleURL != nil || speakerProcessing.artifact != nil {
-            warnings.append(contentsOf: speakerProcessing.metadata.warnings)
-            if let failureReason = speakerProcessing.metadata.failureReason,
-               speakerProcessing.metadata.status == .failed {
-                warnings.append("Speaker diarization failed: \(failureReason)")
-            }
-        }
-
-        // Legacy turn artifacts remain decodable, but new transcripts use
-        // deterministic grouping until production diarization writes the
-        // engine-neutral speaker artifact.
+        // Legacy speaker artifacts remain decodable, but new transcripts are
+        // grouped only by their recorded audio source.
         let speakerTurnArtifact: SpeakerTurnArtifact? = nil
 
         let utteranceTranscript: ContinuousUtteranceTranscript?
@@ -285,7 +266,7 @@ actor SessionTranscriber: SessionTranscribing {
             utteranceTranscript = artifact
         } catch {
             warnings.append(
-                "Continuous-utterance grouping failed; raw transcript output was preserved: "
+                "Source-block grouping failed; raw transcript output was preserved: "
                     + error.localizedDescription
             )
             utteranceTranscript = nil
@@ -302,7 +283,7 @@ actor SessionTranscriber: SessionTranscribing {
             utteranceCount: utteranceTranscript?.utterances.count,
             turnBoundaryCount: speakerTurnArtifact?.boundaries.count,
             turnDetectionModel: speakerTurnArtifact?.model,
-            utteranceFallbackUsed: speakerTurnArtifact == nil,
+            utteranceFallbackUsed: false,
             systemPerformance: systemTranscript.performance,
             microphonePerformance: microphoneTranscript?.performance,
             warnings: warnings,
@@ -316,27 +297,9 @@ actor SessionTranscriber: SessionTranscribing {
             mergedTranscript: mergedTranscript,
             speakerTurnArtifact: speakerTurnArtifact,
             utteranceTranscript: utteranceTranscript,
-            diarizationMetadata: speakerProcessing.metadata,
-            speakerDiarizationArtifact: speakerProcessing.artifact,
-            resolvedTranscript: speakerProcessing.resolvedTranscript
-        )
-    }
-
-    func processSpeakers(
-        session: RecordingSession,
-        transcript: MergedTranscript,
-        finalization: AudioFinalizationMetadata,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SpeakerProcessingResult {
-        try await speakerPipeline.process(
-            session: session,
-            transcript: transcript,
-            systemAudioURL: session.directoryURL.appendingPathComponent(
-                finalization.system.fileName,
-                isDirectory: false
-            ),
-            systemTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
-            modelBundleURL: diarizationModelBundleURL
+            diarizationMetadata: nil,
+            speakerDiarizationArtifact: nil,
+            resolvedTranscript: nil
         )
     }
 

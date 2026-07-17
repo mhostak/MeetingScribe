@@ -74,7 +74,6 @@ actor FluidAudioTranscriptionRevisionService {
     func reprocess(
         session: RecordingSession,
         modelBundleURL: URL,
-        diarizationModelBundleURL: URL? = nil,
         descriptor: FluidAudioModelDescriptor = .parakeetV3
     ) async throws -> TranscriptionRevisionResult {
         guard let finalization = session.metadata.audioFinalization else {
@@ -112,10 +111,10 @@ actor FluidAudioTranscriptionRevisionService {
             systemTrack: "\(relativeDirectory)/system-transcript.json",
             microphoneTrack: "\(relativeDirectory)/microphone-transcript.json",
             merged: "\(relativeDirectory)/transcript.json",
-            speakerTurns: "\(relativeDirectory)/speaker-turns.json",
+            speakerTurns: nil,
             utterances: "\(relativeDirectory)/utterance-transcript.json",
-            speakerDiarization: "\(relativeDirectory)/speaker-diarization.json",
-            resolved: "\(relativeDirectory)/resolved-transcript.json",
+            speakerDiarization: nil,
+            resolved: nil,
             analysis: nil
         )
         var revisionMetadata = session.metadata
@@ -139,15 +138,14 @@ actor FluidAudioTranscriptionRevisionService {
                     bundleURL: modelBundleURL,
                     descriptor: descriptor
                 ),
-                language: session.metadata.language,
-                diarizationModelBundleURL: diarizationModelBundleURL
+                language: session.metadata.language
             )
             try Task.checkCancellation()
             let markdown = try await processingFileService.exportMarkdown(
                 session: revisionMetadata,
                 transcript: result.mergedTranscript,
                 utteranceTranscript: result.utteranceTranscript,
-                resolvedTranscript: result.resolvedTranscript,
+                resolvedTranscript: nil,
                 analysis: nil,
                 to: directoryURL
             )

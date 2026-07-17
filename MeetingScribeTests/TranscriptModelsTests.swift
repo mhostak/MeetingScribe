@@ -112,8 +112,9 @@ final class TranscriptModelsTests: XCTestCase {
             ]
         )
 
-        let result = try UtteranceArtifactStore().makeArtifact(
+        let result = ContinuousUtteranceGrouper().group(
             transcript: transcript,
+            sourceFingerprint: "raw",
             turnArtifact: turns
         )
 
@@ -149,8 +150,9 @@ final class TranscriptModelsTests: XCTestCase {
             ]
         )
 
-        let result = try UtteranceArtifactStore().makeArtifact(
+        let result = ContinuousUtteranceGrouper().group(
             transcript: transcript,
+            sourceFingerprint: "raw",
             turnArtifact: turns
         )
 
@@ -182,13 +184,56 @@ final class TranscriptModelsTests: XCTestCase {
             ]
         )
 
-        let result = try UtteranceArtifactStore().makeArtifact(
+        let result = ContinuousUtteranceGrouper().group(
             transcript: transcript,
+            sourceFingerprint: "raw",
             turnArtifact: turns
         )
 
         XCTAssertEqual(result.utterances.count, 1)
         XCTAssertEqual(result.utterances[0].sourceSegmentIDs, ["s0", "s1"])
+    }
+
+    func testSourceBlocksMergeUntilTheOtherAudioSourceInterrupts() throws {
+        let transcript = MergedTranscript(
+            sessionID: "source-blocks",
+            title: "Audio sources",
+            completedAt: Date(),
+            tracks: [],
+            segments: [
+                segment("m0", .microphone, 0, 1, "Prvá časť"),
+                segment("m1", .microphone, 8, 9, "aj po tichu."),
+                segment("s0", .system, 9.1, 10, "Vzdialená odpoveď."),
+                segment("m2", .microphone, 10.1, 11, "Mikrofón znova."),
+            ]
+        )
+        let legacyTurns = SpeakerTurnArtifact(
+            sessionID: transcript.sessionID,
+            sourceFingerprint: "legacy-audio",
+            engine: "legacy-diarization",
+            model: "legacy-model",
+            completedAt: transcript.completedAt,
+            boundaries: [
+                SpeakerTurnBoundary(source: .microphone, time: 1, confidence: 0.9),
+            ]
+        )
+
+        let result = try UtteranceArtifactStore().makeArtifact(
+            transcript: transcript,
+            turnArtifact: legacyTurns
+        )
+
+        XCTAssertEqual(result.configuration, .sourceBlocks)
+        XCTAssertEqual(result.utterances.count, 3)
+        XCTAssertEqual(result.utterances[0].sourceSegmentIDs, ["m0", "m1"])
+        XCTAssertEqual(result.utterances[0].text, "Prvá časť aj po tichu.")
+        XCTAssertEqual(result.utterances[0].speaker, "On-site participants")
+        XCTAssertEqual(result.utterances[1].sourceSegmentIDs, ["s0"])
+        XCTAssertEqual(result.utterances[1].speaker, "Remote participants")
+        XCTAssertEqual(result.utterances[2].sourceSegmentIDs, ["m2"])
+        XCTAssertEqual(result.utterances[2].precedingBoundary, .speakerLabelChange)
+        XCTAssertNil(result.turnDetectionEngine)
+        XCTAssertNil(result.turnDetectionModel)
     }
 
     func testContinuousUtteranceFallbackSplitsOnPauseOverlapAndMaximumDuration() throws {

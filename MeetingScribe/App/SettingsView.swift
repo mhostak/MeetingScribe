@@ -116,7 +116,7 @@ struct SettingsView: View {
     private var transcriptionSettings: some View {
         settingsForm {
             Section("FluidAudio") {
-                Text("MeetingScribe uses pinned FluidAudio model bundles for local transcription and speaker diarization. Models are downloaded only when you request them and are verified before installation.")
+                Text("MeetingScribe uses a pinned FluidAudio model bundle for local transcription. The model is downloaded only when you request it and is verified before installation.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -131,20 +131,10 @@ struct SettingsView: View {
                 )
             }
 
-            Section("Speaker diarization model") {
-                fluidAudioModelControls(
-                    descriptor: appState.fluidAudioDiarizationDescriptor,
-                    status: appState.fluidAudioDiarizationModelStatus,
-                    progress: appState.fluidAudioDiarizationDownloadProgress,
-                    isInstalling: appState.isInstallingFluidAudioDiarizationModel,
-                    kind: .diarization
-                )
-            }
-
             Section("Storage and attribution") {
-                LabeledContent("Combined download size") {
+                LabeledContent("Download size") {
                     Text(verbatim: ByteCountFormatter.string(
-                        fromByteCount: fluidAudioCombinedSize,
+                        fromByteCount: appState.fluidAudioASRDescriptor.approximateSizeBytes,
                         countStyle: .file
                     ))
                 }
@@ -527,11 +517,6 @@ struct SettingsView: View {
             fromByteCount: descriptor.approximateSizeBytes,
             countStyle: .file
         )
-    }
-
-    private var fluidAudioCombinedSize: Int64 {
-        appState.fluidAudioASRDescriptor.approximateSizeBytes
-            + appState.fluidAudioDiarizationDescriptor.approximateSizeBytes
     }
 
     private var cannotSaveOpenAIAPIKey: Bool {

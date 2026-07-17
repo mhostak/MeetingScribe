@@ -46,7 +46,7 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.utteranceTranscriptURL.path))
         XCTAssertEqual(result.metadata.utteranceCount, 2)
-        XCTAssertEqual(result.metadata.utteranceFallbackUsed, true)
+        XCTAssertEqual(result.metadata.utteranceFallbackUsed, false)
         XCTAssertEqual(result.metadata.provenance?.engine, "FluidAudio")
         XCTAssertEqual(result.metadata.provenance?.engineVersion, "0.15.5")
         XCTAssertEqual(result.systemTranscript.schemaVersion, 3)
@@ -60,7 +60,10 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(options.map(\.source), [.system, .microphone])
         XCTAssertEqual(options.map(\.language), [.automatic, .automatic])
         XCTAssertEqual(options.map(\.timelineOffsetSeconds), [0, 0.25])
-        XCTAssertEqual(options.map(\.speaker), ["Other", "Me"])
+        XCTAssertEqual(
+            options.map(\.speaker),
+            ["Remote participants", "On-site participants"]
+        )
         let audioURLs = await service.receivedAudioURLs
         XCTAssertEqual(
             audioURLs.map(\.lastPathComponent),

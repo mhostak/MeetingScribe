@@ -157,7 +157,6 @@ private struct RecordingSessionRow: View {
     @ObservedObject var appState: AppState
     let reload: () async -> Void
     @State private var reprocessingError: String?
-    @State private var isShowingSpeakerEditor = false
 
     private let obsidianService = ObsidianService()
 
@@ -241,17 +240,6 @@ private struct RecordingSessionRow: View {
                 .disabled(markdownURL == nil)
 
                 Button {
-                    isShowingSpeakerEditor = true
-                } label: {
-                    Label("Edit speakers", systemImage: "person.2.badge.gearshape")
-                }
-                .disabled(
-                    appState.status == .recording
-                        || appState.status.isProcessing
-                        || !entry.hasSpeakerArtifact
-                )
-
-                Button {
                     Task {
                         do {
                             reprocessingError = nil
@@ -303,9 +291,6 @@ private struct RecordingSessionRow: View {
             }
         }
         .contextMenu { actionItems }
-        .sheet(isPresented: $isShowingSpeakerEditor) {
-            SpeakerEditorView(session: entry.session, onSaved: reload)
-        }
     }
 
     private var timeText: String {
@@ -366,11 +351,6 @@ private struct RecordingSessionRow: View {
             }
         }
 
-        if entry.hasSpeakerArtifact {
-            Button("Edit speakers") {
-                isShowingSpeakerEditor = true
-            }
-        }
     }
 
     private var statusTitle: String {

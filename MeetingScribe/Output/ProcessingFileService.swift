@@ -62,24 +62,15 @@ actor ProcessingFileService: ProcessingFileServicing {
     private let outputExporter: OutputExporter
     private let fileManager: FileManager
     private let utteranceArtifactStore: UtteranceArtifactStore
-    private let speakerArtifactStore: SpeakerArtifactStore
-    private let speakerResolver: SpeakerTranscriptResolver
-    private let resolvedTranscriptStore: ResolvedTranscriptStore
 
     init(
         outputExporter: OutputExporter = OutputExporter(),
         fileManager: FileManager = .default,
-        utteranceArtifactStore: UtteranceArtifactStore = UtteranceArtifactStore(),
-        speakerArtifactStore: SpeakerArtifactStore = SpeakerArtifactStore(),
-        speakerResolver: SpeakerTranscriptResolver = SpeakerTranscriptResolver(),
-        resolvedTranscriptStore: ResolvedTranscriptStore = ResolvedTranscriptStore()
+        utteranceArtifactStore: UtteranceArtifactStore = UtteranceArtifactStore()
     ) {
         self.outputExporter = outputExporter
         self.fileManager = fileManager
         self.utteranceArtifactStore = utteranceArtifactStore
-        self.speakerArtifactStore = speakerArtifactStore
-        self.speakerResolver = speakerResolver
-        self.resolvedTranscriptStore = resolvedTranscriptStore
     }
 
     func loadRecoveredArtifacts(
@@ -94,17 +85,16 @@ actor ProcessingFileService: ProcessingFileServicing {
             return nil
         }
 
-        let turnArtifact = validTurnArtifact(for: session)
         let utteranceTranscript: ContinuousUtteranceTranscript?
         if let loaded = try? utteranceArtifactStore.loadValidArtifact(
             from: session.utteranceTranscriptURL,
             transcript: transcript,
-            turnArtifact: turnArtifact
+            turnArtifact: nil
         ) {
             utteranceTranscript = loaded
         } else if let fallback = try? utteranceArtifactStore.makeArtifact(
             transcript: transcript,
-            turnArtifact: turnArtifact
+            turnArtifact: nil
         ) {
             try? utteranceArtifactStore.persist(fallback, to: session.utteranceTranscriptURL)
             utteranceTranscript = fallback
@@ -120,15 +110,11 @@ actor ProcessingFileService: ProcessingFileServicing {
             analysis = nil
         }
 
-        let speakerArtifacts = loadSpeakerArtifacts(
-            session: session,
-            transcript: transcript
-        )
         return RecoveredProcessingArtifacts(
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            speakerDiarizationArtifact: speakerArtifacts.artifact,
-            resolvedTranscript: speakerArtifacts.resolved,
+            speakerDiarizationArtifact: nil,
+            resolvedTranscript: nil,
             analysis: analysis
         )
     }
@@ -156,74 +142,4 @@ actor ProcessingFileService: ProcessingFileServicing {
         )
     }
 
-    private func loadSpeakerArtifacts(
-        session: RecordingSession,
-        transcript: MergedTranscript
-    ) -> (artifact: SpeakerDiarizationArtifact?, resolved: ResolvedTranscript?) {
-        guard let finalization = session.metadata.audioFinalization else {
-            return (nil, nil)
-        }
-        let audioURL = session.directoryURL.appendingPathComponent(
-            finalization.system.fileName,
-            isDirectory: false
-        )
-        guard let transcriptFingerprint = try? speakerArtifactStore.fingerprint(
-            transcript: transcript
-        ) else {
-            return (nil, nil)
-        }
-        guard let artifact = try? speakerArtifactStore.loadValid(
-            from: session.speakerDiarizationURL,
-            sessionID: session.metadata.id,
-            sourceAudioURL: audioURL,
-            transcript: transcript,
-            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
-            sourceTranscriptFingerprint: transcriptFingerprint
-        ) else {
-            return (nil, nil)
-        }
-        guard let artifactFingerprint = try? speakerArtifactStore.fingerprint(
-            artifact: artifact
-        ) else {
-            return (artifact, nil)
-        }
-        if let resolved = try? resolvedTranscriptStore.loadValid(
-            from: session.resolvedTranscriptURL,
-            transcript: transcript,
-            artifact: artifact,
-            transcriptFingerprint: transcriptFingerprint,
-            artifactFingerprint: artifactFingerprint
-        ) {
-            return (artifact, resolved)
-        }
-        guard let resolved = try? speakerResolver.resolve(
-            transcript: transcript,
-            artifact: artifact,
-            transcriptFingerprint: transcriptFingerprint,
-            artifactFingerprint: artifactFingerprint
-        ) else {
-            return (artifact, nil)
-        }
-        try? resolvedTranscriptStore.persist(resolved, to: session.resolvedTranscriptURL)
-        return (artifact, resolved)
-    }
-
-    private func validTurnArtifact(for session: RecordingSession) -> SpeakerTurnArtifact? {
-        guard let artifact = try? utteranceArtifactStore.loadTurnArtifact(
-            from: session.speakerTurnsURL,
-            sessionID: session.metadata.id
-        ) else {
-            return nil
-        }
-        let audioFileName = session.metadata.audioFinalization?.system.fileName
-            ?? session.metadata.audioFiles.systemWorking
-            ?? "system-16k.wav"
-        let audioURL = session.directoryURL.appendingPathComponent(audioFileName)
-        guard fileManager.fileExists(atPath: audioURL.path),
-              let fingerprint = try? utteranceArtifactStore.audioFingerprint(at: audioURL),
-              fingerprint == artifact.sourceFingerprint else {
-            return nil
-        }
-        return artifact
-    }
 }

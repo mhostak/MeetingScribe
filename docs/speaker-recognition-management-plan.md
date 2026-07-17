@@ -1,10 +1,24 @@
 # Speaker recognition and management implementation plan
 
-Status: product implementation complete on 2026-07-15; automated acceptance passes; consented labeled DER and final signed-app hardware acceptance remain release gates
+Status: implementation complete, but production acceptance failed on 2026-07-16; further diarization and speaker-management development is paused until a more reliable model is available
 
 This feature is the prerequisite for Phase B of [Apple Calendar and participants](apple-calendar-participants.md). It answers “which anonymous speaker was active when?” within one recording and lets the user manage session-local display names. It does not identify a real person from their voice, learn voiceprints, or automatically map Calendar attendees.
 
-## Delivered product boundary
+## Product decision — 2026-07-16
+
+A signed 102.04-minute Microsoft Teams meeting with mixed Czech/Slovak speech and 10 actual speakers rejected the current FluidAudio `community-1` configuration for production speaker recognition:
+
+- automatic diarization returned only two system-speaker clusters;
+- direct participant review found that speech from one real person was split between both generated clusters;
+- forcing 9 or 10 clusters removed the count under-estimate but changed the partition globally and did not establish consistent identities;
+- the 9- and 10-cluster variants disagreed on 270.545 seconds of their shared speech timeline after optimal anonymous-label alignment;
+- the extra tenth cluster was primarily assembled from two different 9-cluster identities rather than cleanly separating one prior identity.
+
+The result fails both the speaker-count and identity-consistency release gates. Anonymous labels such as `Speaker 1` and `Speaker 2` must not be presented as trustworthy people for this model. FluidAudio Parakeet ASR remains accepted independently; this decision concerns only diarization, speaker-resolved output, and attendee-to-speaker mapping.
+
+No further recognition, naming, or Calendar Phase B implementation is planned against the current model. Existing schemas, artifacts, editor code, and compatibility behavior remain documented and preserved, but they are not evidence of production-quality speaker identity. Work may resume only after a more capable model passes the same real multi-speaker validation and the labeled acceptance thresholds below. Sanitized measurements are recorded in [FluidAudio diarization release validation](evidence/fluid-audio-diarization-release-validation-2026-07-16.md).
+
+## Implemented technical boundary
 
 MeetingScribe now uses FluidAudio `0.15.5` exclusively:
 
@@ -123,7 +137,7 @@ The performance run had no timestamped ground truth, so it is evidence for long-
 - [x] regenerate resolved JSON and Markdown without ASR or diarization;
 - [x] localize user-facing editor controls in Czech and Slovak.
 
-### S6 — acceptance and Phase B handoff
+### S6 — acceptance and Phase B handoff — failed and paused
 
 Implementation and automated acceptance:
 
@@ -138,9 +152,9 @@ Release acceptance still requiring consented fixtures or target hardware:
 
 - [ ] measure DER and speaker-count error on labeled Czech, Slovak, mixed-language, two-, three-, and four-speaker fixtures, including overlap, echo, music, and silence;
 - [ ] capture peak resident memory on the oldest supported Apple Silicon Mac;
-- [ ] complete a signed end-to-end recording and editor smoke test of at least 60 minutes.
+- [x] complete a signed end-to-end recording of at least 60 minutes; the 2026-07-16 run failed the diarization quality gate.
 
-These open items are release-quality measurements, not missing product behavior. No unlabeled meeting is used to fabricate a DER result, and repository evidence must contain aggregate metrics only.
+The real run is sufficient to reject the current model even without a fabricated DER score: speaker count was grossly under-estimated and a known person was split across clusters. DER remains unscored because no time-aligned reference annotation exists. The remaining fixture and oldest-hardware work is paused rather than treated as an active release checklist.
 
 ## Acceptance thresholds
 
@@ -155,12 +169,12 @@ These open items are release-quality measurements, not missing product behavior.
 
 ## Definition of done
 
-- [x] A completed recording can produce stable anonymous system clusters fully on-device.
+- [ ] A completed recording can produce reliable anonymous system clusters fully on-device. The current model failed this gate.
 - [x] The microphone is an independently managed local speaker.
 - [x] The user can rename, classify, merge, save, and reopen session speaker profiles.
 - [x] Raw track transcripts and `transcript.json` remain byte-for-byte unchanged by speaker edits.
 - [x] `resolved-transcript.json`, Markdown, and optional AI input reproducibly use valid mappings.
 - [x] Missing, stale, failed, or cancelled diarization preserves the successful fallback path.
 - [x] Old sessions remain readable without the removed runtime.
-- [x] Stable speaker IDs and consent-first editor hooks are ready for Calendar Phase B.
-- [ ] The remaining labeled quality, oldest-hardware resource, and signed-app release gates are recorded as passed.
+- [ ] Stable speaker IDs are accurate enough to support Calendar Phase B. Persistence exists, but model quality blocks the handoff.
+- [ ] The labeled quality and speaker-consistency release gates are recorded as passed with a future model.

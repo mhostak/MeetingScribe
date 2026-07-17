@@ -1,15 +1,15 @@
 # Apple Calendar and participants
 
-Status date: 2026-07-15
+Status date: 2026-07-16
 
 ## Delivery status
 
 | Phase | Status | Delivery boundary |
 | --- | --- | --- |
 | Phase A — consent-first Calendar metadata | Complete | Select one nearby event, explicitly confirm attendees, and persist a privacy-minimized snapshot for the recording. |
-| Phase B — attendee-to-speaker mapping | Deferred by product decision; prerequisite complete | Map confirmed attendees to anonymous diarization clusters and regenerate speaker-resolved output without retranscribing audio. |
+| Phase B — attendee-to-speaker mapping | Deferred and blocked | The persistence/UI prerequisite exists, but the current diarization model failed real multi-speaker validation and cannot provide trustworthy clusters. |
 
-Phase B remains intentionally deferred. Its separate [Speaker recognition and management](speaker-recognition-management-plan.md) prerequisite is now implemented: MeetingScribe persists stable anonymous speaker IDs, resolves transcript words to those speakers, and exposes a session editor. Calendar attendees are still only candidate names and cannot identify voices by themselves, so attendee-to-speaker mapping remains an explicit future consent step rather than an automatic consequence of diarization.
+Phase B remains intentionally deferred and is now explicitly blocked on reliable diarization. Its separate [Speaker recognition and management](speaker-recognition-management-plan.md) technical prerequisite is implemented, but the current FluidAudio `community-1` model did not produce trustworthy speaker clusters in a 10-speaker real meeting. Calendar attendees are still only candidate names and cannot identify voices by themselves. Mapping an attendee onto an unreliable cluster would create false identity claims even with user confirmation, so Phase B will not proceed against the current model.
 
 ## Phase A — complete
 
@@ -32,7 +32,7 @@ The implementation is covered by the standard automated suite, including consent
 
 ## Phase B — deferred
 
-Phase B will not attempt to infer a person's identity from Calendar membership. After diarization produces stable anonymous clusters such as `Speaker 1` and `Speaker 2`, the user will be able to:
+Phase B will not attempt to infer a person's identity from Calendar membership. If a future diarization model first passes the speaker-quality gates and produces reliable anonymous clusters, the user may then be able to:
 
 1. review the anonymous speakers and representative transcript segments;
 2. map an explicitly confirmed Calendar attendee to a speaker cluster;
@@ -44,7 +44,7 @@ The mapping remains local session data. Calendar names are sent to an external A
 
 ## Phase B prerequisite status
 
-The speaker prerequisite now provides every required handoff contract:
+The technical implementation provides the following handoff contracts:
 
 - [x] stable session-scoped speaker identifiers independent of display names;
 - [x] a persisted diarization artifact tied to fingerprints of the source transcript and audio;
@@ -55,7 +55,7 @@ The speaker prerequisite now provides every required handoff contract:
 - [x] missing-model, failure, cancellation, and checkpoint recovery fallbacks;
 - [x] tests proving that saved speaker edits cannot silently change raw transcription data.
 
-Phase B may therefore start when it is reprioritized; no further diarization data-model migration is required. Final labeled DER, oldest-hardware memory, and signed long-session measurements remain release-quality gates for diarization, but they do not block implementation of the explicit attendee-mapping UI and persistence contract.
+These contracts avoid another data-model migration, but they do not make the prerequisite complete. The 2026-07-16 signed long-session validation produced two clusters for 10 actual speakers and split at least one real person across both clusters. Phase B must therefore remain blocked until a future model passes speaker-count and identity-consistency validation. Calendar work may not use the current anonymous labels as a naming substrate.
 
 ## Invariants
 

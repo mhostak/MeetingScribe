@@ -49,11 +49,17 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("ended: 11:24"))
         XCTAssertTrue(markdown.contains("duration_minutes: 54"))
         XCTAssertTrue(markdown.contains("  - \"cs\"\n  - \"sk\""))
-        XCTAssertTrue(markdown.contains("  - \"Other\"\n  - \"Martin\""))
+        XCTAssertTrue(
+            markdown.contains("  - \"Vzdialení účastníci\"\n  - \"Účastníci na mieste\"")
+        )
         XCTAssertTrue(markdown.contains("## Súhrn"))
         XCTAssertTrue(markdown.contains("## Prepis"))
-        XCTAssertTrue(markdown.contains("### 00:00:04 — Other *(prekrytie reči)*"))
-        XCTAssertTrue(markdown.contains("### 00:00:10 — Martin *(prekrytie reči)*"))
+        XCTAssertTrue(
+            markdown.contains("### 00:00:04 — Vzdialení účastníci *(prekrytie reči)*")
+        )
+        XCTAssertTrue(
+            markdown.contains("### 00:00:10 — Účastníci na mieste *(prekrytie reči)*")
+        )
         XCTAssertTrue(markdown.hasSuffix("Začnime dnešným stavom.\n"))
     }
 
@@ -94,6 +100,84 @@ final class MarkdownRendererTests: XCTestCase {
 
         XCTAssertTrue(markdown.contains("Toto je prvá časť. A toto jej pokračovanie."))
         XCTAssertEqual(markdown.components(separatedBy: "### 00:00:").count - 1, 1)
+    }
+
+    func testRenderGroupsConsecutiveSegmentsByAudioSourceAndIgnoresResolvedSpeakers() {
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "Source-based output",
+            status: .recorded,
+            createdAt: startedAt
+        )
+        let transcript = makeTranscript(segments: [
+            segment(
+                id: "mic-0",
+                source: .microphone,
+                speaker: "Person A",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Prvá časť."
+            ),
+            segment(
+                id: "mic-1",
+                source: .microphone,
+                speaker: "Person B",
+                start: 1.1,
+                end: 2,
+                language: "sk",
+                text: "Pokračovanie."
+            ),
+            segment(
+                id: "system-0",
+                source: .system,
+                speaker: "Remote person",
+                start: 2.1,
+                end: 3,
+                language: "cs",
+                text: "Vzdialená odpoveď."
+            ),
+            segment(
+                id: "mic-2",
+                source: .microphone,
+                speaker: "Person A",
+                start: 3.1,
+                end: 4,
+                language: "sk",
+                text: "Návrat k mikrofónu."
+            ),
+            segment(
+                id: "mic-3",
+                source: .microphone,
+                speaker: "Person B",
+                start: 4.1,
+                end: 5,
+                language: "sk",
+                text: "Stále ten istý zdroj."
+            ),
+        ])
+        let legacyResolved = ResolvedTranscript(
+            schemaVersion: 1,
+            sessionID: transcript.sessionID,
+            createdAt: endedAt,
+            sourceTranscriptFingerprint: "raw",
+            diarizationFingerprint: "legacy",
+            segments: []
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: transcript,
+            resolvedTranscript: legacyResolved
+        )
+
+        XCTAssertTrue(markdown.contains("Prvá časť. Pokračovanie."))
+        XCTAssertTrue(markdown.contains("Návrat k mikrofónu. Stále ten istý zdroj."))
+        XCTAssertTrue(markdown.contains("Vzdialená odpoveď."))
+        XCTAssertFalse(markdown.contains("Person A"))
+        XCTAssertFalse(markdown.contains("Person B"))
+        XCTAssertFalse(markdown.contains("Remote person"))
+        XCTAssertEqual(markdown.components(separatedBy: "\n### ").count - 1, 3)
     }
 
     func testRenderEscapesYAMLAndHandlesEmptyTranscript() {

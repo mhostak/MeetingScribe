@@ -252,8 +252,10 @@ final class SpeakerPipelineTests: XCTestCase {
         )
         XCTAssertEqual(try Data(contentsOf: fixture.session.mergedTranscriptURL), rawBefore)
         let markdown = try String(contentsOf: try XCTUnwrap(fixture.markdownURL), encoding: .utf8)
-        XCTAssertTrue(markdown.contains("— Alice"))
-        XCTAssertTrue(markdown.contains("— Martin"))
+        XCTAssertFalse(markdown.contains("— Alice"))
+        XCTAssertFalse(markdown.contains("— Martin"))
+        XCTAssertTrue(markdown.contains("— Vzdialení účastníci"))
+        XCTAssertTrue(markdown.contains("— Účastníci na mieste"))
     }
 
     func testArtifactFingerprintRejectsChangedTranscriptAndMergeCycles() throws {
