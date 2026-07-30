@@ -38,7 +38,10 @@ struct AudioFinalizer: AudioFinalizing {
         diagnostics: CaptureSessionDiagnostics
     ) async throws -> AudioFinalizationMetadata {
         let systemDiagnostics = diagnostics.systemAudio
-        try validateRequiredTrack(systemDiagnostics, name: "System audio")
+        let requiredTrackWarning = try validateRequiredTrack(
+            systemDiagnostics,
+            name: "System audio"
+        )
 
         guard let systemStart = systemDiagnostics.firstPresentationTimestamp else {
             throw AudioFinalizerError.missingTimeline(trackName: "System audio")
@@ -65,7 +68,7 @@ struct AudioFinalizer: AudioFinalizing {
             timelineOrigin: timelineOrigin
         )
 
-        var warnings: [String] = []
+        var warnings = requiredTrackWarning.map { [$0] } ?? []
         var microphone: FinalizedAudioTrackMetadata?
 
         if canFinalizeMicrophone, let microphoneStart {
@@ -110,15 +113,18 @@ struct AudioFinalizer: AudioFinalizing {
     private func validateRequiredTrack(
         _ diagnostics: AudioCaptureDiagnostics,
         name: String
-    ) throws {
-        if let failureReason = diagnostics.failureReason {
-            throw AudioFinalizerError.requiredTrackFailed(
-                trackName: name,
-                reason: failureReason
-            )
-        }
+    ) throws -> String? {
         guard diagnostics.bufferCount > 0, diagnostics.totalFrames > 0 else {
+            if let failureReason = diagnostics.failureReason {
+                throw AudioFinalizerError.requiredTrackFailed(
+                    trackName: name,
+                    reason: failureReason
+                )
+            }
             throw AudioFinalizerError.emptyRequiredTrack(trackName: name)
+        }
+        return diagnostics.failureReason.map {
+            "\(name) capture ended early: \($0)"
         }
     }
 

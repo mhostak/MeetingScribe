@@ -46,6 +46,8 @@ enum TranscriptionRevisionError: Error, LocalizedError {
 actor FluidAudioTranscriptionRevisionService {
     private let transcriber: any SessionTranscribing
     private let processingFileService: any ProcessingFileServicing
+    private let audioFinalizer: any AudioFinalizing
+    private let recoveredAudioInspector: RecoveredAudioInspector
     private let fileManager: FileManager
     private let now: @Sendable () -> Date
     private let makeID: @Sendable () -> String
@@ -55,6 +57,8 @@ actor FluidAudioTranscriptionRevisionService {
             service: FluidAudioTranscriptionService()
         ),
         processingFileService: any ProcessingFileServicing = ProcessingFileService(),
+        audioFinalizer: any AudioFinalizing = AudioFinalizer(),
+        recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         fileManager: FileManager = .default,
         now: @escaping @Sendable () -> Date = { Date() },
         makeID: @escaping @Sendable () -> String = {
@@ -66,6 +70,8 @@ actor FluidAudioTranscriptionRevisionService {
     ) {
         self.transcriber = transcriber
         self.processingFileService = processingFileService
+        self.audioFinalizer = audioFinalizer
+        self.recoveredAudioInspector = recoveredAudioInspector
         self.fileManager = fileManager
         self.now = now
         self.makeID = makeID
@@ -76,9 +82,7 @@ actor FluidAudioTranscriptionRevisionService {
         modelBundleURL: URL,
         descriptor: FluidAudioModelDescriptor = .parakeetV3
     ) async throws -> TranscriptionRevisionResult {
-        guard let finalization = session.metadata.audioFinalization else {
-            throw TranscriptionRevisionError.finalizedAudioMissing
-        }
+        let finalization = try await finalizationForReprocessing(session)
         try Task.checkCancellation()
 
         let fingerprintStore = UtteranceArtifactStore()
@@ -198,6 +202,19 @@ actor FluidAudioTranscriptionRevisionService {
             try? persist(manifest, to: directoryURL)
             throw error
         }
+    }
+
+    private func finalizationForReprocessing(
+        _ session: RecordingSession
+    ) async throws -> AudioFinalizationMetadata {
+        if let finalization = session.metadata.audioFinalization {
+            return finalization
+        }
+        let diagnostics = try recoveredAudioInspector.inspect(session: session)
+        return try await audioFinalizer.finalize(
+            session: session,
+            diagnostics: diagnostics
+        )
     }
 
     private func persist(
