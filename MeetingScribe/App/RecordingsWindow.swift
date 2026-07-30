@@ -266,7 +266,7 @@ private struct RecordingSessionRow: View {
                     appState.status == .recording
                         || appState.status.isProcessing
                         || appState.fluidAudioReprocessingSessionID != nil
-                        || entry.session.metadata.audioFinalization == nil
+                        || !entry.audio.isAvailable
                 )
 
                 Spacer()

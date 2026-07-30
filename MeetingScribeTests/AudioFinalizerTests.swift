@@ -238,6 +238,51 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
+    func testFinalizerPreservesPartialRequiredSystemTrackAfterCaptureFailure() async throws {
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        var systemDiagnostics = diagnostics(
+            fileName: "system.caf",
+            channelCount: 2,
+            presentationTimestamp: 400
+        )
+        systemDiagnostics.failureReason = "No displays were available."
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: systemDiagnostics,
+                microphone: .empty
+            )
+        )
+
+        XCTAssertEqual(metadata.system.sampleRate, 16_000)
+        XCTAssertTrue(metadata.warnings.contains {
+            $0.contains("System audio capture ended early")
+                && $0.contains("No displays were available")
+        })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemWorkingAudioURL.path))
+    }
+
+    func testFinalizerRejectsFailedRequiredSystemTrackWithoutAudio() async throws {
+        let session = makeSession()
+        var systemDiagnostics = AudioCaptureDiagnostics.empty
+        systemDiagnostics.failureReason = "No displays were available."
+
+        do {
+            _ = try await AudioFinalizer().finalize(
+                session: session,
+                diagnostics: CaptureSessionDiagnostics(
+                    systemAudio: systemDiagnostics,
+                    microphone: .empty
+                )
+            )
+            XCTFail("Expected failed required capture without audio to be rejected.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("No displays were available"))
+        }
+    }
+
     func testFinalizerSkipsMicrophoneWithImplausibleTimelineOrigin() async throws {
         let session = makeSession()
         try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)

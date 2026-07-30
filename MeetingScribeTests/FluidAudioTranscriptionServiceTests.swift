@@ -333,6 +333,54 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(releases, 1)
     }
 
+    func testExplicitReprocessingRecoversFinalizationFromPreservedAudio() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MeetingScribe-FA3-recovered-revision-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let systemAudioURL = root.appendingPathComponent("system-16k.wav")
+        try writeActivityFixture(Array(repeating: 0.2, count: 16_000), to: systemAudioURL)
+        let originalManifest = Data("failed source manifest".utf8)
+        let manifestURL = root.appendingPathComponent("session.json")
+        try originalManifest.write(to: manifestURL)
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "failed-source-session",
+                title: "Recovered meeting",
+                status: .failed,
+                createdAt: Date(timeIntervalSince1970: 1),
+                startedAt: Date(timeIntervalSince1970: 1),
+                endedAt: Date(timeIntervalSince1970: 2)
+            ),
+            directoryURL: root
+        )
+        let speechService = RevisionSpeechService()
+        let reprocessor = FluidAudioTranscriptionRevisionService(
+            transcriber: SessionTranscriber(
+                service: speechService,
+                now: { Date(timeIntervalSince1970: 20) }
+            ),
+            processingFileService: RevisionProcessingFileService(),
+            now: { Date(timeIntervalSince1970: 30) },
+            makeID: { "recovered-revision-test" }
+        )
+
+        let result = try await reprocessor.reprocess(
+            session: session,
+            modelBundleURL: root.appendingPathComponent("model")
+        )
+
+        XCTAssertEqual(result.manifest.status, .completed)
+        XCTAssertEqual(result.manifest.transcription?.status, .completed)
+        XCTAssertEqual(result.manifest.sourceAudioFingerprints["system"]?.count, 64)
+        XCTAssertEqual(try Data(contentsOf: manifestURL), originalManifest)
+        let calls = await speechService.callCount()
+        XCTAssertEqual(calls, 1)
+    }
+
     func testOptInRealModelFixtureMatrixProducesValidWordTimings() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let modelPath = environment["MEETINGSCRIBE_FA3_MODEL_BUNDLE"] else {
