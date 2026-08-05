@@ -27,10 +27,15 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
             throw AudioCaptureServiceError.screenRecordingPermissionDenied
         }
 
-        let content = try await SCShareableContent.excludingDesktopWindows(
-            false,
-            onScreenWindowsOnly: false
-        )
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.excludingDesktopWindows(
+                false,
+                onScreenWindowsOnly: false
+            )
+        } catch {
+            throw Self.startError(for: error)
+        }
         guard let display = preferredDisplay(from: content.displays) else {
             throw AudioCaptureServiceError.noDisplayAvailable
         }
@@ -59,13 +64,14 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         do {
             try await stream.startCapture()
         } catch {
+            let startError = Self.startError(for: error)
             callbackQueue.sync {
                 finishWriter()
                 state.isCapturing = false
-                state.diagnostics.failureReason = error.localizedDescription
+                state.diagnostics.failureReason = startError.localizedDescription
             }
             self.stream = nil
-            throw error
+            throw startError
         }
     }
 
@@ -120,6 +126,17 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         // -3808: stop requested for an already stopped stream.
         // -3817: the user stopped capture through the system capture control.
         return error.code == -3_808 || error.code == -3_817
+    }
+
+    static func startError(for error: Error) -> Error {
+        let error = error as NSError
+
+        // SCStreamErrorUserDeclined (-3801) can be returned while loading
+        // shareable content or while starting the stream, even after preflight.
+        guard error.domain == SCStreamErrorDomain, error.code == -3_801 else {
+            return error
+        }
+        return AudioCaptureServiceError.screenRecordingPermissionDenied
     }
 
     private func finishWriter() {
