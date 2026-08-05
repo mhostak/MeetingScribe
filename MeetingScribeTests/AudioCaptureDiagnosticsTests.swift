@@ -74,4 +74,19 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
         XCTAssertTrue(SystemAudioCapture.isBenignStopError(userStopped))
         XCTAssertFalse(SystemAudioCapture.isBenignStopError(audioFailure))
     }
+
+    func testUserDeclinedStartErrorMapsToScreenRecordingPermission() {
+        let userDeclined = NSError(domain: SCStreamErrorDomain, code: -3_801)
+
+        XCTAssertEqual(
+            SystemAudioCapture.startError(for: userDeclined) as? AudioCaptureServiceError,
+            .screenRecordingPermissionDenied
+        )
+    }
+
+    func testUnrelatedStartErrorIsPreserved() {
+        let streamFailure = NSError(domain: SCStreamErrorDomain, code: -3_819)
+
+        XCTAssertTrue(SystemAudioCapture.startError(for: streamFailure) as NSError === streamFailure)
+    }
 }

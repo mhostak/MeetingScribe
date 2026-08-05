@@ -724,11 +724,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4L9Z76W4R5;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MeetingScribe reads event titles, times, and invitee display names only after you choose and confirm a meeting.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetingScribe/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -754,11 +751,8 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4L9Z76W4R5;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "MeetingScribe records your microphone as a separate local audio track.";
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "MeetingScribe reads event titles, times, and invitee display names only after you choose and confirm a meeting.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetingScribe/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
