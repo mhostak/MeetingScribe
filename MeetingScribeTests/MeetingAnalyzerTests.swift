@@ -46,7 +46,7 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertEqual(requests.map(\.mode), [
             .transcript, .transcript, .transcript, .transcript, .consolidation,
         ])
-        XCTAssertEqual(run.analysis.summary, "Consolidated")
+        XCTAssertEqual(run.analysis.markdown, "Consolidated")
         XCTAssertTrue(requests[0].content.contains("[segment-000000]"))
     }
 
@@ -216,20 +216,15 @@ private actor MockAnalysisProvider: AnalysisProvider {
         self.cancelAfterFirstRequest = cancelAfterFirstRequest
     }
 
-    func analyze(_ request: AnalysisRequest) async throws -> MeetingAnalysis {
+    func analyze(_ request: AnalysisRequest) async throws -> AnalysisMarkdown {
         requests.append(request)
         if cancelAfterFirstRequest, requests.count == 1 {
             withUnsafeCurrentTask { task in
                 task?.cancel()
             }
         }
-        return MeetingAnalysis(
-            summary: request.mode == .consolidation ? "Consolidated" : "Partial",
-            decisions: [],
-            actionItems: [],
-            openQuestions: [],
-            risksAndBlockers: [],
-            nextMeetingTopics: []
+        return AnalysisMarkdown(
+            markdown: request.mode == .consolidation ? "Consolidated" : "Partial"
         )
     }
 }
@@ -237,15 +232,8 @@ private actor MockAnalysisProvider: AnalysisProvider {
 private actor LargePartialAnalysisProvider: AnalysisProvider {
     private(set) var requestCount = 0
 
-    func analyze(_ request: AnalysisRequest) async throws -> MeetingAnalysis {
+    func analyze(_ request: AnalysisRequest) async throws -> AnalysisMarkdown {
         requestCount += 1
-        return MeetingAnalysis(
-            summary: String(repeating: "y", count: 700),
-            decisions: [],
-            actionItems: [],
-            openQuestions: [],
-            risksAndBlockers: [],
-            nextMeetingTopics: []
-        )
+        return AnalysisMarkdown(markdown: String(repeating: "y", count: 700))
     }
 }

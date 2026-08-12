@@ -62,13 +62,12 @@ final class ProcessingFileServiceTests: XCTestCase {
                 ),
             ]
         )
-        let analysis = MeetingAnalysis(
-            summary: "Background I/O summary",
-            decisions: [],
-            actionItems: [],
-            openQuestions: [],
-            risksAndBlockers: [],
-            nextMeetingTopics: []
+        let analysis = AIAnalysisArtifact(
+            markdown: "## Vlastná analýza\n\nBackground I/O summary",
+            tool: .codex,
+            model: nil,
+            toolVersion: "codex-test",
+            prompt: "Test prompt"
         )
         try TranscriptJSONCoder.makeEncoder().encode(transcript)
             .write(to: session.mergedTranscriptURL, options: .atomic)
@@ -101,14 +100,14 @@ private actor CanonicalProcessingFileService: ProcessingFileServicing {
         nil
     }
 
-    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {}
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
 
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         exportCalls += 1

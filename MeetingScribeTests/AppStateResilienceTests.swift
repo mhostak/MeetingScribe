@@ -6,8 +6,11 @@ import XCTest
 final class AppStateResilienceTests: XCTestCase {
     func testUserFacingErrorsAreLocalizedForExplicitApplicationLanguage() {
         XCTAssertEqual(
-            AppLocalization.error(AnalysisError.missingAPIKey, language: .slovak),
-            "Pred zapnutím AI analýzy pridajte kľúč OpenAI API."
+            AppLocalization.error(
+                AnalysisError.executableNotFound(path: "/missing/codex"),
+                language: .slovak
+            ),
+            "Spustiteľný súbor AI nástroja sa nenašiel na /missing/codex."
         )
         XCTAssertEqual(
             AppLocalization.error(
@@ -123,7 +126,8 @@ final class AppStateResilienceTests: XCTestCase {
     func testPrepareStorageRunsInitializationOnlyOnce() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
-        let apiKeyStore = CountingResilienceAPIKeyStore()
+        let analysisRunner = CountingResilienceAnalysisCommandRunner()
+        AnalysisSettingsStore(defaults: fixture.defaults).setEnabled(true)
         let appState = makeAppState(
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
@@ -131,15 +135,15 @@ final class AppStateResilienceTests: XCTestCase {
             fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
-            apiKeyStore: apiKeyStore,
+            analysisCommandRunner: analysisRunner,
             defaults: fixture.defaults
         )
 
         await appState.prepareStorage()
         await appState.prepareStorage()
 
-        let loadCount = await apiKeyStore.loadCount()
-        XCTAssertEqual(loadCount, 1)
+        let runCount = await analysisRunner.runCount()
+        XCTAssertEqual(runCount, 1)
         XCTAssertEqual(appState.status, .idle)
         XCTAssertEqual(appState.fluidAudioASRModelStatus, .missing)
         XCTAssertEqual(appState.fluidAudioDiarizationModelStatus, .missing)
@@ -147,10 +151,10 @@ final class AppStateResilienceTests: XCTestCase {
             .appendingPathComponent("Models/FluidAudio/.staging", isDirectory: true).path))
     }
 
-    func testPrepareStorageTreatsKeychainFailureAsNonfatal() async throws {
+    func testDisabledAnalysisDoesNotLaunchAnyExternalCommand() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
-        ApplicationSettingsStore(defaults: fixture.defaults).setAppLanguage(.czech)
+        let runner = CountingResilienceAnalysisCommandRunner()
         let appState = makeAppState(
             sessionManager: makeSessionManager(
                 root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
@@ -158,15 +162,139 @@ final class AppStateResilienceTests: XCTestCase {
             fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
-            apiKeyStore: FailingResilienceAPIKeyStore(),
+            analysisCommandRunner: runner,
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+
+        XCTAssertFalse(appState.aiAnalysisEnabled)
+        let runCount = await runner.runCount()
+        XCTAssertEqual(runCount, 0)
+    }
+
+    func testPrepareStorageTreatsMissingAnalysisToolAsNonfatal() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let analysisSettings = AnalysisSettingsStore(defaults: fixture.defaults)
+        analysisSettings.setEnabled(true)
+        analysisSettings.setExecutablePath("/missing/codex", for: .codex)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
             defaults: fixture.defaults
         )
 
         await appState.prepareStorage()
 
         XCTAssertEqual(appState.status, .idle)
-        XCTAssertTrue(appState.lastError?.contains("Klíč OpenAI API se nepodařilo načíst") == true)
-        XCTAssertFalse(appState.hasOpenAIAPIKey)
+        XCTAssertEqual(appState.analysisToolStatus, .unavailable)
+    }
+
+    func testCompletedMeetingUsesSnapshottedCLIPromptAndExportsFreeformMarkdown() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        let settings = AnalysisSettingsStore(defaults: fixture.defaults)
+        settings.setEnabled(true)
+        settings.setTool(.codex)
+        settings.setExecutablePath("/bin/echo", for: .codex)
+        settings.setPrompt("Create a custom section for {{meeting_title}} in {{output_language}}.")
+        let runner = SuccessfulResilienceAnalysisCommandRunner(
+            markdown: "## Vlastný výstup\n\nAnalýza bola vytvorená."
+        )
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            analysisCommandRunner: runner,
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        appState.meetingTitle = "Prompt snapshot"
+        await appState.startRecording()
+        let activeSession = try XCTUnwrap(appState.currentSession)
+        XCTAssertEqual(
+            activeSession.metadata.analysisConfiguration?.prompt,
+            "Create a custom section for {{meeting_title}} in {{output_language}}."
+        )
+        appState.analysisPrompt = "This later edit must not affect the active meeting."
+        appState.persistAnalysisSettings()
+        await appState.stopRecording()
+
+        XCTAssertEqual(appState.status, .completed)
+        let completed = try XCTUnwrap(appState.lastCompletedSession)
+        XCTAssertEqual(completed.metadata.analysis?.status, .completed)
+        XCTAssertEqual(completed.metadata.analysis?.provider, "codex")
+        let artifact = try JSONDecoder().decode(
+            AIAnalysisArtifact.self,
+            from: Data(contentsOf: completed.analysisURL)
+        )
+        XCTAssertEqual(artifact.markdown, "## Vlastný výstup\n\nAnalýza bola vytvorená.")
+        XCTAssertEqual(
+            artifact.prompt,
+            "Create a custom section for Prompt snapshot in sk."
+        )
+        let markdownURL = try XCTUnwrap(appState.lastMarkdownURL)
+        let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains("## Vlastný výstup"))
+        XCTAssertTrue(markdown.contains(#""ai analysis": "#))
+        let analysisInputs = await runner.analysisInputs()
+        XCTAssertEqual(analysisInputs.count, 1)
+        XCTAssertTrue(analysisInputs[0].contains("Create a custom section for Prompt snapshot in sk."))
+        XCTAssertFalse(analysisInputs[0].contains("This later edit"))
+    }
+
+    func testCompletedMeetingWithoutTranscriptSegmentsSkipsCLIAnalysis() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        let settings = AnalysisSettingsStore(defaults: fixture.defaults)
+        settings.setEnabled(true)
+        settings.setExecutablePath("/bin/echo", for: .codex)
+        let runner = CountingResilienceAnalysisCommandRunner()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: EmptyResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            analysisCommandRunner: runner,
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        let runsAfterAvailabilityCheck = await runner.runCount()
+        await appState.startRecording()
+        await appState.stopRecording()
+
+        XCTAssertEqual(appState.status, .completed)
+        XCTAssertNil(appState.lastCompletedSession?.metadata.analysis)
+        let finalRunCount = await runner.runCount()
+        XCTAssertEqual(finalRunCount, runsAfterAvailabilityCheck)
     }
 
     func testAppStateRecoversInterruptedSessionFromMergedTranscriptEndToEnd() async throws {
@@ -579,11 +707,15 @@ final class AppStateResilienceTests: XCTestCase {
         processingFileService: (any ProcessingFileServicing)? = nil,
         monitoring: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
         storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
-        apiKeyStore: any APIKeyStoring = ResilienceAPIKeyStore(),
+        analysisCommandRunner: any AnalysisCommandRunning = ResilienceAnalysisCommandRunner(),
         defaults: UserDefaults
     ) -> AppState {
         let applicationSettingsStore = ApplicationSettingsStore(defaults: defaults)
         applicationSettingsStore.setMinimumStorageBytes(1)
+        let analysisSettingsStore = AnalysisSettingsStore(defaults: defaults)
+        if analysisSettingsStore.executablePath(for: .codex).isEmpty {
+            analysisSettingsStore.setExecutablePath("/bin/echo", for: .codex)
+        }
         return AppState(
             sessionManager: sessionManager,
             captureCoordinator: captureCoordinator,
@@ -592,8 +724,8 @@ final class AppStateResilienceTests: XCTestCase {
             sessionTranscriber: sessionTranscriber,
             processingFileService: processingFileService,
             outputFolderStore: OutputFolderStore(defaults: defaults),
-            apiKeyStore: apiKeyStore,
-            analysisSettingsStore: AnalysisSettingsStore(defaults: defaults),
+            analysisSettingsStore: analysisSettingsStore,
+            analysisCommandRunner: analysisCommandRunner,
             transcriptionSettingsStore: TranscriptionSettingsStore(defaults: defaults),
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
@@ -677,7 +809,7 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         await delegate.loadRecoveredArtifacts(from: session)
     }
 
-    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {
         try await delegate.persistAnalysis(analysis, to: url)
     }
 
@@ -686,7 +818,7 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         gate.block()
@@ -840,28 +972,72 @@ private struct AppStateCapacityProvider: StorageCapacityProviding {
     func availableCapacity(at url: URL) throws -> Int64 { 1_000_000 }
 }
 
-private actor ResilienceAPIKeyStore: APIKeyStoring {
-    func save(_ apiKey: String) async throws {}
-    func load() async throws -> String? { nil }
-    func delete() async throws {}
-}
-
-private actor CountingResilienceAPIKeyStore: APIKeyStoring {
-    private var loads = 0
-
-    func save(_ apiKey: String) async throws {}
-    func load() async throws -> String? {
-        loads += 1
-        return nil
+private actor ResilienceAnalysisCommandRunner: AnalysisCommandRunning {
+    func run(
+        _ command: AnalysisCommand,
+        tool: AnalysisTool
+    ) async throws -> AnalysisCommandResult {
+        AnalysisCommandResult(
+            exitCode: 0,
+            standardOutput: Data("\(tool.displayName) test".utf8),
+            standardError: Data()
+        )
     }
-    func delete() async throws {}
-    func loadCount() -> Int { loads }
 }
 
-private actor FailingResilienceAPIKeyStore: APIKeyStoring {
-    func save(_ apiKey: String) async throws {}
-    func load() async throws -> String? { throw KeychainStoreError.invalidUTF8 }
-    func delete() async throws {}
+private actor CountingResilienceAnalysisCommandRunner: AnalysisCommandRunning {
+    private var runs = 0
+
+    func run(
+        _ command: AnalysisCommand,
+        tool: AnalysisTool
+    ) async throws -> AnalysisCommandResult {
+        runs += 1
+        return AnalysisCommandResult(
+            exitCode: 0,
+            standardOutput: Data("\(tool.displayName) test".utf8),
+            standardError: Data()
+        )
+    }
+
+    func runCount() -> Int { runs }
+}
+
+private actor SuccessfulResilienceAnalysisCommandRunner: AnalysisCommandRunning {
+    private let markdown: String
+    private var inputs: [String] = []
+
+    init(markdown: String) {
+        self.markdown = markdown
+    }
+
+    func run(
+        _ command: AnalysisCommand,
+        tool: AnalysisTool
+    ) async throws -> AnalysisCommandResult {
+        if command.arguments == ["--version"] {
+            return AnalysisCommandResult(
+                exitCode: 0,
+                standardOutput: Data("codex-test 1.0".utf8),
+                standardError: Data()
+            )
+        }
+        inputs.append(String(decoding: command.standardInput, as: UTF8.self))
+        let response = try JSONEncoder().encode(AnalysisMarkdown(markdown: markdown))
+        if let index = command.arguments.firstIndex(of: "--output-last-message") {
+            try response.write(
+                to: URL(fileURLWithPath: command.arguments[index + 1]),
+                options: .atomic
+            )
+        }
+        return AnalysisCommandResult(
+            exitCode: 0,
+            standardOutput: Data(),
+            standardError: Data()
+        )
+    }
+
+    func analysisInputs() -> [String] { inputs }
 }
 
 private actor ResilienceCaptureService: AudioCaptureService {
@@ -1009,6 +1185,46 @@ private actor ResilienceSessionTranscriber: SessionTranscribing {
                 systemSegmentCount: 1,
                 microphoneSegmentCount: 0,
                 mergedSegmentCount: 1,
+                warnings: [],
+                failureReason: nil,
+                provenance: model.provenance
+            ),
+            systemTranscript: track,
+            microphoneTranscript: nil,
+            mergedTranscript: merged
+        )
+    }
+}
+
+private actor EmptyResilienceSessionTranscriber: SessionTranscribing {
+    func transcribe(
+        session: RecordingSession,
+        finalization: AudioFinalizationMetadata,
+        model: TranscriptionModelReference,
+        language: TranscriptionLanguage
+    ) async throws -> SessionTranscriptionResult {
+        let track = TrackTranscript(
+            source: .system,
+            model: model.provenance.model,
+            requestedLanguage: language,
+            detectedLanguage: "sk",
+            completedAt: Date(),
+            segments: []
+        )
+        let merged = MergedTranscript(
+            sessionID: session.metadata.id,
+            title: session.metadata.title,
+            completedAt: Date(),
+            tracks: [],
+            segments: []
+        )
+        return SessionTranscriptionResult(
+            metadata: SessionTranscriptionMetadata(
+                status: .completed,
+                model: model.provenance.model,
+                systemSegmentCount: 0,
+                microphoneSegmentCount: 0,
+                mergedSegmentCount: 0,
                 warnings: [],
                 failureReason: nil,
                 provenance: model.provenance

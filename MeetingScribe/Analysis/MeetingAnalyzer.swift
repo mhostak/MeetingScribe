@@ -1,7 +1,7 @@
 import Foundation
 
 struct MeetingAnalysisRun: Equatable, Sendable {
-    let analysis: MeetingAnalysis
+    let analysis: AnalysisMarkdown
     let transcriptChunkCount: Int
     let requestCount: Int
 }
@@ -21,6 +21,7 @@ struct MeetingAnalyzer: Sendable {
     func analyze(
         session: SessionMetadata,
         transcript: MergedTranscript,
+        userPrompt: String = AnalysisPrompt.defaultTemplate,
         preferredLanguage: String = "sk"
     ) async throws -> MeetingAnalysisRun {
         try Task.checkCancellation()
@@ -37,7 +38,7 @@ struct MeetingAnalyzer: Sendable {
         }
 
         var requestCount = 0
-        var partials: [MeetingAnalysis] = []
+        var partials: [AnalysisMarkdown] = []
         for chunk in chunks {
             try Task.checkCancellation()
             partials.append(
@@ -47,6 +48,7 @@ struct MeetingAnalyzer: Sendable {
                         meetingTitle: session.title,
                         recordingID: session.id,
                         preferredLanguage: preferredLanguage,
+                        userPrompt: userPrompt,
                         content: chunk
                     )
                 )
@@ -62,7 +64,7 @@ struct MeetingAnalyzer: Sendable {
                 throw AnalysisError.transcriptChunkTooLarge
             }
 
-            var consolidated: [MeetingAnalysis] = []
+            var consolidated: [AnalysisMarkdown] = []
             for group in groups {
                 try Task.checkCancellation()
                 if group.count == 1 {
@@ -77,6 +79,7 @@ struct MeetingAnalyzer: Sendable {
                             meetingTitle: session.title,
                             recordingID: session.id,
                             preferredLanguage: preferredLanguage,
+                            userPrompt: userPrompt,
                             content: content
                         )
                     )
@@ -126,10 +129,10 @@ struct MeetingAnalyzer: Sendable {
     }
 
     private func consolidationGroups(
-        from analyses: [MeetingAnalysis]
-    ) throws -> [[MeetingAnalysis]] {
-        var groups: [[MeetingAnalysis]] = []
-        var current: [MeetingAnalysis] = []
+        from analyses: [AnalysisMarkdown]
+    ) throws -> [[AnalysisMarkdown]] {
+        var groups: [[AnalysisMarkdown]] = []
+        var current: [AnalysisMarkdown] = []
         var currentLength = 2
 
         for analysis in analyses {
@@ -172,7 +175,7 @@ struct MeetingAnalyzer: Sendable {
         return chunks
     }
 
-    private func encodedAnalyses(_ analyses: [MeetingAnalysis]) throws -> String {
+    private func encodedAnalyses(_ analyses: [AnalysisMarkdown]) throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return String(decoding: try encoder.encode(analyses), as: UTF8.self)

@@ -126,7 +126,7 @@ struct CalendarEventPickerView: View {
                 }
 
                 Toggle(
-                    "Share selected participant names with OpenAI analysis",
+                    "Share selected participant names with AI analysis",
                     isOn: $shareParticipantNamesWithAnalysis
                 )
                 .disabled(selectedParticipantIDs.isEmpty || !appState.aiAnalysisEnabled)

@@ -5,20 +5,20 @@ struct RecoveredProcessingArtifacts: Equatable, Sendable {
     let utteranceTranscript: ContinuousUtteranceTranscript?
     let speakerDiarizationArtifact: SpeakerDiarizationArtifact?
     let resolvedTranscript: ResolvedTranscript?
-    let analysis: MeetingAnalysis?
+    let analysis: AIAnalysisArtifact?
 }
 
 protocol ProcessingFileServicing: Sendable {
     func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts?
 
-    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws
 
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult
 }
@@ -28,7 +28,7 @@ extension ProcessingFileServicing {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         try await exportMarkdown(
@@ -44,7 +44,7 @@ extension ProcessingFileServicing {
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         try await exportMarkdown(
@@ -102,10 +102,10 @@ actor ProcessingFileService: ProcessingFileServicing {
             utteranceTranscript = nil
         }
 
-        let analysis: MeetingAnalysis?
+        let analysis: AIAnalysisArtifact?
         if fileManager.fileExists(atPath: session.analysisURL.path),
            let analysisData = try? Data(contentsOf: session.analysisURL) {
-            analysis = try? JSONDecoder().decode(MeetingAnalysis.self, from: analysisData)
+            analysis = try? JSONDecoder().decode(AIAnalysisArtifact.self, from: analysisData)
         } else {
             analysis = nil
         }
@@ -119,7 +119,7 @@ actor ProcessingFileService: ProcessingFileServicing {
         )
     }
 
-    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {
         let data = try JSONEncoder().encode(analysis)
         try data.write(to: url, options: .atomic)
     }
@@ -129,7 +129,7 @@ actor ProcessingFileService: ProcessingFileServicing {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         return try outputExporter.export(

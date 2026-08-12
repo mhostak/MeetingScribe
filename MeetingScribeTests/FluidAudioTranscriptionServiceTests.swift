@@ -622,14 +622,14 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
         nil
     }
 
-    func persistAnalysis(_ analysis: MeetingAnalysis, to url: URL) async throws {}
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
 
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?,
+        analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         let url = directoryURL.appendingPathComponent("comparison.md")

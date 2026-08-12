@@ -52,7 +52,9 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(
             markdown.contains("  - \"Vzdialení účastníci\"\n  - \"Účastníci na mieste\"")
         )
-        XCTAssertTrue(markdown.contains("## Súhrn"))
+        XCTAssertTrue(markdown.contains("<!-- meetingscribe:ai-analysis:start -->"))
+        XCTAssertTrue(markdown.contains("<!-- AI analýza zatiaľ nebola vytvorená. -->"))
+        XCTAssertTrue(markdown.contains("<!-- meetingscribe:ai-analysis:end -->"))
         XCTAssertTrue(markdown.contains("## Prepis"))
         XCTAssertTrue(
             markdown.contains("### 00:00:04 — Vzdialení účastníci *(prekrytie reči)*")
@@ -240,7 +242,7 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertFalse(markdown.contains("participants:\n  - \"Other\""))
     }
 
-    func testRenderFillsAnalysisSectionsWithEvidenceAndUnknownTaskFields() {
+    func testRenderInsertsFreeformAnalysisBetweenReservedMarkers() {
         let session = SessionMetadata(
             id: "recording-1",
             title: "SOFA weekly",
@@ -249,33 +251,21 @@ final class MarkdownRendererTests: XCTestCase {
             startedAt: startedAt,
             endedAt: endedAt
         )
-        let analysis = MeetingAnalysis(
-            summary: "Tím sa dohodol na ďalšom postupe.",
-            decisions: [
-                AnalysisReference(
-                    text: "Použije sa nové API.",
-                    timestampSeconds: 12,
-                    segmentID: "segment-000001"
-                ),
-            ],
-            actionItems: [
-                AnalysisActionItem(
-                    text: "Pripraviť návrh.",
-                    owner: nil,
-                    dueDate: nil,
-                    timestampSeconds: 18,
-                    segmentID: "segment-000002"
-                ),
-            ],
-            openQuestions: [],
-            risksAndBlockers: [],
-            nextMeetingTopics: [
-                AnalysisReference(
-                    text: "Stav implementácie",
-                    timestampSeconds: nil,
-                    segmentID: nil
-                ),
-            ]
+        let analysis = AIAnalysisArtifact(
+            markdown: """
+            ## Executive brief
+
+            Tím sa dohodol na ďalšom postupe.
+
+            | Úloha | Vlastník |
+            | --- | --- |
+            | Pripraviť návrh | neurčené |
+            """,
+            tool: .claude,
+            model: "sonnet",
+            toolVersion: "Claude Code test",
+            prompt: "Create a custom table",
+            generatedAt: startedAt
         )
 
         let markdown = MarkdownRenderer(timeZone: utc).render(
@@ -285,13 +275,10 @@ final class MarkdownRendererTests: XCTestCase {
         )
 
         XCTAssertTrue(markdown.contains("Tím sa dohodol na ďalšom postupe."))
-        XCTAssertTrue(markdown.contains("- Použije sa nové API. — 00:00:12 · `segment-000001`"))
-        XCTAssertTrue(
-            markdown.contains(
-                "- [ ] Neurčené — Pripraviť návrh. — termín: neurčený — 00:00:18 · `segment-000002`"
-            )
-        )
-        XCTAssertTrue(markdown.contains("## Témy na ďalší meeting\n\n- Stav implementácie"))
+        XCTAssertTrue(markdown.contains("<!-- meetingscribe:ai-analysis:start -->"))
+        XCTAssertTrue(markdown.contains("<!-- meetingscribe:ai-analysis:end -->"))
+        XCTAssertTrue(markdown.contains("| Pripraviť návrh | neurčené |"))
+        XCTAssertTrue(markdown.contains(#""ai analysis": "2026-07-10 – claude – sonnet""#))
         XCTAssertFalse(markdown.contains("<!-- AI analýza zatiaľ nebola vytvorená. -->"))
     }
 
@@ -507,8 +494,7 @@ final class MarkdownRendererTests: XCTestCase {
             transcript: makeTranscript(segments: [])
         )
 
-        XCTAssertTrue(markdown.contains("## Shrnutí"))
-        XCTAssertTrue(markdown.contains("## Úkoly"))
+        XCTAssertTrue(markdown.contains("<!-- AI analýza zatím nebyla vytvořena. -->"))
         XCTAssertTrue(markdown.contains("## Přepis"))
         XCTAssertTrue(markdown.contains("Přepis neobsahuje žádné rozpoznané segmenty."))
     }
@@ -527,8 +513,7 @@ final class MarkdownRendererTests: XCTestCase {
             transcript: makeTranscript(segments: [])
         )
 
-        XCTAssertTrue(markdown.contains("## Summary"))
-        XCTAssertTrue(markdown.contains("## Action items"))
+        XCTAssertTrue(markdown.contains("<!-- AI analysis has not been created. -->"))
         XCTAssertTrue(markdown.contains("## Transcript"))
         XCTAssertTrue(markdown.contains("The transcript contains no recognized segments."))
     }
