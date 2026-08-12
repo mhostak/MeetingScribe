@@ -21,7 +21,14 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("read-only"))
         XCTAssertTrue(command.arguments.contains("gpt-test"))
         XCTAssertFalse(command.arguments.contains("Meeting text"))
-        XCTAssertTrue(String(decoding: command.standardInput, as: UTF8.self).contains("Meeting text"))
+        let prompt = String(decoding: command.standardInput, as: UTF8.self)
+        XCTAssertTrue(prompt.contains("Meeting text"))
+        XCTAssertTrue(prompt.contains(
+            "Write every part of the `markdown` value in Czech (čeština, ISO 639-1: cs)."
+        ))
+        XCTAssertTrue(prompt.contains(
+            "takes precedence over any conflicting language instruction below."
+        ))
     }
 
     func testClaudeDisablesToolsAndReadsStructuredOutput() async throws {
@@ -42,6 +49,10 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertTrue(command.arguments.contains("--json-schema"))
         let toolsIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--tools"))
         XCTAssertEqual(command.arguments[toolsIndex + 1], "")
+        let prompt = String(decoding: command.standardInput, as: UTF8.self)
+        XCTAssertTrue(prompt.contains(
+            "Write every part of the `markdown` value in Czech (čeština, ISO 639-1: cs)."
+        ))
     }
 
     func testReservedBoundaryMarkerIsRejected() async {
@@ -222,7 +233,7 @@ final class CLIAnalysisProviderTests: XCTestCase {
             mode: .transcript,
             meetingTitle: "Test",
             recordingID: "recording-1",
-            preferredLanguage: "sk",
+            preferredLanguage: .czech,
             userPrompt: "Vytvor vlastnú štruktúru.",
             content: "[00:00:01] [segment-1] Other: Meeting text"
         )

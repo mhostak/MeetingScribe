@@ -123,8 +123,26 @@ final class AnalysisSettingsStoreTests: XCTestCase {
             session: session
         )
 
-        XCTAssertEqual(rendered, "Weekly sync / recording-42 / cs")
+        XCTAssertEqual(
+            rendered,
+            "Weekly sync / recording-42 / Czech (čeština, ISO 639-1: cs)"
+        )
         XCTAssertEqual(AnalysisPrompt.hash(rendered), AnalysisPrompt.hash(rendered))
         XCTAssertNotEqual(AnalysisPrompt.hash(rendered), AnalysisPrompt.hash(rendered + "!"))
+    }
+
+    func testEveryOutputLanguageHasAnExplicitAnalysisDescription() {
+        XCTAssertEqual(
+            OutputLanguage.slovak.analysisLanguageDescription,
+            "Slovak (slovenčina, ISO 639-1: sk)"
+        )
+        XCTAssertEqual(
+            OutputLanguage.czech.analysisLanguageDescription,
+            "Czech (čeština, ISO 639-1: cs)"
+        )
+        XCTAssertEqual(
+            OutputLanguage.english.analysisLanguageDescription,
+            "English (ISO 639-1: en)"
+        )
     }
 }

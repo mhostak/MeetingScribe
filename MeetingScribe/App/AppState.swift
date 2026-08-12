@@ -1811,8 +1811,7 @@ final class AppState: ObservableObject {
         let run = try await MeetingAnalyzer(provider: provider).analyze(
             session: session.metadata,
             transcript: transcript,
-            userPrompt: renderedPrompt,
-            preferredLanguage: session.metadata.resolvedOutputLanguage.rawValue
+            userPrompt: renderedPrompt
         )
         let validated = try AnalysisMarkdownSchema.validate(run.analysis)
         let artifact = AIAnalysisArtifact(

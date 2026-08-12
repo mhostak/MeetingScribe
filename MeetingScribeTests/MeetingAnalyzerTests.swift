@@ -50,6 +50,30 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertTrue(requests[0].content.contains("[segment-000000]"))
     }
 
+    func testSessionOutputLanguageIsUsedForEveryAnalysisRequest() async throws {
+        let provider = MockAnalysisProvider()
+        let transcript = makeTranscript(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Text meetingu",
+                confidence: nil
+            ),
+        ])
+
+        _ = try await MeetingAnalyzer(provider: provider).analyze(
+            session: makeSession(outputLanguage: .czech),
+            transcript: transcript
+        )
+
+        let requests = await provider.requests
+        XCTAssertEqual(requests.map(\.preferredLanguage), [.czech])
+    }
+
     func testOversizedSingleSegmentIsRejectedWithoutProviderCall() async {
         let provider = MockAnalysisProvider()
         let segment = TranscriptSegment(
@@ -174,13 +198,15 @@ final class MeetingAnalyzerTests: XCTestCase {
     }
 
     private func makeSession(
-        shareParticipantNamesWithAnalysis: Bool? = nil
+        shareParticipantNamesWithAnalysis: Bool? = nil,
+        outputLanguage: OutputLanguage? = nil
     ) -> SessionMetadata {
         SessionMetadata(
             id: "session-1",
             title: "Test meeting",
             status: .recorded,
             createdAt: Date(),
+            outputLanguage: outputLanguage,
             calendarEvent: shareParticipantNamesWithAnalysis.map { shareNames in
                 CalendarEventSnapshot(
                     source: .appleCalendar,

@@ -291,7 +291,8 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(artifact.markdown, "## Vlastný výstup\n\nAnalýza bola vytvorená.")
         XCTAssertEqual(
             artifact.prompt,
-            "Create a custom section for Prompt snapshot in sk."
+            "Create a custom section for Prompt snapshot in "
+                + "Slovak (slovenčina, ISO 639-1: sk)."
         )
         let markdownURL = try XCTUnwrap(appState.lastMarkdownURL)
         let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
@@ -299,7 +300,14 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertTrue(markdown.contains(#""ai analysis": "#))
         let analysisInputs = await runner.analysisInputs()
         XCTAssertEqual(analysisInputs.count, 1)
-        XCTAssertTrue(analysisInputs[0].contains("Create a custom section for Prompt snapshot in sk."))
+        XCTAssertTrue(analysisInputs[0].contains(
+            "Create a custom section for Prompt snapshot in "
+                + "Slovak (slovenčina, ISO 639-1: sk)."
+        ))
+        XCTAssertTrue(analysisInputs[0].contains(
+            "Write every part of the `markdown` value in "
+                + "Slovak (slovenčina, ISO 639-1: sk)."
+        ))
         XCTAssertFalse(analysisInputs[0].contains("This later edit"))
     }
 

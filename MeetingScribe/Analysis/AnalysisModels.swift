@@ -171,7 +171,7 @@ struct AnalysisRequest: Equatable, Sendable {
     let mode: AnalysisRequestMode
     let meetingTitle: String
     let recordingID: String
-    let preferredLanguage: String
+    let preferredLanguage: OutputLanguage
     let userPrompt: String
     let content: String
 }
@@ -200,7 +200,7 @@ enum AnalysisPrompt {
         template
             .replacingOccurrences(
                 of: "{{output_language}}",
-                with: session.resolvedOutputLanguage.rawValue
+                with: session.resolvedOutputLanguage.analysisLanguageDescription
             )
             .replacingOccurrences(of: "{{meeting_title}}", with: session.title)
             .replacingOccurrences(of: "{{recording_id}}", with: session.id)

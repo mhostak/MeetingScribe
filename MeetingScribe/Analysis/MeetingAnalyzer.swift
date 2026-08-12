@@ -21,8 +21,7 @@ struct MeetingAnalyzer: Sendable {
     func analyze(
         session: SessionMetadata,
         transcript: MergedTranscript,
-        userPrompt: String = AnalysisPrompt.defaultTemplate,
-        preferredLanguage: String = "sk"
+        userPrompt: String = AnalysisPrompt.defaultTemplate
     ) async throws -> MeetingAnalysisRun {
         try Task.checkCancellation()
         let chunks = try transcriptChunks(
@@ -47,7 +46,7 @@ struct MeetingAnalyzer: Sendable {
                         mode: .transcript,
                         meetingTitle: session.title,
                         recordingID: session.id,
-                        preferredLanguage: preferredLanguage,
+                        preferredLanguage: session.resolvedOutputLanguage,
                         userPrompt: userPrompt,
                         content: chunk
                     )
@@ -78,7 +77,7 @@ struct MeetingAnalyzer: Sendable {
                             mode: .consolidation,
                             meetingTitle: session.title,
                             recordingID: session.id,
-                            preferredLanguage: preferredLanguage,
+                            preferredLanguage: session.resolvedOutputLanguage,
                             userPrompt: userPrompt,
                             content: content
                         )

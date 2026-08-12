@@ -671,6 +671,14 @@ enum OutputLanguage: String, Codable, CaseIterable, Hashable, Identifiable, Send
         case .english: return "English"
         }
     }
+
+    var analysisLanguageDescription: String {
+        switch self {
+        case .slovak: return "Slovak (slovenčina, ISO 639-1: sk)"
+        case .czech: return "Czech (čeština, ISO 639-1: cs)"
+        case .english: return "English (ISO 639-1: en)"
+        }
+    }
 }
 
 enum MarkdownFileNameTemplate {
