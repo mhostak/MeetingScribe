@@ -4,7 +4,7 @@ import XCTest
 
 final class AnalysisSettingsStoreTests: XCTestCase {
     @MainActor
-    func testSettingsPersistToolModelPromptAndExecutable() throws {
+    func testSettingsPersistProviderSpecificModelsPromptAndExecutable() throws {
         let suiteName = "MeetingScribeTests.AnalysisSettings.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -12,20 +12,75 @@ final class AnalysisSettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(store.isEnabled)
         XCTAssertEqual(store.tool, .codex)
-        XCTAssertEqual(store.model, "")
+        XCTAssertEqual(store.modelSelection(for: .codex), .automatic)
+        XCTAssertEqual(store.modelSelection(for: .claude), .automatic)
+        XCTAssertNil(store.resolvedModel(for: .codex))
         XCTAssertEqual(store.prompt, AnalysisPrompt.defaultTemplate)
 
         store.setEnabled(true)
         store.setTool(.claude)
-        store.setModel("sonnet")
+        store.setModelSelection(.codexTerra, for: .codex)
+        store.setModelSelection(.custom, for: .claude)
+        store.setCustomModel("claude-sonnet-4-6", for: .claude)
         store.setPrompt("Custom {{meeting_title}}")
         store.setExecutablePath("/usr/local/bin/claude", for: .claude)
 
         XCTAssertTrue(store.isEnabled)
         XCTAssertEqual(store.tool, .claude)
-        XCTAssertEqual(store.model, "sonnet")
+        XCTAssertEqual(store.modelSelection(for: .codex), .codexTerra)
+        XCTAssertEqual(store.resolvedModel(for: .codex), "gpt-5.6-terra")
+        XCTAssertEqual(store.modelSelection(for: .claude), .custom)
+        XCTAssertEqual(store.customModel(for: .claude), "claude-sonnet-4-6")
+        XCTAssertEqual(store.resolvedModel(for: .claude), "claude-sonnet-4-6")
         XCTAssertEqual(store.prompt, "Custom {{meeting_title}}")
         XCTAssertEqual(store.executablePath(for: .claude), "/usr/local/bin/claude")
+    }
+
+    @MainActor
+    func testLegacyGlobalModelMigratesToSelectedToolPreset() throws {
+        let suiteName = "MeetingScribeTests.AnalysisModelPresetMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "aiAnalysisCLIMigrationCompleted")
+        defaults.set(AnalysisTool.claude.rawValue, forKey: "aiAnalysisTool")
+        defaults.set("sonnet", forKey: "aiAnalysisModel")
+
+        let store = AnalysisSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.modelSelection(for: .claude), .claudeSonnet)
+        XCTAssertEqual(store.resolvedModel(for: .claude), "sonnet")
+        XCTAssertEqual(store.modelSelection(for: .codex), .automatic)
+        XCTAssertNil(defaults.object(forKey: "aiAnalysisModel"))
+    }
+
+    @MainActor
+    func testUnknownLegacyGlobalModelMigratesWithoutChangingIdentifier() throws {
+        let suiteName = "MeetingScribeTests.AnalysisCustomModelMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "aiAnalysisCLIMigrationCompleted")
+        defaults.set(AnalysisTool.codex.rawValue, forKey: "aiAnalysisTool")
+        defaults.set("  future-codex-model  ", forKey: "aiAnalysisModel")
+
+        let store = AnalysisSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.modelSelection(for: .codex), .custom)
+        XCTAssertEqual(store.customModel(for: .codex), "future-codex-model")
+        XCTAssertEqual(store.resolvedModel(for: .codex), "future-codex-model")
+        XCTAssertEqual(store.modelSelection(for: .claude), .automatic)
+    }
+
+    @MainActor
+    func testInvalidModelSelectionForToolFallsBackToAutomatic() throws {
+        let suiteName = "MeetingScribeTests.AnalysisInvalidModel.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = AnalysisSettingsStore(defaults: defaults)
+
+        store.setModelSelection(.claudeOpus, for: .codex)
+
+        XCTAssertEqual(store.modelSelection(for: .codex), .automatic)
+        XCTAssertNil(store.resolvedModel(for: .codex))
     }
 
     @MainActor

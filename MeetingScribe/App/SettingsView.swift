@@ -189,7 +189,7 @@ struct SettingsView: View {
                 HStack {
                     Button("Choose executable…") { appState.chooseAnalysisExecutable() }
                     Button("Auto-detect") { appState.useDetectedAnalysisExecutable() }
-                    Button("Verify availability") {
+                    Button("Verify tool") {
                         Task { await appState.refreshAnalysisToolStatus() }
                     }
                     .disabled(appState.isCheckingAnalysisTool)
@@ -199,11 +199,40 @@ struct SettingsView: View {
                 Label(analysisToolStatusText, systemImage: analysisToolStatusIcon)
                     .foregroundStyle(analysisToolStatusColor)
 
-                TextField("Model (optional)", text: $appState.analysisModel)
-                    .disabled(!appState.aiAnalysisEnabled)
-                    .onChange(of: appState.analysisModel) {
-                        appState.persistAnalysisSettings()
+                Picker("Model", selection: $appState.selectedAnalysisModel) {
+                    ForEach(appState.analysisModelOptions) { selection in
+                        Text(LocalizedStringKey(selection.titleLocalizationKey))
+                            .tag(selection)
                     }
+                }
+                .pickerStyle(.menu)
+                .disabled(!appState.aiAnalysisEnabled)
+                .onChange(of: appState.selectedAnalysisModel) {
+                    appState.persistAnalysisSettings()
+                }
+
+                if appState.selectedAnalysisModel == .custom {
+                    TextField("Model identifier", text: $appState.customAnalysisModel)
+                        .disabled(!appState.aiAnalysisEnabled)
+                        .onChange(of: appState.customAnalysisModel) {
+                            appState.persistAnalysisSettings()
+                        }
+                }
+
+                Text(LocalizedStringKey(appState.selectedAnalysisModel.detailLocalizationKey))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .disabled(!appState.aiAnalysisEnabled)
+
+                if appState.selectedAnalysisModel == .custom,
+                   appState.resolvedAnalysisModel == nil {
+                    Label(
+                        "Enter a model identifier. Until then, the tool default will be used.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
             }
 
             Section("Analysis prompt") {

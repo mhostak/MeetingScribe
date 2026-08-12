@@ -54,7 +54,8 @@ final class AppState: ObservableObject {
     @Published var aiAnalysisEnabled = false
     @Published var selectedAnalysisTool: AnalysisTool = .codex
     @Published var analysisExecutablePath = ""
-    @Published var analysisModel = ""
+    @Published var selectedAnalysisModel: AnalysisModelSelection = .automatic
+    @Published var customAnalysisModel = ""
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
     @Published var automaticallyDeleteSourceCAF = false
@@ -177,7 +178,8 @@ final class AppState: ObservableObject {
             .automaticallyDeleteSourceCAF
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
         selectedAnalysisTool = analysisSettingsStore.tool
-        analysisModel = analysisSettingsStore.model
+        selectedAnalysisModel = analysisSettingsStore.modelSelection(for: selectedAnalysisTool)
+        customAnalysisModel = analysisSettingsStore.customModel(for: selectedAnalysisTool)
         analysisPrompt = analysisSettingsStore.prompt
         usesDetectedAnalysisExecutable = analysisSettingsStore
             .executablePath(for: selectedAnalysisTool).isEmpty
@@ -571,7 +573,14 @@ final class AppState: ObservableObject {
     func persistAnalysisSettings() {
         analysisSettingsStore.setEnabled(aiAnalysisEnabled)
         analysisSettingsStore.setTool(selectedAnalysisTool)
-        analysisSettingsStore.setModel(analysisModel)
+        analysisSettingsStore.setModelSelection(
+            selectedAnalysisModel,
+            for: selectedAnalysisTool
+        )
+        analysisSettingsStore.setCustomModel(
+            customAnalysisModel,
+            for: selectedAnalysisTool
+        )
         analysisSettingsStore.setPrompt(analysisPrompt)
         analysisSettingsStore.setExecutablePath(
             usesDetectedAnalysisExecutable ? "" : analysisExecutablePath,
@@ -590,12 +599,22 @@ final class AppState: ObservableObject {
 
     func analysisToolSelectionDidChange() {
         analysisSettingsStore.setTool(selectedAnalysisTool)
+        selectedAnalysisModel = analysisSettingsStore.modelSelection(for: selectedAnalysisTool)
+        customAnalysisModel = analysisSettingsStore.customModel(for: selectedAnalysisTool)
         usesDetectedAnalysisExecutable = analysisSettingsStore
             .executablePath(for: selectedAnalysisTool).isEmpty
         analysisExecutablePath = resolvedAnalysisExecutablePath(for: selectedAnalysisTool)
         persistAnalysisSettings()
         analysisToolStatus = .unknown
         Task { await refreshAnalysisToolStatus() }
+    }
+
+    var analysisModelOptions: [AnalysisModelSelection] {
+        AnalysisModelSelection.options(for: selectedAnalysisTool)
+    }
+
+    var resolvedAnalysisModel: String? {
+        selectedAnalysisModel.resolvedModel(customModel: customAnalysisModel)
     }
 
     func resetAnalysisPrompt() {
@@ -648,7 +667,7 @@ final class AppState: ObservableObject {
             let provider = CLIAnalysisProvider(
                 tool: selectedAnalysisTool,
                 executableURL: executableURL,
-                model: analysisModel,
+                model: resolvedAnalysisModel,
                 runner: analysisCommandRunner
             )
             let version = try await provider.toolVersion()
@@ -677,7 +696,7 @@ final class AppState: ObservableObject {
         return SessionAnalysisConfiguration(
             tool: selectedAnalysisTool,
             executablePath: executablePath,
-            model: analysisModel,
+            model: resolvedAnalysisModel,
             prompt: analysisPrompt
         )
     }

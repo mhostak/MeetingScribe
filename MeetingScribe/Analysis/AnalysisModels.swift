@@ -22,6 +22,91 @@ enum AnalysisTool: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 }
 
+enum AnalysisModelSelection: String, Codable, Identifiable, Sendable {
+    case automatic
+    case codexTerra
+    case codexSol
+    case codexLuna
+    case claudeSonnet
+    case claudeOpus
+    case custom
+
+    var id: String { rawValue }
+
+    static func options(for tool: AnalysisTool) -> [AnalysisModelSelection] {
+        switch tool {
+        case .codex:
+            return [.automatic, .codexTerra, .codexSol, .codexLuna, .custom]
+        case .claude:
+            return [.automatic, .claudeSonnet, .claudeOpus, .custom]
+        }
+    }
+
+    func isAvailable(for tool: AnalysisTool) -> Bool {
+        Self.options(for: tool).contains(self)
+    }
+
+    var titleLocalizationKey: String {
+        switch self {
+        case .automatic: return "Automatic (tool default)"
+        case .codexTerra: return "GPT-5.6 Terra — recommended"
+        case .codexSol: return "GPT-5.6 Sol — highest quality"
+        case .codexLuna: return "GPT-5.6 Luna — fastest"
+        case .claudeSonnet: return "Claude Sonnet — recommended"
+        case .claudeOpus: return "Claude Opus — highest quality"
+        case .custom: return "Custom model…"
+        }
+    }
+
+    var detailLocalizationKey: String {
+        switch self {
+        case .automatic:
+            return "The selected tool chooses its configured or recommended model."
+        case .codexTerra:
+            return "Balanced quality, speed, and cost for meeting analysis."
+        case .codexSol, .claudeOpus:
+            return "Highest quality for complex or long meetings."
+        case .codexLuna:
+            return "Fast and efficient for repeatable analysis."
+        case .claudeSonnet:
+            return "Balanced quality and speed for meeting analysis."
+        case .custom:
+            return "Enter a model identifier supported by the selected tool."
+        }
+    }
+
+    var modelIdentifier: String? {
+        switch self {
+        case .automatic, .custom: return nil
+        case .codexTerra: return "gpt-5.6-terra"
+        case .codexSol: return "gpt-5.6-sol"
+        case .codexLuna: return "gpt-5.6-luna"
+        case .claudeSonnet: return "sonnet"
+        case .claudeOpus: return "opus"
+        }
+    }
+
+    func resolvedModel(customModel: String) -> String? {
+        if let modelIdentifier { return modelIdentifier }
+        guard self == .custom else { return nil }
+        let normalized = customModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    static func selection(for model: String, tool: AnalysisTool) -> AnalysisModelSelection {
+        let normalized = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return .automatic }
+        switch (tool, normalized) {
+        case (.codex, "gpt-5.6-terra"): return .codexTerra
+        case (.codex, "gpt-5.6-sol"), (.codex, "gpt-5.6"): return .codexSol
+        case (.codex, "gpt-5.6-luna"): return .codexLuna
+        case (.claude, "sonnet"): return .claudeSonnet
+        case (.claude, "opus"): return .claudeOpus
+        default: return .custom
+        }
+    }
+}
+
 struct AnalysisMarkdown: Codable, Equatable, Sendable {
     let markdown: String
 
