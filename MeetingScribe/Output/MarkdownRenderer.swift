@@ -48,11 +48,7 @@ struct MarkdownRenderer: Sendable {
         appendYAMLList(name: "tags", values: ["meeting"], to: &lines)
         lines.append("recording_id: \(yamlQuoted(session.id))")
         if let analysis {
-            let model = analysis.model.map { " – \($0)" } ?? ""
-            lines.append(
-                "\(yamlQuoted("ai analysis")): "
-                    + yamlQuoted("\(dateString(analysis.generatedAt)) – \(analysis.tool.rawValue)\(model)")
-            )
+            lines.append(analysisFrontmatterLine(analysis))
         }
         lines.append(contentsOf: [
             "---",
@@ -90,6 +86,12 @@ struct MarkdownRenderer: Sendable {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"
+    }
+
+    func analysisFrontmatterLine(_ analysis: AIAnalysisArtifact) -> String {
+        let model = analysis.model.map { " – \($0)" } ?? ""
+        return "\(yamlQuoted("ai analysis")): "
+            + yamlQuoted("\(dateString(analysis.generatedAt)) – \(analysis.tool.rawValue)\(model)")
     }
 
     private func renderableSegments(
@@ -183,6 +185,78 @@ struct MarkdownRenderer: Sendable {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+enum MarkdownAnalysisUpdateError: Error, Equatable, LocalizedError {
+    case invalidStructure
+    case couldNotDecode
+    case couldNotEncode
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStructure:
+            return "The Markdown file does not contain a valid MeetingScribe AI analysis block."
+        case .couldNotDecode:
+            return "The Markdown file could not be decoded as UTF-8."
+        case .couldNotEncode:
+            return "The updated Markdown file could not be encoded as UTF-8."
+        }
+    }
+}
+
+struct MarkdownAnalysisUpdater: Sendable {
+    private let renderer: MarkdownRenderer
+
+    init(timeZone: TimeZone = .current) {
+        renderer = MarkdownRenderer(timeZone: timeZone)
+    }
+
+    func update(_ analysis: AIAnalysisArtifact, at markdownURL: URL) throws {
+        guard let markdown = try? String(contentsOf: markdownURL, encoding: .utf8) else {
+            throw MarkdownAnalysisUpdateError.couldNotDecode
+        }
+        let updated = try updating(markdown, with: analysis)
+        guard let data = updated.data(using: .utf8) else {
+            throw MarkdownAnalysisUpdateError.couldNotEncode
+        }
+        try data.write(to: markdownURL, options: .atomic)
+    }
+
+    func updating(_ markdown: String, with analysis: AIAnalysisArtifact) throws -> String {
+        guard let startRange = markdown.range(of: MarkdownRenderer.analysisStartMarker),
+              let endRange = markdown.range(
+                  of: MarkdownRenderer.analysisEndMarker,
+                  range: startRange.upperBound..<markdown.endIndex
+              ) else {
+            throw MarkdownAnalysisUpdateError.invalidStructure
+        }
+
+        let normalizedAnalysis = analysis.markdown
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var updated = markdown
+        updated.replaceSubrange(
+            startRange.upperBound..<endRange.lowerBound,
+            with: "\n\(normalizedAnalysis)\n"
+        )
+
+        var lines = updated.components(separatedBy: "\n")
+        guard lines.first == "---",
+              let frontmatterEnd = lines.dropFirst().firstIndex(of: "---") else {
+            throw MarkdownAnalysisUpdateError.invalidStructure
+        }
+        let analysisLine = renderer.analysisFrontmatterLine(analysis)
+        let existingLine = lines[1..<frontmatterEnd].firstIndex { line in
+            let normalized = line.trimmingCharacters(in: .whitespaces)
+            return normalized.hasPrefix("\"ai analysis\":")
+                || normalized.hasPrefix("ai analysis:")
+        }
+        if let existingLine {
+            lines[existingLine] = analysisLine
+        } else {
+            lines.insert(analysisLine, at: frontmatterEnd)
+        }
+        return lines.joined(separator: "\n")
     }
 }
 

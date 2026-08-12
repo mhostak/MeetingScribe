@@ -518,6 +518,50 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertTrue(markdown.contains("The transcript contains no recognized segments."))
     }
 
+    func testAnalysisUpdaterReplacesOnlyAnalysisBlockAndFrontmatter() throws {
+        let original = """
+        ---
+        type: meeting
+        title: "Planning"
+        ---
+
+        # Planning
+
+        Manual note outside the generated block.
+
+        <!-- meetingscribe:ai-analysis:start -->
+        <!-- AI analysis has not been created. -->
+        <!-- meetingscribe:ai-analysis:end -->
+
+        ## Transcript
+
+        Original transcript text.
+        """
+        let analysis = AIAnalysisArtifact(
+            markdown: "## Summary\n\nUpdated analysis.",
+            tool: .codex,
+            model: "gpt-test",
+            toolVersion: "codex-test",
+            prompt: "Test prompt",
+            generatedAt: startedAt
+        )
+
+        let updated = try MarkdownAnalysisUpdater(timeZone: utc).updating(
+            original,
+            with: analysis
+        )
+
+        XCTAssertTrue(updated.contains(#""ai analysis": "2026-07-10 – codex – gpt-test""#))
+        XCTAssertTrue(updated.contains("## Summary\n\nUpdated analysis."))
+        XCTAssertFalse(updated.contains("AI analysis has not been created"))
+        XCTAssertTrue(updated.contains("Manual note outside the generated block."))
+        XCTAssertTrue(updated.contains("Original transcript text."))
+        XCTAssertEqual(
+            updated.components(separatedBy: MarkdownRenderer.analysisStartMarker).count - 1,
+            1
+        )
+    }
+
     private func makeTranscript(segments: [TranscriptSegment]) -> MergedTranscript {
         MergedTranscript(
             sessionID: "recording-1",

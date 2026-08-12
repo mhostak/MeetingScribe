@@ -131,7 +131,11 @@ struct MenuBarView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(appState.isRecoveringSession)
+            .disabled(
+                appState.isRecoveringSession
+                    || appState.aiAnalysisReprocessingSessionID != nil
+                    || appState.fluidAudioReprocessingSessionID != nil
+            )
 
             Text("Make sure you have the required permission or participant consent.")
                 .font(.caption2)
@@ -320,6 +324,10 @@ struct MenuBarView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(
+                appState.aiAnalysisReprocessingSessionID != nil
+                    || appState.fluidAudioReprocessingSessionID != nil
+            )
         }
     }
 

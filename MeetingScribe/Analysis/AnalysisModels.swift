@@ -20,6 +20,25 @@ enum AnalysisTool: String, CaseIterable, Codable, Identifiable, Sendable {
         case .claude: return "claude"
         }
     }
+
+    var authenticationStatusArguments: [String] {
+        switch self {
+        case .codex: return ["login", "status"]
+        case .claude: return ["auth", "status"]
+        }
+    }
+
+    var loginArguments: [String] {
+        switch self {
+        case .codex: return ["login"]
+        case .claude: return ["auth", "login"]
+        }
+    }
+
+    func loginCommand(executableURL: URL) -> String {
+        let quotedPath = "'\(executableURL.path.replacingOccurrences(of: "'", with: "'\\''"))'"
+        return ([quotedPath] + loginArguments).joined(separator: " ")
+    }
 }
 
 enum AnalysisModelSelection: String, Codable, Identifiable, Sendable {

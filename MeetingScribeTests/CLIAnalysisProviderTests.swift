@@ -105,6 +105,61 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertTrue(command.standardInput.isEmpty)
     }
 
+    func testCodexAuthenticationStatusUsesLoginStatusCommand() async throws {
+        let runner = MockCLICommandRunner(
+            markdown: "Unused",
+            codexAuthenticated: false
+        )
+        let provider = CLIAnalysisProvider(
+            tool: .codex,
+            executableURL: URL(fileURLWithPath: "/bin/echo"),
+            runner: runner
+        )
+
+        let status = try await provider.authenticationStatus()
+
+        XCTAssertEqual(status, .authenticationRequired)
+        let commands = await runner.commands
+        let command = try XCTUnwrap(commands.first)
+        XCTAssertEqual(command.arguments, ["login", "status"])
+        XCTAssertTrue(command.standardInput.isEmpty)
+    }
+
+    func testClaudeAuthenticationStatusReadsOnlyLoggedInFlag() async throws {
+        let runner = MockCLICommandRunner(
+            markdown: "Unused",
+            claudeLoggedIn: true
+        )
+        let provider = CLIAnalysisProvider(
+            tool: .claude,
+            executableURL: URL(fileURLWithPath: "/bin/echo"),
+            runner: runner
+        )
+
+        let status = try await provider.authenticationStatus()
+
+        XCTAssertEqual(status, .authenticated)
+        let commands = await runner.commands
+        let command = try XCTUnwrap(commands.first)
+        XCTAssertEqual(command.arguments, ["auth", "status"])
+        XCTAssertTrue(command.standardInput.isEmpty)
+    }
+
+    func testLoginCommandsUseSelectedExecutableWithoutShellInterpolation() {
+        XCTAssertEqual(
+            AnalysisTool.codex.loginCommand(
+                executableURL: URL(fileURLWithPath: "/Applications/Codex CLI/codex")
+            ),
+            "'/Applications/Codex CLI/codex' login"
+        )
+        XCTAssertEqual(
+            AnalysisTool.claude.loginCommand(
+                executableURL: URL(fileURLWithPath: "/Users/test/claude")
+            ),
+            "'/Users/test/claude' auth login"
+        )
+    }
+
     func testProductionRunnerExecutesFakeCodexWithoutShellWrapping() async throws {
         let fixture = try makeExecutableFixture(script: """
         #!/bin/sh
@@ -196,18 +251,24 @@ private actor MockCLICommandRunner: AnalysisCommandRunning {
     private let exitCode: Int32
     private let standardError: String
     private let version: String
+    private let codexAuthenticated: Bool
+    private let claudeLoggedIn: Bool
     private(set) var commands: [AnalysisCommand] = []
 
     init(
         markdown: String,
         exitCode: Int32 = 0,
         standardError: String = "",
-        version: String = "test-cli 1.0"
+        version: String = "test-cli 1.0",
+        codexAuthenticated: Bool = true,
+        claudeLoggedIn: Bool = true
     ) {
         self.markdown = markdown
         self.exitCode = exitCode
         self.standardError = standardError
         self.version = version
+        self.codexAuthenticated = codexAuthenticated
+        self.claudeLoggedIn = claudeLoggedIn
     }
 
     func run(
@@ -220,6 +281,26 @@ private actor MockCLICommandRunner: AnalysisCommandRunning {
                 exitCode: exitCode,
                 standardOutput: Data(version.utf8),
                 standardError: Data(standardError.utf8)
+            )
+        }
+        if command.arguments == ["login", "status"] {
+            return AnalysisCommandResult(
+                exitCode: codexAuthenticated ? 0 : 1,
+                standardOutput: Data(),
+                standardError: Data()
+            )
+        }
+        if command.arguments == ["auth", "status"] {
+            let output = try JSONSerialization.data(
+                withJSONObject: [
+                    "loggedIn": claudeLoggedIn,
+                    "email": "must-not-be-used@example.com",
+                ]
+            )
+            return AnalysisCommandResult(
+                exitCode: 0,
+                standardOutput: output,
+                standardError: Data()
             )
         }
 

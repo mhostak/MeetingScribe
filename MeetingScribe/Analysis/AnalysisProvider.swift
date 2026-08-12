@@ -42,3 +42,20 @@ enum AnalysisError: Error, Equatable, LocalizedError {
         }
     }
 }
+
+enum AnalysisRevisionError: Error, Equatable, LocalizedError {
+    case applicationBusy
+    case transcriptMissing
+    case markdownMissing
+
+    var errorDescription: String? {
+        switch self {
+        case .applicationBusy:
+            return "Wait for the current recording or processing task to finish before running AI analysis."
+        case .transcriptMissing:
+            return "The recording has no transcript that can be analyzed."
+        case .markdownMissing:
+            return "The recording's Markdown file is missing or unavailable."
+        }
+    }
+}

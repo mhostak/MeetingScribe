@@ -243,7 +243,13 @@ enum AnalysisToolStatus: Equatable, Sendable {
     case unknown
     case unavailable
     case available(path: String, version: String?)
+    case authenticationRequired(path: String, version: String?, loginCommand: String)
     case failed(path: String, reason: String)
+}
+
+enum AnalysisAuthenticationStatus: Equatable, Sendable {
+    case authenticated
+    case authenticationRequired
 }
 
 struct CLIAnalysisProvider: AnalysisProvider {
@@ -357,6 +363,38 @@ struct CLIAnalysisProvider: AnalysisProvider {
         let version = String(decoding: result.standardOutput, as: UTF8.self)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return version.isEmpty ? tool.displayName : version
+    }
+
+    func authenticationStatus() async throws -> AnalysisAuthenticationStatus {
+        try requireExecutable()
+        let result = try await runner.run(
+            AnalysisCommand(
+                executableURL: executableURL,
+                arguments: tool.authenticationStatusArguments,
+                standardInput: Data(),
+                currentDirectoryURL: executableURL.deletingLastPathComponent(),
+                timeout: .seconds(15)
+            ),
+            tool: tool
+        )
+
+        switch tool {
+        case .codex:
+            return result.exitCode == 0 ? .authenticated : .authenticationRequired
+        case .claude:
+            guard result.exitCode == 0 else {
+                throw AnalysisError.processFailed(
+                    tool: tool,
+                    exitCode: result.exitCode,
+                    message: diagnostic(from: result.standardError)
+                )
+            }
+            let status = try? JSONDecoder().decode(
+                ClaudeAuthenticationStatus.self,
+                from: result.standardOutput
+            )
+            return status?.loggedIn == true ? .authenticated : .authenticationRequired
+        }
     }
 
     private func requireExecutable() throws {
@@ -482,4 +520,8 @@ private struct ClaudeResultEnvelope: Decodable {
         case result
         case structuredOutput = "structured_output"
     }
+}
+
+private struct ClaudeAuthenticationStatus: Decodable {
+    let loggedIn: Bool
 }

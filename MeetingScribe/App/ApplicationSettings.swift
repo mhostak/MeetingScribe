@@ -245,6 +245,12 @@ enum AppLocalization {
             return storageError(error, language: language)
         case let error as AnalysisError:
             return analysisError(error, language: language)
+        case let error as AnalysisRevisionError:
+            return analysisRevisionError(error, language: language)
+        case let error as MarkdownAnalysisUpdateError:
+            return markdownAnalysisUpdateError(error, language: language)
+        case let error as TranscriptionRevisionError:
+            return transcriptionRevisionError(error, language: language)
         case let error as OutputExportError:
             return outputError(error, language: language)
         case let error as TranscriptionError:
@@ -399,6 +405,93 @@ enum AppLocalization {
             return pick("The AI analysis contains a reserved MeetingScribe marker.", "AI analýza obsahuje vyhradenú značku MeetingScribe.", "AI analýza obsahuje vyhrazenou značku MeetingScribe.", language)
         case let .invalidStructuredOutput(reason):
             return pick("The structured AI analysis could not be decoded: \(reason)", "Štruktúrovanú AI analýzu sa nepodarilo dekódovať: \(reason)", "Strukturovanou AI analýzu se nepodařilo dekódovat: \(reason)", language)
+        }
+    }
+
+    private static func analysisRevisionError(
+        _ error: AnalysisRevisionError,
+        language: AppLanguage
+    ) -> String {
+        switch error {
+        case .applicationBusy:
+            return pick(
+                "Wait for the current recording or processing task to finish before running AI analysis.",
+                "Pred spustením AI analýzy počkajte na dokončenie aktuálneho nahrávania alebo spracovania.",
+                "Před spuštěním AI analýzy počkejte na dokončení aktuálního nahrávání nebo zpracování.",
+                language
+            )
+        case .transcriptMissing:
+            return pick(
+                "The recording has no transcript that can be analyzed.",
+                "Záznam nemá prepis, ktorý by bolo možné analyzovať.",
+                "Záznam nemá přepis, který by bylo možné analyzovat.",
+                language
+            )
+        case .markdownMissing:
+            return pick(
+                "The recording's Markdown file is missing or unavailable.",
+                "Súbor Markdown pre tento záznam chýba alebo nie je dostupný.",
+                "Soubor Markdown pro tento záznam chybí nebo není dostupný.",
+                language
+            )
+        }
+    }
+
+    private static func markdownAnalysisUpdateError(
+        _ error: MarkdownAnalysisUpdateError,
+        language: AppLanguage
+    ) -> String {
+        switch error {
+        case .invalidStructure:
+            return pick(
+                "The Markdown file does not contain a valid MeetingScribe AI analysis block.",
+                "Súbor Markdown neobsahuje platný blok AI analýzy MeetingScribe.",
+                "Soubor Markdown neobsahuje platný blok AI analýzy MeetingScribe.",
+                language
+            )
+        case .couldNotDecode:
+            return pick(
+                "The Markdown file could not be decoded as UTF-8.",
+                "Súbor Markdown sa nepodarilo dekódovať ako UTF-8.",
+                "Soubor Markdown se nepodařilo dekódovat jako UTF-8.",
+                language
+            )
+        case .couldNotEncode:
+            return pick(
+                "The updated Markdown file could not be encoded as UTF-8.",
+                "Aktualizovaný súbor Markdown sa nepodarilo zakódovať ako UTF-8.",
+                "Aktualizovaný soubor Markdown se nepodařilo zakódovat jako UTF-8.",
+                language
+            )
+        }
+    }
+
+    private static func transcriptionRevisionError(
+        _ error: TranscriptionRevisionError,
+        language: AppLanguage
+    ) -> String {
+        switch error {
+        case .finalizedAudioMissing:
+            return pick(
+                "The recording has no finalized audio that can be reprocessed.",
+                "Záznam nemá dokončený zvuk, z ktorého by bolo možné zopakovať prepis.",
+                "Záznam nemá dokončený zvuk, ze kterého by bylo možné zopakovat přepis.",
+                language
+            )
+        case .applicationBusy:
+            return pick(
+                "Wait for the current recording or processing task to finish before reprocessing.",
+                "Pred opakovaním prepisu počkajte na dokončenie aktuálneho nahrávania alebo spracovania.",
+                "Před opakováním přepisu počkejte na dokončení aktuálního nahrávání nebo zpracování.",
+                language
+            )
+        case let .revisionAlreadyExists(id):
+            return pick(
+                "The transcription revision \(id) already exists.",
+                "Revízia prepisu \(id) už existuje.",
+                "Revize přepisu \(id) již existuje.",
+                language
+            )
         }
     }
 

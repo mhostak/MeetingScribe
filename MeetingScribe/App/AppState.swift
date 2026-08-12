@@ -35,6 +35,7 @@ final class AppState: ObservableObject {
     )
     @Published private(set) var isRemovingLegacyModels = false
     @Published private(set) var fluidAudioReprocessingSessionID: String?
+    @Published private(set) var aiAnalysisReprocessingSessionID: String?
     @Published private(set) var outputFolderURL: URL?
     @Published private(set) var lastMarkdownURL: URL?
     @Published private(set) var analysisToolStatus: AnalysisToolStatus = .unknown
@@ -200,7 +201,8 @@ final class AppState: ObservableObject {
         session: RecordingSession
     ) async throws -> TranscriptionRevisionResult {
         guard status != .recording, !status.isProcessing,
-              fluidAudioReprocessingSessionID == nil else {
+              fluidAudioReprocessingSessionID == nil,
+              aiAnalysisReprocessingSessionID == nil else {
             throw TranscriptionRevisionError.applicationBusy
         }
         let descriptor = FluidAudioModelDescriptor.parakeetV3
@@ -227,6 +229,89 @@ final class AppState: ObservableObject {
             )
         } catch {
             lastError = localized(.recordingSavedTranscription(localized(error)))
+            throw error
+        }
+    }
+
+    @discardableResult
+    func reanalyze(
+        session: RecordingSession
+    ) async throws -> URL {
+        guard status != .recording, !status.isProcessing,
+              fluidAudioReprocessingSessionID == nil,
+              aiAnalysisReprocessingSessionID == nil else {
+            throw AnalysisRevisionError.applicationBusy
+        }
+        guard let recovered = await processingFileService.loadRecoveredArtifacts(from: session),
+              !recovered.transcript.segments.isEmpty else {
+            throw AnalysisRevisionError.transcriptMissing
+        }
+        guard let markdownPath = session.metadata.output?.markdownPath,
+              !markdownPath.isEmpty else {
+            throw AnalysisRevisionError.markdownMissing
+        }
+        let markdownURL = URL(fileURLWithPath: markdownPath)
+        guard FileManager.default.fileExists(atPath: markdownURL.path) else {
+            throw AnalysisRevisionError.markdownMissing
+        }
+
+        let configuration = configuredAnalysisConfiguration()
+        var analysisSession = session
+        analysisSession.metadata.analysisConfiguration = configuration
+        let rawTranscript = recovered.transcript
+        let analysisTranscript: MergedTranscript
+        if let sourceBlocks = recovered.utteranceTranscript,
+           sourceBlocks.sessionID == rawTranscript.sessionID,
+           sourceBlocks.configuration == .sourceBlocks {
+            analysisTranscript = sourceBlocks.asMergedTranscript(basedOn: rawTranscript)
+        } else {
+            analysisTranscript = SourceConversationBlockGrouper().group(
+                transcript: rawTranscript,
+                sourceFingerprint: "analysis-source-blocks"
+            ).asMergedTranscript(basedOn: rawTranscript)
+        }
+
+        aiAnalysisReprocessingSessionID = session.metadata.id
+        defer { aiAnalysisReprocessingSessionID = nil }
+        do {
+            let outcome = try await runAnalysis(
+                session: analysisSession,
+                transcript: analysisTranscript,
+                configuration: configuration
+            )
+            guard let artifact = outcome.analysis, let metadata = outcome.metadata else {
+                throw AnalysisError.emptyOutput
+            }
+            try await processingFileService.persistAnalysis(
+                artifact,
+                to: session.analysisURL
+            )
+            try outputFolderStore.withAccess(to: markdownURL.deletingLastPathComponent()) {
+                try MarkdownAnalysisUpdater().update(artifact, at: markdownURL)
+            }
+            let updatedSession = try await sessionManager.recordAnalysisRevision(
+                configuration: configuration,
+                analysis: metadata,
+                for: session
+            )
+            if lastCompletedSession?.metadata.id == updatedSession.metadata.id {
+                lastCompletedSession = updatedSession
+            }
+            lastMarkdownURL = markdownURL
+            lastError = nil
+            try? await processingLogger.log(
+                .analysisCompleted,
+                for: updatedSession,
+                attributes: [.model(metadata.model)]
+            )
+            return markdownURL
+        } catch {
+            lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
+            try? await processingLogger.log(
+                .analysisFailed,
+                for: session,
+                attributes: [.model(configuration.model ?? "default")]
+            )
             throw error
         }
     }
@@ -671,7 +756,18 @@ final class AppState: ObservableObject {
                 runner: analysisCommandRunner
             )
             let version = try await provider.toolVersion()
-            analysisToolStatus = .available(path: executableURL.path, version: version)
+            switch try await provider.authenticationStatus() {
+            case .authenticated:
+                analysisToolStatus = .available(path: executableURL.path, version: version)
+            case .authenticationRequired:
+                analysisToolStatus = .authenticationRequired(
+                    path: executableURL.path,
+                    version: version,
+                    loginCommand: selectedAnalysisTool.loginCommand(
+                        executableURL: executableURL
+                    )
+                )
+            }
             lastError = nil
         } catch {
             analysisToolStatus = .failed(
@@ -679,6 +775,22 @@ final class AppState: ObservableObject {
                 reason: localized(error)
             )
         }
+    }
+
+    func copyAnalysisLoginCommandAndOpenTerminal() {
+        guard case let .authenticationRequired(_, _, loginCommand) = analysisToolStatus else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(loginCommand, forType: .string)
+        let terminalURL = URL(
+            fileURLWithPath: "/System/Applications/Utilities/Terminal.app",
+            isDirectory: true
+        )
+        NSWorkspace.shared.openApplication(
+            at: terminalURL,
+            configuration: NSWorkspace.OpenConfiguration()
+        )
     }
 
     private func resolvedAnalysisExecutablePath(for tool: AnalysisTool) -> String {
@@ -689,6 +801,10 @@ final class AppState: ObservableObject {
 
     private func currentAnalysisConfiguration() -> SessionAnalysisConfiguration? {
         guard aiAnalysisEnabled else { return nil }
+        return configuredAnalysisConfiguration()
+    }
+
+    private func configuredAnalysisConfiguration() -> SessionAnalysisConfiguration {
         let executablePath = AnalysisExecutableResolver.resolve(
             tool: selectedAnalysisTool,
             configuredPath: analysisExecutablePath
@@ -1634,58 +1750,19 @@ final class AppState: ObservableObject {
         let startedAt = Date()
         do {
             try transition(to: .analyzing)
-            let executablePath = configuration.executablePath
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !executablePath.isEmpty else {
-                throw AnalysisError.executableNotFound(
-                    path: configuration.tool.executableName
-                )
-            }
-            let executableURL = URL(fileURLWithPath: executablePath)
-            let provider = CLIAnalysisProvider(
-                tool: configuration.tool,
-                executableURL: executableURL,
-                model: configuration.model,
-                runner: analysisCommandRunner
-            )
-            let toolVersion = try await provider.toolVersion()
-            let renderedPrompt = AnalysisPrompt.render(
-                template: configuration.prompt,
-                session: session.metadata
-            )
-            let run = try await MeetingAnalyzer(provider: provider).analyze(
-                session: session.metadata,
+            let outcome = try await runAnalysis(
+                session: session,
                 transcript: transcript,
-                userPrompt: renderedPrompt,
-                preferredLanguage: session.metadata.resolvedOutputLanguage.rawValue
+                configuration: configuration
             )
-            let validated = try AnalysisMarkdownSchema.validate(run.analysis)
-            let artifact = AIAnalysisArtifact(
-                markdown: validated.markdown,
-                tool: configuration.tool,
-                model: configuration.model,
-                toolVersion: toolVersion,
-                prompt: renderedPrompt
-            )
+            guard let artifact = outcome.analysis else {
+                throw AnalysisError.emptyOutput
+            }
             try await processingFileService.persistAnalysis(
                 artifact,
                 to: session.analysisURL
             )
-            return AnalysisOutcome(
-                metadata: SessionAnalysisMetadata(
-                    status: .completed,
-                    provider: configuration.tool.rawValue,
-                    model: configuration.model ?? "default",
-                    startedAt: startedAt,
-                    completedAt: Date(),
-                    transcriptChunkCount: run.transcriptChunkCount,
-                    requestCount: run.requestCount,
-                    promptHash: artifact.promptHash,
-                    toolVersion: toolVersion,
-                    failureReason: nil
-                ),
-                analysis: artifact
-            )
+            return outcome
         } catch {
             lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
             return AnalysisOutcome(
@@ -1704,6 +1781,62 @@ final class AppState: ObservableObject {
                 analysis: nil
             )
         }
+    }
+
+    private func runAnalysis(
+        session: RecordingSession,
+        transcript: MergedTranscript,
+        configuration: SessionAnalysisConfiguration
+    ) async throws -> AnalysisOutcome {
+        let startedAt = Date()
+        let executablePath = configuration.executablePath
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !executablePath.isEmpty else {
+            throw AnalysisError.executableNotFound(
+                path: configuration.tool.executableName
+            )
+        }
+        let executableURL = URL(fileURLWithPath: executablePath)
+        let provider = CLIAnalysisProvider(
+            tool: configuration.tool,
+            executableURL: executableURL,
+            model: configuration.model,
+            runner: analysisCommandRunner
+        )
+        let toolVersion = try await provider.toolVersion()
+        let renderedPrompt = AnalysisPrompt.render(
+            template: configuration.prompt,
+            session: session.metadata
+        )
+        let run = try await MeetingAnalyzer(provider: provider).analyze(
+            session: session.metadata,
+            transcript: transcript,
+            userPrompt: renderedPrompt,
+            preferredLanguage: session.metadata.resolvedOutputLanguage.rawValue
+        )
+        let validated = try AnalysisMarkdownSchema.validate(run.analysis)
+        let artifact = AIAnalysisArtifact(
+            markdown: validated.markdown,
+            tool: configuration.tool,
+            model: configuration.model,
+            toolVersion: toolVersion,
+            prompt: renderedPrompt
+        )
+        return AnalysisOutcome(
+            metadata: SessionAnalysisMetadata(
+                status: .completed,
+                provider: configuration.tool.rawValue,
+                model: configuration.model ?? "default",
+                startedAt: startedAt,
+                completedAt: Date(),
+                transcriptChunkCount: run.transcriptChunkCount,
+                requestCount: run.requestCount,
+                promptHash: artifact.promptHash,
+                toolVersion: toolVersion,
+                failureReason: nil
+            ),
+            analysis: artifact
+        )
     }
 
     private func setFailure(_ error: Error) {
@@ -1729,6 +1862,10 @@ final class AppState: ObservableObject {
 
     private func localized(_ error: Error) -> String {
         AppLocalization.error(error, language: selectedAppLanguage)
+    }
+
+    func errorMessage(for error: Error) -> String {
+        localized(error)
     }
 
     private func processingErrorAttributes(_ error: Error) -> [ProcessingLogAttribute] {

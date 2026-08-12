@@ -199,6 +199,20 @@ struct SettingsView: View {
                 Label(analysisToolStatusText, systemImage: analysisToolStatusIcon)
                     .foregroundStyle(analysisToolStatusColor)
 
+                if case let .authenticationRequired(_, _, loginCommand) =
+                    appState.analysisToolStatus {
+                    Text("Sign in with the selected tool in Terminal, then verify it again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(verbatim: loginCommand)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                    Button("Copy command and open Terminal") {
+                        appState.copyAnalysisLoginCommandAndOpenTerminal()
+                    }
+                    .disabled(!appState.aiAnalysisEnabled)
+                }
+
                 Picker("Model", selection: $appState.selectedAnalysisModel) {
                     ForEach(appState.analysisModelOptions) { selection in
                         Text(LocalizedStringKey(selection.titleLocalizationKey))
@@ -564,6 +578,9 @@ struct SettingsView: View {
         case .unavailable: return String(localized: "Executable not found")
         case let .available(path, version):
             return [version, path].compactMap { $0 }.joined(separator: " — ")
+        case let .authenticationRequired(path, version, _):
+            let toolDescription = [version, path].compactMap { $0 }.joined(separator: " — ")
+            return "\(String(localized: "Authentication required")) — \(toolDescription)"
         case let .failed(path, reason): return "\(path) — \(reason)"
         }
     }
@@ -571,6 +588,7 @@ struct SettingsView: View {
     private var analysisToolStatusIcon: String {
         switch appState.analysisToolStatus {
         case .available: return "checkmark.circle.fill"
+        case .authenticationRequired: return "person.crop.circle.badge.exclamationmark"
         case .failed, .unavailable: return "exclamationmark.triangle.fill"
         case .unknown: return "questionmark.circle"
         }
@@ -579,7 +597,7 @@ struct SettingsView: View {
     private var analysisToolStatusColor: Color {
         switch appState.analysisToolStatus {
         case .available: return .green
-        case .failed, .unavailable: return .orange
+        case .authenticationRequired, .failed, .unavailable: return .orange
         case .unknown: return .secondary
         }
     }

@@ -189,6 +189,18 @@ actor SessionManager {
         return session
     }
 
+    func recordAnalysisRevision(
+        configuration: SessionAnalysisConfiguration,
+        analysis: SessionAnalysisMetadata,
+        for completedSession: RecordingSession
+    ) throws -> RecordingSession {
+        var session = completedSession
+        session.metadata.analysisConfiguration = configuration
+        session.metadata.analysis = analysis
+        try persist(session)
+        return session
+    }
+
     func storageStatus() throws -> StorageStatus {
         try prepareStorage()
         return try storageGuard.status(at: recordingsRoot)

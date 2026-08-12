@@ -159,12 +159,29 @@ final class SessionCatalogTests: XCTestCase {
         )
     }
 
+    func testDetectsWhetherAnAIAnalysisArtifactExists() async throws {
+        let markdownURL = root.appendingPathComponent("analysis.md")
+        try Data("markdown".utf8).write(to: markdownURL)
+        let directory = try writeCompletedSession(
+            id: "with-analysis",
+            title: "Analyzed",
+            startedAt: Date(timeIntervalSince1970: 100),
+            markdownURL: markdownURL
+        )
+        try Data("analysis".utf8).write(to: directory.appendingPathComponent("analysis.json"))
+
+        let snapshot = try await SessionCatalog(recordingsRoot: root).load()
+
+        XCTAssertTrue(try XCTUnwrap(snapshot.entries.first).hasAnalysis)
+    }
+
+    @discardableResult
     private func writeCompletedSession(
         id: String,
         title: String,
         startedAt: Date,
         markdownURL: URL
-    ) throws {
+    ) throws -> URL {
         let metadata = SessionMetadata(
             id: id,
             title: title,
@@ -207,6 +224,7 @@ final class SessionCatalogTests: XCTestCase {
         let directory = try write(metadata: metadata)
         try Data([1]).write(to: directory.appendingPathComponent("system-16k.wav"))
         try Data("transcript".utf8).write(to: directory.appendingPathComponent("transcript.json"))
+        return directory
     }
 
     @discardableResult

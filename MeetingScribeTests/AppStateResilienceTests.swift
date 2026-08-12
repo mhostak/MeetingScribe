@@ -44,6 +44,20 @@ final class AppStateResilienceTests: XCTestCase {
             ),
             "Nainstalovaný model neodpovídá připnuté revizi."
         )
+        XCTAssertEqual(
+            AppLocalization.error(
+                AnalysisRevisionError.transcriptMissing,
+                language: .slovak
+            ),
+            "Záznam nemá prepis, ktorý by bolo možné analyzovať."
+        )
+        XCTAssertEqual(
+            AppLocalization.error(
+                MarkdownAnalysisUpdateError.invalidStructure,
+                language: .czech
+            ),
+            "Soubor Markdown neobsahuje platný blok AI analýzy MeetingScribe."
+        )
     }
 
     func testAllApplicationLanguagesResolveToAConcreteLocalization() {
@@ -143,7 +157,7 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.prepareStorage()
 
         let runCount = await analysisRunner.runCount()
-        XCTAssertEqual(runCount, 1)
+        XCTAssertEqual(runCount, 2)
         XCTAssertEqual(appState.status, .idle)
         XCTAssertEqual(appState.fluidAudioASRModelStatus, .missing)
         XCTAssertEqual(appState.fluidAudioDiarizationModelStatus, .missing)
@@ -193,6 +207,35 @@ final class AppStateResilienceTests: XCTestCase {
 
         XCTAssertEqual(appState.status, .idle)
         XCTAssertEqual(appState.analysisToolStatus, .unavailable)
+    }
+
+    func testPrepareStorageReportsMissingCLIAuthentication() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let analysisSettings = AnalysisSettingsStore(defaults: fixture.defaults)
+        analysisSettings.setEnabled(true)
+        analysisSettings.setExecutablePath("/bin/echo", for: .codex)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            analysisCommandRunner: SignedOutResilienceAnalysisCommandRunner(),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+
+        XCTAssertEqual(
+            appState.analysisToolStatus,
+            .authenticationRequired(
+                path: "/bin/echo",
+                version: "codex-test 1.0",
+                loginCommand: "'/bin/echo' login"
+            )
+        )
     }
 
     func testCompletedMeetingUsesSnapshottedCLIPromptAndExportsFreeformMarkdown() async throws {
@@ -258,6 +301,100 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(analysisInputs.count, 1)
         XCTAssertTrue(analysisInputs[0].contains("Create a custom section for Prompt snapshot in sk."))
         XCTAssertFalse(analysisInputs[0].contains("This later edit"))
+    }
+
+    func testManualAIAnalysisUsesCurrentSettingsAndUpdatesExistingRecording() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let sessionDirectory = recordingsRoot.appendingPathComponent(
+            "manual-analysis",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: sessionDirectory,
+            withIntermediateDirectories: true
+        )
+        let markdownURL = fixture.root.appendingPathComponent("manual-analysis.md")
+        let startedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let metadata = SessionMetadata(
+            id: "manual-analysis",
+            title: "Existing meeting",
+            status: .recorded,
+            createdAt: startedAt,
+            startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(60),
+            transcription: SessionTranscriptionMetadata(
+                status: .completed,
+                model: "test-model",
+                startedAt: startedAt,
+                completedAt: startedAt.addingTimeInterval(60),
+                systemSegmentCount: 1,
+                microphoneSegmentCount: 0,
+                warnings: [],
+                failureReason: nil
+            ),
+            output: SessionOutputMetadata(
+                status: .completed,
+                markdownFileName: markdownURL.lastPathComponent,
+                markdownPath: markdownURL.path,
+                exportedAt: startedAt.addingTimeInterval(60),
+                failureReason: nil
+            )
+        )
+        let session = RecordingSession(metadata: metadata, directoryURL: sessionDirectory)
+        let transcript = makeTranscript(sessionID: metadata.id, title: metadata.title)
+        try TranscriptJSONCoder.makeEncoder().encode(transcript).write(
+            to: session.mergedTranscriptURL,
+            options: .atomic
+        )
+        try SessionJSONCoder.makeEncoder().encode(metadata).write(
+            to: session.manifestURL,
+            options: .atomic
+        )
+        try Data(
+            MarkdownRenderer().render(session: metadata, transcript: transcript).utf8
+        ).write(to: markdownURL, options: .atomic)
+
+        let settings = AnalysisSettingsStore(defaults: fixture.defaults)
+        settings.setEnabled(false)
+        settings.setTool(.codex)
+        settings.setExecutablePath("/bin/echo", for: .codex)
+        settings.setPrompt("Analyze {{meeting_title}} with the current prompt.")
+        let runner = SuccessfulResilienceAnalysisCommandRunner(
+            markdown: "## Nová analýza\n\nAktualizovaný výsledok."
+        )
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            analysisCommandRunner: runner,
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+
+        let updatedMarkdownURL = try await appState.reanalyze(session: session)
+
+        XCTAssertEqual(updatedMarkdownURL, markdownURL)
+        XCTAssertNil(appState.aiAnalysisReprocessingSessionID)
+        let persisted = try decodeMetadata(at: session.manifestURL)
+        XCTAssertEqual(persisted.analysis?.status, .completed)
+        XCTAssertEqual(
+            persisted.analysisConfiguration?.prompt,
+            "Analyze {{meeting_title}} with the current prompt."
+        )
+        let artifact = try JSONDecoder().decode(
+            AIAnalysisArtifact.self,
+            from: Data(contentsOf: session.analysisURL)
+        )
+        XCTAssertEqual(artifact.prompt, "Analyze Existing meeting with the current prompt.")
+        let markdown = try String(contentsOf: markdownURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains("## Nová analýza"))
+        XCTAssertTrue(markdown.contains("Recovered transcript text"))
+        XCTAssertFalse(markdown.contains("AI analýza zatiaľ nebola vytvorená"))
+        let analysisInputs = await runner.analysisInputs()
+        XCTAssertEqual(analysisInputs.count, 1)
     }
 
     func testCompletedMeetingWithoutTranscriptSegmentsSkipsCLIAnalysis() async throws {
@@ -1003,6 +1140,26 @@ private actor CountingResilienceAnalysisCommandRunner: AnalysisCommandRunning {
     func runCount() -> Int { runs }
 }
 
+private actor SignedOutResilienceAnalysisCommandRunner: AnalysisCommandRunning {
+    func run(
+        _ command: AnalysisCommand,
+        tool: AnalysisTool
+    ) async throws -> AnalysisCommandResult {
+        if command.arguments == ["--version"] {
+            return AnalysisCommandResult(
+                exitCode: 0,
+                standardOutput: Data("codex-test 1.0".utf8),
+                standardError: Data()
+            )
+        }
+        return AnalysisCommandResult(
+            exitCode: 1,
+            standardOutput: Data(),
+            standardError: Data()
+        )
+    }
+}
+
 private actor SuccessfulResilienceAnalysisCommandRunner: AnalysisCommandRunning {
     private let markdown: String
     private var inputs: [String] = []
@@ -1019,6 +1176,13 @@ private actor SuccessfulResilienceAnalysisCommandRunner: AnalysisCommandRunning 
             return AnalysisCommandResult(
                 exitCode: 0,
                 standardOutput: Data("codex-test 1.0".utf8),
+                standardError: Data()
+            )
+        }
+        if command.arguments == ["login", "status"] {
+            return AnalysisCommandResult(
+                exitCode: 0,
+                standardOutput: Data("Logged in".utf8),
                 standardError: Data()
             )
         }

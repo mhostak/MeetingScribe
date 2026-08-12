@@ -251,7 +251,7 @@ private struct RecordingSessionRow: View {
                                 result.directoryURL
                             ])
                         } catch {
-                            reprocessingError = error.localizedDescription
+                            reprocessingError = appState.errorMessage(for: error)
                         }
                     }
                 } label: {
@@ -259,14 +259,45 @@ private struct RecordingSessionRow: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Label("Reprocess with FluidAudio", systemImage: "arrow.triangle.2.circlepath")
+                        Label("Repeat transcription", systemImage: "arrow.triangle.2.circlepath")
                     }
                 }
                 .disabled(
                     appState.status == .recording
                         || appState.status.isProcessing
                         || appState.fluidAudioReprocessingSessionID != nil
+                        || appState.aiAnalysisReprocessingSessionID != nil
                         || !entry.audio.isAvailable
+                )
+
+                Button {
+                    Task {
+                        do {
+                            reprocessingError = nil
+                            try await appState.reanalyze(session: entry.session)
+                            await reload()
+                        } catch {
+                            reprocessingError = appState.errorMessage(for: error)
+                        }
+                    }
+                } label: {
+                    if appState.aiAnalysisReprocessingSessionID == entry.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label(
+                            LocalizedStringKey(analysisActionTitle),
+                            systemImage: "sparkles"
+                        )
+                    }
+                }
+                .disabled(
+                    appState.status == .recording
+                        || appState.status.isProcessing
+                        || appState.fluidAudioReprocessingSessionID != nil
+                        || appState.aiAnalysisReprocessingSessionID != nil
+                        || !entry.transcript.isAvailable
+                        || !entry.markdown.isAvailable
                 )
 
                 Spacer()
@@ -332,6 +363,10 @@ private struct RecordingSessionRow: View {
 
     private var finderTarget: URL {
         markdownURL ?? entry.session.manifestURL
+    }
+
+    private var analysisActionTitle: String {
+        entry.hasAnalysis ? "Repeat AI analysis" : "AI analysis"
     }
 
     @ViewBuilder
