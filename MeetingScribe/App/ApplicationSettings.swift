@@ -36,10 +36,7 @@ enum AppLanguage: String, CaseIterable, Hashable, Identifiable, Sendable {
 }
 
 enum AppUserMessage: Equatable, Sendable {
-    case openAIKeyLoad(String)
     case outputFolderSave(String)
-    case openAIKeySave(String)
-    case openAIKeyRemove(String)
     case launchAtLogin(String)
     case fluidAudioModelDownload(String, String)
     case fluidAudioModelImport(String, String)
@@ -53,7 +50,6 @@ enum AppUserMessage: Equatable, Sendable {
     case recordingSaved(String)
     case recordingSavedTranscription(String)
     case transcriptSavedMarkdown(String)
-    case transcriptSavedAnalysisSkipped(String)
     case transcriptSavedAnalysisFailed(String)
     case unsupportedToken(String)
     case unknownError
@@ -71,32 +67,11 @@ enum AppLocalization {
     static func message(_ message: AppUserMessage, language: AppLanguage) -> String {
         let language = language.resolved
         switch message {
-        case let .openAIKeyLoad(detail):
-            return pick(
-                "The OpenAI API key could not be loaded: \(detail)",
-                "Kľúč OpenAI API sa nepodarilo načítať: \(detail)",
-                "Klíč OpenAI API se nepodařilo načíst: \(detail)",
-                language
-            )
         case let .outputFolderSave(detail):
             return pick(
                 "The output folder could not be saved: \(detail)",
                 "Výstupný priečinok sa nepodarilo uložiť: \(detail)",
                 "Výstupní složku se nepodařilo uložit: \(detail)",
-                language
-            )
-        case let .openAIKeySave(detail):
-            return pick(
-                "The OpenAI API key could not be saved: \(detail)",
-                "Kľúč OpenAI API sa nepodarilo uložiť: \(detail)",
-                "Klíč OpenAI API se nepodařilo uložit: \(detail)",
-                language
-            )
-        case let .openAIKeyRemove(detail):
-            return pick(
-                "The OpenAI API key could not be removed: \(detail)",
-                "Kľúč OpenAI API sa nepodarilo odstrániť: \(detail)",
-                "Klíč OpenAI API se nepodařilo odstranit: \(detail)",
                 language
             )
         case let .launchAtLogin(detail):
@@ -188,13 +163,6 @@ enum AppLocalization {
                 "Transcript saved. Markdown export failed: \(detail)",
                 "Prepis bol uložený. Export do Markdownu zlyhal: \(detail)",
                 "Přepis byl uložen. Export do Markdownu selhal: \(detail)",
-                language
-            )
-        case let .transcriptSavedAnalysisSkipped(detail):
-            return pick(
-                "Transcript saved. AI analysis was skipped: \(detail)",
-                "Prepis bol uložený. AI analýza bola preskočená: \(detail)",
-                "Přepis byl uložen. AI analýza byla přeskočena: \(detail)",
                 language
             )
         case let .transcriptSavedAnalysisFailed(detail):
@@ -303,8 +271,6 @@ enum AppLocalization {
                     language
                 )
             }
-        case let error as KeychainStoreError:
-            return keychainError(error, language: language)
         case let error as CalendarIntegrationError:
             return calendarError(error, language: language)
         default:
@@ -413,29 +379,26 @@ enum AppLocalization {
 
     private static func analysisError(_ error: AnalysisError, language: AppLanguage) -> String {
         switch error {
-        case .missingAPIKey:
-            return pick("Add an OpenAI API key before enabling AI analysis.", "Pred zapnutím AI analýzy pridajte kľúč OpenAI API.", "Před zapnutím AI analýzy přidejte klíč OpenAI API.", language)
+        case let .executableNotFound(path):
+            return pick("The AI tool executable was not found at \(path).", "Spustiteľný súbor AI nástroja sa nenašiel na \(path).", "Spustitelný soubor AI nástroje nebyl nalezen na \(path).", language)
+        case let .executableNotRunnable(path):
+            return pick("The selected AI tool is not executable: \(path).", "Vybraný AI nástroj nie je spustiteľný: \(path).", "Vybraný AI nástroj není spustitelný: \(path).", language)
+        case let .processLaunchFailed(tool, message):
+            return pick("\(tool.displayName) could not be started: \(message)", "\(tool.displayName) sa nepodarilo spustiť: \(message)", "\(tool.displayName) se nepodařilo spustit: \(message)", language)
+        case let .processFailed(tool, exitCode, message):
+            return pick("\(tool.displayName) failed with exit code \(exitCode): \(message)", "\(tool.displayName) zlyhal s kódom \(exitCode): \(message)", "\(tool.displayName) selhal s kódem \(exitCode): \(message)", language)
+        case let .processTimedOut(tool):
+            return pick("\(tool.displayName) analysis timed out.", "Analýza cez \(tool.displayName) prekročila časový limit.", "Analýza přes \(tool.displayName) překročila časový limit.", language)
         case .transcriptChunkTooLarge:
             return pick("A transcript segment or partial analysis is too large to process safely.", "Časť prepisu alebo čiastková analýza je príliš veľká na bezpečné spracovanie.", "Část přepisu nebo dílčí analýza je příliš velká pro bezpečné zpracování.", language)
-        case .invalidHTTPResponse:
-            return pick("OpenAI returned an invalid HTTP response.", "OpenAI vrátil neplatnú HTTP odpoveď.", "OpenAI vrátil neplatnou HTTP odpověď.", language)
-        case let .network(code, message):
-            return pick("OpenAI network error \(code.rawValue): \(message)", "Sieťová chyba OpenAI \(code.rawValue): \(message)", "Síťová chyba OpenAI \(code.rawValue): \(message)", language)
-        case let .rateLimited(message, retryAfterSeconds):
-            let retry = retryAfterSeconds.map { pick(" Retry after \($0.formatted()) seconds.", " Skúste znova o \($0.formatted()) sekúnd.", " Zkuste to znovu za \($0.formatted()) sekund.", language) } ?? ""
-            return pick("OpenAI rate limit: \(message).\(retry)", "Limit požiadaviek OpenAI: \(message).\(retry)", "Limit požadavků OpenAI: \(message).\(retry)", language)
-        case let .serverError(statusCode, message):
-            return pick("OpenAI server error \(statusCode): \(message)", "Chyba servera OpenAI \(statusCode): \(message)", "Chyba serveru OpenAI \(statusCode): \(message)", language)
-        case let .apiError(statusCode, message):
-            return pick("OpenAI API error \(statusCode): \(message)", "Chyba OpenAI API \(statusCode): \(message)", "Chyba OpenAI API \(statusCode): \(message)", language)
-        case let .incompleteResponse(status):
-            return pick("OpenAI analysis did not complete (status: \(status)).", "Analýza OpenAI sa nedokončila (stav: \(status)).", "Analýza OpenAI se nedokončila (stav: \(status)).", language)
-        case let .refusal(message):
-            return pick("OpenAI declined the analysis: \(message)", "OpenAI odmietol analýzu: \(message)", "OpenAI odmítl analýzu: \(message)", language)
-        case .missingStructuredOutput:
-            return pick("OpenAI returned no structured meeting analysis.", "OpenAI nevrátil štruktúrovanú analýzu stretnutia.", "OpenAI nevrátil strukturovanou analýzu schůzky.", language)
+        case .emptyOutput:
+            return pick("The AI tool returned an empty analysis.", "AI nástroj vrátil prázdnu analýzu.", "AI nástroj vrátil prázdnou analýzu.", language)
+        case .outputTooLarge:
+            return pick("The AI tool returned an analysis that is too large.", "AI nástroj vrátil príliš veľkú analýzu.", "AI nástroj vrátil příliš velkou analýzu.", language)
+        case .reservedMarkerInOutput:
+            return pick("The AI analysis contains a reserved MeetingScribe marker.", "AI analýza obsahuje vyhradenú značku MeetingScribe.", "AI analýza obsahuje vyhrazenou značku MeetingScribe.", language)
         case let .invalidStructuredOutput(reason):
-            return pick("The structured meeting analysis could not be decoded: \(reason)", "Štruktúrovanú analýzu stretnutia sa nepodarilo dekódovať: \(reason)", "Strukturovanou analýzu schůzky se nepodařilo dekódovat: \(reason)", language)
+            return pick("The structured AI analysis could not be decoded: \(reason)", "Štruktúrovanú AI analýzu sa nepodarilo dekódovať: \(reason)", "Strukturovanou AI analýzu se nepodařilo dekódovat: \(reason)", language)
         }
     }
 
@@ -584,15 +547,6 @@ enum AppLocalization {
             return pick("Segment \(segmentID) belongs to \(segment.rawValue), not \(track.rawValue).", "Segment \(segmentID) patrí do \(segment.rawValue), nie do \(track.rawValue).", "Segment \(segmentID) patří do \(segment.rawValue), ne do \(track.rawValue).", language)
         case let .invalidTimestamp(segmentID):
             return pick("Segment \(segmentID) contains a non-finite timestamp.", "Segment \(segmentID) obsahuje neplatnú časovú značku.", "Segment \(segmentID) obsahuje neplatnou časovou značku.", language)
-        }
-    }
-
-    private static func keychainError(_ error: KeychainStoreError, language: AppLanguage) -> String {
-        switch error {
-        case .invalidUTF8:
-            return pick("The OpenAI API key could not be encoded.", "Kľúč OpenAI API sa nepodarilo zakódovať.", "Klíč OpenAI API se nepodařilo zakódovat.", language)
-        case let .status(status):
-            return pick("Keychain error \(status).", "Chyba Kľúčenky \(status).", "Chyba Klíčenky \(status).", language)
         }
     }
 

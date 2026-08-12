@@ -167,53 +167,63 @@ struct SettingsView: View {
     private var aiSettings: some View {
         settingsForm {
             Section("Meeting analysis") {
-                Toggle("Create AI summary and action items", isOn: $appState.aiAnalysisEnabled)
-                    .onChange(of: appState.aiAnalysisEnabled) { appState.persistAnalysisSettings() }
+                Toggle("Analyze completed meetings", isOn: $appState.aiAnalysisEnabled)
+                    .onChange(of: appState.aiAnalysisEnabled) {
+                        appState.analysisEnabledDidChange()
+                    }
 
-                Picker("OpenAI model", selection: $appState.selectedOpenAIModel) {
-                    ForEach(OpenAIModelDescriptor.supported) { model in
-                        Text(model.displayName).tag(model.id)
+                Picker("Tool", selection: $appState.selectedAnalysisTool) {
+                    ForEach(AnalysisTool.allCases) { tool in
+                        Text(tool.displayName).tag(tool)
                     }
                 }
                 .disabled(!appState.aiAnalysisEnabled)
-                .onChange(of: appState.selectedOpenAIModel) { appState.persistAnalysisSettings() }
-            }
-
-            Section("API key") {
-                Label {
-                    if appState.hasOpenAIAPIKey {
-                        Text("Stored in Keychain")
-                    } else {
-                        Text("API key is missing")
-                    }
-                } icon: {
-                    Image(systemName: appState.hasOpenAIAPIKey ? "checkmark.circle.fill" : "key.slash")
+                .onChange(of: appState.selectedAnalysisTool) {
+                    appState.analysisToolSelectionDidChange()
                 }
-                .foregroundStyle(appState.hasOpenAIAPIKey ? .green : .orange)
 
-                SecureField("OpenAI API key", text: $appState.openAIAPIKeyInput)
+                TextField("Executable", text: $appState.analysisExecutablePath)
+                    .disabled(!appState.aiAnalysisEnabled)
+                    .onSubmit { appState.analysisExecutablePathDidChange() }
 
                 HStack {
-                    if appState.hasOpenAIAPIKey {
-                        Button("Replace key") {
-                            Task { await appState.saveOpenAIAPIKey() }
-                        }
-                        .disabled(cannotSaveOpenAIAPIKey)
-                    } else {
-                        Button("Save key") {
-                            Task { await appState.saveOpenAIAPIKey() }
-                        }
-                        .disabled(cannotSaveOpenAIAPIKey)
+                    Button("Choose executable…") { appState.chooseAnalysisExecutable() }
+                    Button("Auto-detect") { appState.useDetectedAnalysisExecutable() }
+                    Button("Verify availability") {
+                        Task { await appState.refreshAnalysisToolStatus() }
+                    }
+                    .disabled(appState.isCheckingAnalysisTool)
+                }
+                .disabled(!appState.aiAnalysisEnabled)
+
+                Label(analysisToolStatusText, systemImage: analysisToolStatusIcon)
+                    .foregroundStyle(analysisToolStatusColor)
+
+                TextField("Model (optional)", text: $appState.analysisModel)
+                    .disabled(!appState.aiAnalysisEnabled)
+                    .onChange(of: appState.analysisModel) {
+                        appState.persistAnalysisSettings()
+                    }
+            }
+
+            Section("Analysis prompt") {
+                TextEditor(text: $appState.analysisPrompt)
+                    .font(.body.monospaced())
+                    .frame(minHeight: 260)
+                    .disabled(!appState.aiAnalysisEnabled)
+                    .onChange(of: appState.analysisPrompt) {
+                        appState.persistAnalysisSettings()
                     }
 
-                    if appState.hasOpenAIAPIKey {
-                        Button("Delete key", role: .destructive) {
-                            Task { await appState.deleteOpenAIAPIKey() }
-                        }
-                    }
+                HStack {
+                    Button("Restore default prompt") { appState.resetAnalysisPrompt() }
+                    Spacer()
+                    Text("Variables: {{output_language}}, {{meeting_title}}, {{recording_id}}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
-                Text("Only transcript text and meeting metadata are sent to OpenAI. Audio stays local.")
+                Text("Audio stays local. The transcript and selected meeting metadata may be sent to the provider used by the selected CLI tool.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -519,10 +529,30 @@ struct SettingsView: View {
         )
     }
 
-    private var cannotSaveOpenAIAPIKey: Bool {
-        appState.isSavingOpenAIAPIKey
-            || appState.openAIAPIKeyInput
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var analysisToolStatusText: String {
+        switch appState.analysisToolStatus {
+        case .unknown: return String(localized: "Availability has not been checked")
+        case .unavailable: return String(localized: "Executable not found")
+        case let .available(path, version):
+            return [version, path].compactMap { $0 }.joined(separator: " — ")
+        case let .failed(path, reason): return "\(path) — \(reason)"
+        }
+    }
+
+    private var analysisToolStatusIcon: String {
+        switch appState.analysisToolStatus {
+        case .available: return "checkmark.circle.fill"
+        case .failed, .unavailable: return "exclamationmark.triangle.fill"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private var analysisToolStatusColor: Color {
+        switch appState.analysisToolStatus {
+        case .available: return .green
+        case .failed, .unavailable: return .orange
+        case .unknown: return .secondary
+        }
     }
 
     private var unsupportedMarkdownTokens: [String] {

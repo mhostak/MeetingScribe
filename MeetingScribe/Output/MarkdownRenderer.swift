@@ -1,6 +1,9 @@
 import Foundation
 
 struct MarkdownRenderer: Sendable {
+    static let analysisStartMarker = "<!-- meetingscribe:ai-analysis:start -->"
+    static let analysisEndMarker = "<!-- meetingscribe:ai-analysis:end -->"
+
     private let timeZone: TimeZone
 
     init(timeZone: TimeZone = .current) {
@@ -12,7 +15,7 @@ struct MarkdownRenderer: Sendable {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
         resolvedTranscript: ResolvedTranscript? = nil,
-        analysis: MeetingAnalysis? = nil
+        analysis: AIAnalysisArtifact? = nil
     ) -> String {
         let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let renderedSegments = renderableSegments(
@@ -44,49 +47,26 @@ struct MarkdownRenderer: Sendable {
         appendYAMLList(name: "participants", values: participants, to: &lines)
         appendYAMLList(name: "tags", values: ["meeting"], to: &lines)
         lines.append("recording_id: \(yamlQuoted(session.id))")
+        if let analysis {
+            let model = analysis.model.map { " – \($0)" } ?? ""
+            lines.append(
+                "\(yamlQuoted("ai analysis")): "
+                    + yamlQuoted("\(dateString(analysis.generatedAt)) – \(analysis.tool.rawValue)\(model)")
+            )
+        }
         lines.append(contentsOf: [
             "---",
             "",
             "# \(markdownHeading(session.title))",
             "",
-            "## \(vocabulary.summary)",
-            "",
+            Self.analysisStartMarker,
         ])
-        appendSummary(analysis, vocabulary: vocabulary, to: &lines)
-        appendReferences(
-            title: vocabulary.decisions,
-            values: analysis?.decisions,
-            analysisAvailable: analysis != nil,
-            vocabulary: vocabulary,
-            to: &lines
-        )
-        appendActionItems(
-            analysis?.actionItems,
-            analysisAvailable: analysis != nil,
-            vocabulary: vocabulary,
-            to: &lines
-        )
-        appendReferences(
-            title: vocabulary.openQuestions,
-            values: analysis?.openQuestions,
-            analysisAvailable: analysis != nil,
-            vocabulary: vocabulary,
-            to: &lines
-        )
-        appendReferences(
-            title: vocabulary.risksAndBlockers,
-            values: analysis?.risksAndBlockers,
-            analysisAvailable: analysis != nil,
-            vocabulary: vocabulary,
-            to: &lines
-        )
-        appendReferences(
-            title: vocabulary.nextMeetingTopics,
-            values: analysis?.nextMeetingTopics,
-            analysisAvailable: analysis != nil,
-            vocabulary: vocabulary,
-            to: &lines
-        )
+        if let analysis {
+            lines.append(analysis.markdown.trimmingCharacters(in: .whitespacesAndNewlines))
+        } else {
+            lines.append("<!-- \(vocabulary.analysisUnavailable) -->")
+        }
+        lines.append(contentsOf: [Self.analysisEndMarker, ""])
         lines.append(contentsOf: ["## \(vocabulary.transcript)", ""])
 
         if renderedSegments.isEmpty {
@@ -141,86 +121,6 @@ struct MarkdownRenderer: Sendable {
                 confidence: utterance.confidence
             )
         }
-    }
-
-    private func appendSummary(
-        _ analysis: MeetingAnalysis?,
-        vocabulary: MarkdownVocabulary,
-        to lines: inout [String]
-    ) {
-        guard let analysis else {
-            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
-            return
-        }
-        let summary = analysis.summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        lines.append(summary.isEmpty ? "_\(vocabulary.summaryUnavailable)_" : summary)
-        lines.append("")
-    }
-
-    private func appendReferences(
-        title: String,
-        values: [AnalysisReference]?,
-        analysisAvailable: Bool,
-        vocabulary: MarkdownVocabulary,
-        to lines: inout [String]
-    ) {
-        lines.append(contentsOf: ["## \(title)", ""])
-        guard analysisAvailable else {
-            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
-            return
-        }
-        guard let values, !values.isEmpty else {
-            lines.append(contentsOf: ["_\(vocabulary.noneIdentified)_", ""])
-            return
-        }
-        lines.append(contentsOf: values.map { value in
-            "- \(singleLine(value.text))\(evidenceSuffix(value.timestampSeconds, value.segmentID))"
-        })
-        lines.append("")
-    }
-
-    private func appendActionItems(
-        _ values: [AnalysisActionItem]?,
-        analysisAvailable: Bool,
-        vocabulary: MarkdownVocabulary,
-        to lines: inout [String]
-    ) {
-        lines.append(contentsOf: ["## \(vocabulary.actionItems)", ""])
-        guard analysisAvailable else {
-            lines.append(contentsOf: ["<!-- \(vocabulary.analysisUnavailable) -->", ""])
-            return
-        }
-        guard let values, !values.isEmpty else {
-            lines.append(contentsOf: ["_\(vocabulary.noneIdentified)_", ""])
-            return
-        }
-        lines.append(contentsOf: values.map { value in
-            let owner = nonEmpty(value.owner) ?? vocabulary.unknownOwner
-            let dueDate = nonEmpty(value.dueDate) ?? vocabulary.unknownDueDate
-            return "- [ ] \(owner) — \(singleLine(value.text)) — \(vocabulary.dueDate): \(dueDate)"
-                + evidenceSuffix(value.timestampSeconds, value.segmentID)
-        })
-        lines.append("")
-    }
-
-    private func evidenceSuffix(_ timestamp: Double?, _ segmentID: String?) -> String {
-        let values = [
-            timestamp.map(elapsedTime),
-            nonEmpty(segmentID).map { "`\($0)`" },
-        ].compactMap { $0 }
-        return values.isEmpty ? "" : " — " + values.joined(separator: " · ")
-    }
-
-    private func nonEmpty(_ value: String?) -> String? {
-        guard let normalized = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !normalized.isEmpty else { return nil }
-        return normalized
-    }
-
-    private func singleLine(_ value: String) -> String {
-        value.components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
     }
 
     private func appendYAMLList(name: String, values: [String], to lines: inout [String]) {
@@ -287,21 +187,10 @@ struct MarkdownRenderer: Sendable {
 }
 
 private struct MarkdownVocabulary {
-    let summary: String
-    let decisions: String
-    let actionItems: String
-    let openQuestions: String
-    let risksAndBlockers: String
-    let nextMeetingTopics: String
     let transcript: String
     let speechOverlap: String
     let emptyTranscript: String
     let analysisUnavailable: String
-    let summaryUnavailable: String
-    let noneIdentified: String
-    let unknownOwner: String
-    let unknownDueDate: String
-    let dueDate: String
     let remoteParticipants: String
     let onSiteParticipants: String
 
@@ -316,61 +205,28 @@ private struct MarkdownVocabulary {
         switch language {
         case .slovak:
             self.init(
-                summary: "Súhrn",
-                decisions: "Rozhodnutia",
-                actionItems: "Úlohy",
-                openQuestions: "Otvorené otázky",
-                risksAndBlockers: "Riziká a blokery",
-                nextMeetingTopics: "Témy na ďalší meeting",
                 transcript: "Prepis",
                 speechOverlap: "prekrytie reči",
                 emptyTranscript: "Prepis neobsahuje žiadne rozpoznané segmenty.",
                 analysisUnavailable: "AI analýza zatiaľ nebola vytvorená.",
-                summaryUnavailable: "Súhrn nebol identifikovaný.",
-                noneIdentified: "Neboli identifikované.",
-                unknownOwner: "Neurčené",
-                unknownDueDate: "neurčený",
-                dueDate: "termín",
                 remoteParticipants: "Vzdialení účastníci",
                 onSiteParticipants: "Účastníci na mieste"
             )
         case .czech:
             self.init(
-                summary: "Shrnutí",
-                decisions: "Rozhodnutí",
-                actionItems: "Úkoly",
-                openQuestions: "Otevřené otázky",
-                risksAndBlockers: "Rizika a blokátory",
-                nextMeetingTopics: "Témata na další schůzku",
                 transcript: "Přepis",
                 speechOverlap: "překryv řeči",
                 emptyTranscript: "Přepis neobsahuje žádné rozpoznané segmenty.",
                 analysisUnavailable: "AI analýza zatím nebyla vytvořena.",
-                summaryUnavailable: "Shrnutí nebylo identifikováno.",
-                noneIdentified: "Nebyly identifikovány.",
-                unknownOwner: "Neurčeno",
-                unknownDueDate: "neurčený",
-                dueDate: "termín",
                 remoteParticipants: "Vzdálení účastníci",
                 onSiteParticipants: "Účastníci na místě"
             )
         case .english:
             self.init(
-                summary: "Summary",
-                decisions: "Decisions",
-                actionItems: "Action items",
-                openQuestions: "Open questions",
-                risksAndBlockers: "Risks and blockers",
-                nextMeetingTopics: "Topics for the next meeting",
                 transcript: "Transcript",
                 speechOverlap: "overlapping speech",
                 emptyTranscript: "The transcript contains no recognized segments.",
                 analysisUnavailable: "AI analysis has not been created.",
-                summaryUnavailable: "No summary was identified.",
-                noneIdentified: "None identified.",
-                unknownOwner: "Unassigned",
-                unknownDueDate: "unspecified",
-                dueDate: "due",
                 remoteParticipants: "Remote participants",
                 onSiteParticipants: "On-site participants"
             )
@@ -378,39 +234,17 @@ private struct MarkdownVocabulary {
     }
 
     private init(
-        summary: String,
-        decisions: String,
-        actionItems: String,
-        openQuestions: String,
-        risksAndBlockers: String,
-        nextMeetingTopics: String,
         transcript: String,
         speechOverlap: String,
         emptyTranscript: String,
         analysisUnavailable: String,
-        summaryUnavailable: String,
-        noneIdentified: String,
-        unknownOwner: String,
-        unknownDueDate: String,
-        dueDate: String,
         remoteParticipants: String,
         onSiteParticipants: String
     ) {
-        self.summary = summary
-        self.decisions = decisions
-        self.actionItems = actionItems
-        self.openQuestions = openQuestions
-        self.risksAndBlockers = risksAndBlockers
-        self.nextMeetingTopics = nextMeetingTopics
         self.transcript = transcript
         self.speechOverlap = speechOverlap
         self.emptyTranscript = emptyTranscript
         self.analysisUnavailable = analysisUnavailable
-        self.summaryUnavailable = summaryUnavailable
-        self.noneIdentified = noneIdentified
-        self.unknownOwner = unknownOwner
-        self.unknownDueDate = unknownDueDate
-        self.dueDate = dueDate
         self.remoteParticipants = remoteParticipants
         self.onSiteParticipants = onSiteParticipants
     }

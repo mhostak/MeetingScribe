@@ -161,10 +161,10 @@ actor SpeakerEditingService {
         }
         let markdownURL = URL(fileURLWithPath: path)
         guard fileManager.fileExists(atPath: markdownURL.path) else { return nil }
-        let analysis: MeetingAnalysis?
+        let analysis: AIAnalysisArtifact?
         if fileManager.fileExists(atPath: session.analysisURL.path),
            let data = try? Data(contentsOf: session.analysisURL) {
-            analysis = try? JSONDecoder().decode(MeetingAnalysis.self, from: data)
+            analysis = try? JSONDecoder().decode(AIAnalysisArtifact.self, from: data)
         } else {
             analysis = nil
         }

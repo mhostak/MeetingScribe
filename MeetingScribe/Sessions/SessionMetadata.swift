@@ -151,7 +151,28 @@ struct SessionDiarizationMetadata: Codable, Equatable, Sendable {
 enum SessionAnalysisStatus: String, Codable, Sendable {
     case completed
     case failed
-    case missingAPIKey
+}
+
+struct SessionAnalysisConfiguration: Codable, Equatable, Sendable {
+    var tool: AnalysisTool
+    var executablePath: String
+    var model: String?
+    var prompt: String
+    var promptHash: String
+
+    init(
+        tool: AnalysisTool,
+        executablePath: String,
+        model: String?,
+        prompt: String
+    ) {
+        self.tool = tool
+        self.executablePath = executablePath
+        let normalizedModel = model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.model = normalizedModel?.isEmpty == false ? normalizedModel : nil
+        self.prompt = prompt
+        self.promptHash = AnalysisPrompt.hash(prompt)
+    }
 }
 
 struct SessionAnalysisMetadata: Codable, Equatable, Sendable {
@@ -162,7 +183,33 @@ struct SessionAnalysisMetadata: Codable, Equatable, Sendable {
     var completedAt: Date?
     var transcriptChunkCount: Int?
     var requestCount: Int?
+    var promptHash: String?
+    var toolVersion: String?
     var failureReason: String?
+
+    init(
+        status: SessionAnalysisStatus,
+        provider: String,
+        model: String,
+        startedAt: Date?,
+        completedAt: Date?,
+        transcriptChunkCount: Int?,
+        requestCount: Int?,
+        promptHash: String? = nil,
+        toolVersion: String? = nil,
+        failureReason: String?
+    ) {
+        self.status = status
+        self.provider = provider
+        self.model = model
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.transcriptChunkCount = transcriptChunkCount
+        self.requestCount = requestCount
+        self.promptHash = promptHash
+        self.toolVersion = toolVersion
+        self.failureReason = failureReason
+    }
 }
 
 enum SessionOutputStatus: String, Codable, Sendable {
@@ -215,13 +262,14 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var audioSourceCleanup: AudioSourceCleanupMetadata?
     var transcription: SessionTranscriptionMetadata?
     var diarization: SessionDiarizationMetadata?
+    var analysisConfiguration: SessionAnalysisConfiguration?
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
     var recovery: SessionRecoveryMetadata?
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 13,
+        schemaVersion: Int = 14,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -240,6 +288,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         audioSourceCleanup: AudioSourceCleanupMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
         diarization: SessionDiarizationMetadata? = nil,
+        analysisConfiguration: SessionAnalysisConfiguration? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
         recovery: SessionRecoveryMetadata? = nil,
@@ -264,6 +313,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.audioSourceCleanup = audioSourceCleanup
         self.transcription = transcription
         self.diarization = diarization
+        self.analysisConfiguration = analysisConfiguration
         self.analysis = analysis
         self.output = output
         self.recovery = recovery

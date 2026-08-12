@@ -37,8 +37,8 @@ final class AppState: ObservableObject {
     @Published private(set) var fluidAudioReprocessingSessionID: String?
     @Published private(set) var outputFolderURL: URL?
     @Published private(set) var lastMarkdownURL: URL?
-    @Published private(set) var hasOpenAIAPIKey = false
-    @Published private(set) var isSavingOpenAIAPIKey = false
+    @Published private(set) var analysisToolStatus: AnalysisToolStatus = .unknown
+    @Published private(set) var isCheckingAnalysisTool = false
     @Published private(set) var recoveryCandidates: [SessionRecoveryCandidate] = []
     @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
     @Published private(set) var recordingsNavigationRequest: RecordingsNavigationRequest?
@@ -52,8 +52,10 @@ final class AppState: ObservableObject {
     @Published private(set) var calendarAccessError: String?
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
-    @Published var selectedOpenAIModel = OpenAIAnalysisProvider.defaultModel
-    @Published var openAIAPIKeyInput = ""
+    @Published var selectedAnalysisTool: AnalysisTool = .codex
+    @Published var analysisExecutablePath = ""
+    @Published var analysisModel = ""
+    @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
     @Published var automaticallyDeleteSourceCAF = false
     @Published var selectedAppLanguage: AppLanguage = .system
@@ -74,8 +76,8 @@ final class AppState: ObservableObject {
     private let processingFileService: any ProcessingFileServicing
     private let outputFolderStore: OutputFolderStore
     private let obsidianService: ObsidianService
-    private let apiKeyStore: any APIKeyStoring
     private let analysisSettingsStore: AnalysisSettingsStore
+    private let analysisCommandRunner: any AnalysisCommandRunning
     private let transcriptionSettingsStore: TranscriptionSettingsStore
     private let audioRetentionSettingsStore: AudioRetentionSettingsStore
     private let applicationSettingsStore: ApplicationSettingsStore
@@ -96,6 +98,7 @@ final class AppState: ObservableObject {
     private var fluidAudioInstallTasks: [FluidAudioModelKind: Task<Void, Never>] = [:]
     private var startRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
+    private var usesDetectedAnalysisExecutable = true
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -108,8 +111,8 @@ final class AppState: ObservableObject {
         processingFileService: (any ProcessingFileServicing)? = nil,
         outputFolderStore: OutputFolderStore? = nil,
         obsidianService: ObsidianService? = nil,
-        apiKeyStore: (any APIKeyStoring)? = nil,
         analysisSettingsStore: AnalysisSettingsStore? = nil,
+        analysisCommandRunner: any AnalysisCommandRunning = AnalysisProcessRunner(),
         transcriptionSettingsStore: TranscriptionSettingsStore? = nil,
         audioRetentionSettingsStore: AudioRetentionSettingsStore? = nil,
         applicationSettingsStore: ApplicationSettingsStore? = nil,
@@ -130,8 +133,8 @@ final class AppState: ObservableObject {
             ?? ProcessingFileService(outputExporter: outputExporter)
         self.outputFolderStore = outputFolderStore ?? OutputFolderStore()
         self.obsidianService = obsidianService ?? ObsidianService()
-        self.apiKeyStore = apiKeyStore ?? KeychainAPIKeyStore()
         self.analysisSettingsStore = analysisSettingsStore ?? AnalysisSettingsStore()
+        self.analysisCommandRunner = analysisCommandRunner
         self.transcriptionSettingsStore = transcriptionSettingsStore
             ?? TranscriptionSettingsStore()
         self.audioRetentionSettingsStore = audioRetentionSettingsStore
@@ -173,16 +176,16 @@ final class AppState: ObservableObject {
         automaticallyDeleteSourceCAF = audioRetentionSettingsStore
             .automaticallyDeleteSourceCAF
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
-        let storedModel = analysisSettingsStore.model
-        selectedOpenAIModel = OpenAIModelDescriptor.supported.contains { $0.id == storedModel }
-            ? storedModel
-            : OpenAIAnalysisProvider.defaultModel
-
-        do {
-            hasOpenAIAPIKey = try await apiKeyStore.load() != nil
-        } catch {
-            hasOpenAIAPIKey = false
-            lastError = localized(.openAIKeyLoad(localized(error)))
+        selectedAnalysisTool = analysisSettingsStore.tool
+        analysisModel = analysisSettingsStore.model
+        analysisPrompt = analysisSettingsStore.prompt
+        usesDetectedAnalysisExecutable = analysisSettingsStore
+            .executablePath(for: selectedAnalysisTool).isEmpty
+        analysisExecutablePath = resolvedAnalysisExecutablePath(for: selectedAnalysisTool)
+        if aiAnalysisEnabled {
+            await refreshAnalysisToolStatus()
+        } else {
+            analysisToolStatus = .unknown
         }
 
         await refreshFluidAudioModelStatuses()
@@ -266,7 +269,8 @@ final class AppState: ObservableObject {
                 language: selectedTranscriptionLanguage,
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
-                calendarEvent: pendingCalendarEvent
+                calendarEvent: pendingCalendarEvent,
+                analysisConfiguration: currentAnalysisConfiguration()
             )
             currentSession = session
             pendingCalendarEvent = nil
@@ -566,40 +570,116 @@ final class AppState: ObservableObject {
 
     func persistAnalysisSettings() {
         analysisSettingsStore.setEnabled(aiAnalysisEnabled)
-        analysisSettingsStore.setModel(selectedOpenAIModel)
+        analysisSettingsStore.setTool(selectedAnalysisTool)
+        analysisSettingsStore.setModel(analysisModel)
+        analysisSettingsStore.setPrompt(analysisPrompt)
+        analysisSettingsStore.setExecutablePath(
+            usesDetectedAnalysisExecutable ? "" : analysisExecutablePath,
+            for: selectedAnalysisTool
+        )
     }
 
-    func saveOpenAIAPIKey() async {
-        guard !isSavingOpenAIAPIKey else { return }
-        let normalized = openAIAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else {
-            lastError = localized(AnalysisError.missingAPIKey)
+    func analysisEnabledDidChange() {
+        persistAnalysisSettings()
+        if aiAnalysisEnabled {
+            Task { await refreshAnalysisToolStatus() }
+        } else {
+            analysisToolStatus = .unknown
+        }
+    }
+
+    func analysisToolSelectionDidChange() {
+        analysisSettingsStore.setTool(selectedAnalysisTool)
+        usesDetectedAnalysisExecutable = analysisSettingsStore
+            .executablePath(for: selectedAnalysisTool).isEmpty
+        analysisExecutablePath = resolvedAnalysisExecutablePath(for: selectedAnalysisTool)
+        persistAnalysisSettings()
+        analysisToolStatus = .unknown
+        Task { await refreshAnalysisToolStatus() }
+    }
+
+    func resetAnalysisPrompt() {
+        analysisPrompt = AnalysisPrompt.defaultTemplate
+        persistAnalysisSettings()
+    }
+
+    func chooseAnalysisExecutable() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose \(selectedAnalysisTool.displayName) executable"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        usesDetectedAnalysisExecutable = false
+        analysisExecutablePath = url.standardizedFileURL.path
+        persistAnalysisSettings()
+        Task { await refreshAnalysisToolStatus() }
+    }
+
+    func useDetectedAnalysisExecutable() {
+        usesDetectedAnalysisExecutable = true
+        analysisSettingsStore.setExecutablePath("", for: selectedAnalysisTool)
+        analysisExecutablePath = resolvedAnalysisExecutablePath(for: selectedAnalysisTool)
+        persistAnalysisSettings()
+        Task { await refreshAnalysisToolStatus() }
+    }
+
+    func analysisExecutablePathDidChange() {
+        usesDetectedAnalysisExecutable = false
+        persistAnalysisSettings()
+        Task { await refreshAnalysisToolStatus() }
+    }
+
+    func refreshAnalysisToolStatus() async {
+        guard !isCheckingAnalysisTool else { return }
+        isCheckingAnalysisTool = true
+        defer { isCheckingAnalysisTool = false }
+
+        guard let executableURL = AnalysisExecutableResolver.resolve(
+            tool: selectedAnalysisTool,
+            configuredPath: analysisExecutablePath
+        ) else {
+            analysisToolStatus = .unavailable
             return
         }
-
-        isSavingOpenAIAPIKey = true
-        defer { isSavingOpenAIAPIKey = false }
+        analysisExecutablePath = executableURL.path
         do {
-            try await apiKeyStore.save(normalized)
-            openAIAPIKeyInput = ""
-            hasOpenAIAPIKey = true
+            let provider = CLIAnalysisProvider(
+                tool: selectedAnalysisTool,
+                executableURL: executableURL,
+                model: analysisModel,
+                runner: analysisCommandRunner
+            )
+            let version = try await provider.toolVersion()
+            analysisToolStatus = .available(path: executableURL.path, version: version)
             lastError = nil
         } catch {
-            lastError = localized(.openAIKeySave(localized(error)))
+            analysisToolStatus = .failed(
+                path: executableURL.path,
+                reason: localized(error)
+            )
         }
     }
 
-    func deleteOpenAIAPIKey() async {
-        do {
-            try await apiKeyStore.delete()
-            openAIAPIKeyInput = ""
-            hasOpenAIAPIKey = false
-            aiAnalysisEnabled = false
-            persistAnalysisSettings()
-            lastError = nil
-        } catch {
-            lastError = localized(.openAIKeyRemove(localized(error)))
-        }
+    private func resolvedAnalysisExecutablePath(for tool: AnalysisTool) -> String {
+        let configured = analysisSettingsStore.executablePath(for: tool)
+        return AnalysisExecutableResolver.resolve(tool: tool, configuredPath: configured)?.path
+            ?? configured
+    }
+
+    private func currentAnalysisConfiguration() -> SessionAnalysisConfiguration? {
+        guard aiAnalysisEnabled else { return nil }
+        let executablePath = AnalysisExecutableResolver.resolve(
+            tool: selectedAnalysisTool,
+            configuredPath: analysisExecutablePath
+        )?.path ?? analysisExecutablePath
+        return SessionAnalysisConfiguration(
+            tool: selectedAnalysisTool,
+            executablePath: executablePath,
+            model: analysisModel,
+            prompt: analysisPrompt
+        )
     }
 
     var canEditSessionConfiguration: Bool {
@@ -1338,7 +1418,7 @@ final class AppState: ObservableObject {
 
     private func recoveredAnalysisOutcome(
         session: RecordingSession,
-        analysis: MeetingAnalysis?
+        analysis: AIAnalysisArtifact?
     ) -> AnalysisOutcome? {
         guard let analysis else { return nil }
         let metadata = session.metadata.analysis.flatMap {
@@ -1351,6 +1431,8 @@ final class AppState: ObservableObject {
             completedAt: Date(),
             transcriptChunkCount: nil,
             requestCount: 0,
+            promptHash: analysis.promptHash,
+            toolVersion: analysis.toolVersion,
             failureReason: nil
         )
         return AnalysisOutcome(metadata: metadata, analysis: analysis)
@@ -1480,7 +1562,7 @@ final class AppState: ObservableObject {
         transcript: MergedTranscript?,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         resolvedTranscript: ResolvedTranscript?,
-        analysis: MeetingAnalysis?
+        analysis: AIAnalysisArtifact?
     ) async -> SessionOutputMetadata? {
         guard let transcript else { return nil }
 
@@ -1521,7 +1603,9 @@ final class AppState: ObservableObject {
         session: RecordingSession,
         transcript: MergedTranscript?
     ) async -> AnalysisOutcome {
-        guard aiAnalysisEnabled, let transcript else {
+        guard let configuration = session.metadata.analysisConfiguration,
+              let transcript,
+              !transcript.segments.isEmpty else {
             setProcessingStep(.analyzing, to: .skipped)
             return .none
         }
@@ -1531,61 +1615,71 @@ final class AppState: ObservableObject {
         let startedAt = Date()
         do {
             try transition(to: .analyzing)
-            guard let apiKey = try await apiKeyStore.load(), !apiKey.isEmpty else {
-                let error = AnalysisError.missingAPIKey
-                lastError = localized(.transcriptSavedAnalysisSkipped(localized(error)))
-                return AnalysisOutcome(
-                    metadata: SessionAnalysisMetadata(
-                        status: .missingAPIKey,
-                        provider: "openai",
-                        model: selectedOpenAIModel,
-                        startedAt: startedAt,
-                        completedAt: Date(),
-                        transcriptChunkCount: nil,
-                        requestCount: nil,
-                        failureReason: error.localizedDescription
-                    ),
-                    analysis: nil
+            let executablePath = configuration.executablePath
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !executablePath.isEmpty else {
+                throw AnalysisError.executableNotFound(
+                    path: configuration.tool.executableName
                 )
             }
-
-            let provider = OpenAIAnalysisProvider(
-                apiKey: apiKey,
-                model: selectedOpenAIModel
+            let executableURL = URL(fileURLWithPath: executablePath)
+            let provider = CLIAnalysisProvider(
+                tool: configuration.tool,
+                executableURL: executableURL,
+                model: configuration.model,
+                runner: analysisCommandRunner
+            )
+            let toolVersion = try await provider.toolVersion()
+            let renderedPrompt = AnalysisPrompt.render(
+                template: configuration.prompt,
+                session: session.metadata
             )
             let run = try await MeetingAnalyzer(provider: provider).analyze(
                 session: session.metadata,
                 transcript: transcript,
+                userPrompt: renderedPrompt,
                 preferredLanguage: session.metadata.resolvedOutputLanguage.rawValue
             )
+            let validated = try AnalysisMarkdownSchema.validate(run.analysis)
+            let artifact = AIAnalysisArtifact(
+                markdown: validated.markdown,
+                tool: configuration.tool,
+                model: configuration.model,
+                toolVersion: toolVersion,
+                prompt: renderedPrompt
+            )
             try await processingFileService.persistAnalysis(
-                run.analysis,
+                artifact,
                 to: session.analysisURL
             )
             return AnalysisOutcome(
                 metadata: SessionAnalysisMetadata(
                     status: .completed,
-                    provider: "openai",
-                    model: selectedOpenAIModel,
+                    provider: configuration.tool.rawValue,
+                    model: configuration.model ?? "default",
                     startedAt: startedAt,
                     completedAt: Date(),
                     transcriptChunkCount: run.transcriptChunkCount,
                     requestCount: run.requestCount,
+                    promptHash: artifact.promptHash,
+                    toolVersion: toolVersion,
                     failureReason: nil
                 ),
-                analysis: run.analysis
+                analysis: artifact
             )
         } catch {
             lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
             return AnalysisOutcome(
                 metadata: SessionAnalysisMetadata(
                     status: .failed,
-                    provider: "openai",
-                    model: selectedOpenAIModel,
+                    provider: configuration.tool.rawValue,
+                    model: configuration.model ?? "default",
                     startedAt: startedAt,
                     completedAt: Date(),
                     transcriptChunkCount: nil,
                     requestCount: nil,
+                    promptHash: configuration.promptHash,
+                    toolVersion: nil,
                     failureReason: error.localizedDescription
                 ),
                 analysis: nil
@@ -1788,7 +1882,7 @@ private struct TranscriptionOutcome: Sendable {
 
 private struct AnalysisOutcome: Sendable {
     let metadata: SessionAnalysisMetadata?
-    let analysis: MeetingAnalysis?
+    let analysis: AIAnalysisArtifact?
 
     static let none = AnalysisOutcome(metadata: nil, analysis: nil)
 }

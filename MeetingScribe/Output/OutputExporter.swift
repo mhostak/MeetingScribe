@@ -25,7 +25,7 @@ struct OutputExporter: Sendable {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
         resolvedTranscript: ResolvedTranscript? = nil,
-        analysis: MeetingAnalysis? = nil,
+        analysis: AIAnalysisArtifact? = nil,
         to directoryURL: URL
     ) throws -> MarkdownExportResult {
         var isDirectory: ObjCBool = false

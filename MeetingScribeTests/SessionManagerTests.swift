@@ -38,7 +38,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 13)
+        XCTAssertEqual(metadata.schemaVersion, 14)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
         XCTAssertNil(metadata.audioFiles.systemWorking)
@@ -120,8 +120,8 @@ final class SessionManagerTests: XCTestCase {
         )
         let analysis = SessionAnalysisMetadata(
             status: .completed,
-            provider: "openai",
-            model: "gpt-5.6-luna",
+            provider: "codex",
+            model: "default",
             startedAt: endedAt,
             completedAt: endedAt,
             transcriptChunkCount: 1,

@@ -40,6 +40,7 @@ actor SessionManager {
         outputLanguage: OutputLanguage = .slovak,
         outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        analysisConfiguration: SessionAnalysisConfiguration? = nil,
         now: Date = Date()
     ) throws -> RecordingSession {
         guard activeSession == nil else {
@@ -63,7 +64,8 @@ actor SessionManager {
             language: language,
             outputLanguage: outputLanguage,
             outputFileNameTemplate: outputFileNameTemplate,
-            calendarEvent: calendarEvent
+            calendarEvent: calendarEvent,
+            analysisConfiguration: analysisConfiguration
         )
         let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 

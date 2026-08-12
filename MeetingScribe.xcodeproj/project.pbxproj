@@ -46,13 +46,12 @@
 		000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000246 /* OutputFolderAndObsidianTests.swift */; };
 		000000000000000000000145 /* AnalysisModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000247 /* AnalysisModels.swift */; };
 		000000000000000000000146 /* AnalysisProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000248 /* AnalysisProvider.swift */; };
-		000000000000000000000147 /* OpenAIAnalysisProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000249 /* OpenAIAnalysisProvider.swift */; };
-		000000000000000000000148 /* APIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000250 /* APIKeyStore.swift */; };
+		000000000000000000000147 /* CLIAnalysisProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000249 /* CLIAnalysisProvider.swift */; };
 		000000000000000000000149 /* MeetingAnalyzer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000251 /* MeetingAnalyzer.swift */; };
 		000000000000000000000150 /* AnalysisSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000252 /* AnalysisSettingsStore.swift */; };
 		000000000000000000000151 /* MeetingAnalyzerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000253 /* MeetingAnalyzerTests.swift */; };
-		000000000000000000000152 /* OpenAIAnalysisProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */; };
-		000000000000000000000153 /* APIKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000255 /* APIKeyStoreTests.swift */; };
+		000000000000000000000152 /* CLIAnalysisProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000254 /* CLIAnalysisProviderTests.swift */; };
+		000000000000000000000153 /* AnalysisSettingsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000255 /* AnalysisSettingsStoreTests.swift */; };
 		000000000000000000000154 /* StorageGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000256 /* StorageGuard.swift */; };
 		000000000000000000000155 /* ProcessingLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000257 /* ProcessingLogger.swift */; };
 		000000000000000000000156 /* SessionRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000258 /* SessionRecovery.swift */; };
@@ -151,13 +150,12 @@
 		000000000000000000000246 /* OutputFolderAndObsidianTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputFolderAndObsidianTests.swift; sourceTree = "<group>"; };
 		000000000000000000000247 /* AnalysisModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisModels.swift; sourceTree = "<group>"; };
 		000000000000000000000248 /* AnalysisProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisProvider.swift; sourceTree = "<group>"; };
-		000000000000000000000249 /* OpenAIAnalysisProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAnalysisProvider.swift; sourceTree = "<group>"; };
-		000000000000000000000250 /* APIKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStore.swift; sourceTree = "<group>"; };
+		000000000000000000000249 /* CLIAnalysisProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIAnalysisProvider.swift; sourceTree = "<group>"; };
 		000000000000000000000251 /* MeetingAnalyzer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAnalyzer.swift; sourceTree = "<group>"; };
 		000000000000000000000252 /* AnalysisSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisSettingsStore.swift; sourceTree = "<group>"; };
 		000000000000000000000253 /* MeetingAnalyzerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAnalyzerTests.swift; sourceTree = "<group>"; };
-		000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIAnalysisProviderTests.swift; sourceTree = "<group>"; };
-		000000000000000000000255 /* APIKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeyStoreTests.swift; sourceTree = "<group>"; };
+		000000000000000000000254 /* CLIAnalysisProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIAnalysisProviderTests.swift; sourceTree = "<group>"; };
+		000000000000000000000255 /* AnalysisSettingsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalysisSettingsStoreTests.swift; sourceTree = "<group>"; };
 		000000000000000000000256 /* StorageGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageGuard.swift; sourceTree = "<group>"; };
 		000000000000000000000257 /* ProcessingLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingLogger.swift; sourceTree = "<group>"; };
 		000000000000000000000258 /* SessionRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecovery.swift; sourceTree = "<group>"; };
@@ -312,8 +310,8 @@
 				000000000000000000000261 /* SessionRecoveryTests.swift */,
 				000000000000000000000260 /* ProcessingLoggerTests.swift */,
 				000000000000000000000259 /* StorageGuardTests.swift */,
-				000000000000000000000255 /* APIKeyStoreTests.swift */,
-				000000000000000000000254 /* OpenAIAnalysisProviderTests.swift */,
+				000000000000000000000255 /* AnalysisSettingsStoreTests.swift */,
+				000000000000000000000254 /* CLIAnalysisProviderTests.swift */,
 				000000000000000000000253 /* MeetingAnalyzerTests.swift */,
 				000000000000000000000246 /* OutputFolderAndObsidianTests.swift */,
 				000000000000000000000245 /* OutputExporterTests.swift */,
@@ -400,8 +398,7 @@
 			children = (
 				000000000000000000000247 /* AnalysisModels.swift */,
 				000000000000000000000248 /* AnalysisProvider.swift */,
-				000000000000000000000249 /* OpenAIAnalysisProvider.swift */,
-				000000000000000000000250 /* APIKeyStore.swift */,
+				000000000000000000000249 /* CLIAnalysisProvider.swift */,
 				000000000000000000000251 /* MeetingAnalyzer.swift */,
 				000000000000000000000252 /* AnalysisSettingsStore.swift */,
 			);
@@ -535,8 +532,7 @@
 				000000000000000000000172 /* SessionCatalog.swift in Sources */,
 				000000000000000000000145 /* AnalysisModels.swift in Sources */,
 				000000000000000000000146 /* AnalysisProvider.swift in Sources */,
-				000000000000000000000147 /* OpenAIAnalysisProvider.swift in Sources */,
-				000000000000000000000148 /* APIKeyStore.swift in Sources */,
+				000000000000000000000147 /* CLIAnalysisProvider.swift in Sources */,
 				000000000000000000000149 /* MeetingAnalyzer.swift in Sources */,
 				000000000000000000000150 /* AnalysisSettingsStore.swift in Sources */,
 				000000000000000000000137 /* FilenameSanitizer.swift in Sources */,
@@ -592,8 +588,8 @@
 				000000000000000000000159 /* SessionRecoveryTests.swift in Sources */,
 				000000000000000000000158 /* ProcessingLoggerTests.swift in Sources */,
 				000000000000000000000157 /* StorageGuardTests.swift in Sources */,
-				000000000000000000000153 /* APIKeyStoreTests.swift in Sources */,
-				000000000000000000000152 /* OpenAIAnalysisProviderTests.swift in Sources */,
+				000000000000000000000153 /* AnalysisSettingsStoreTests.swift in Sources */,
+				000000000000000000000152 /* CLIAnalysisProviderTests.swift in Sources */,
 				000000000000000000000151 /* MeetingAnalyzerTests.swift in Sources */,
 				000000000000000000000144 /* OutputFolderAndObsidianTests.swift in Sources */,
 				000000000000000000000143 /* OutputExporterTests.swift in Sources */,
