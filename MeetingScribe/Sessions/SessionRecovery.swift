@@ -25,8 +25,13 @@ struct SessionRecoveryArtifacts: Codable, Equatable, Sendable {
     let hasMergedTranscript: Bool
     let hasAnalysis: Bool
 
-    var hasRecoverableInput: Bool {
-        hasSystemAudio || hasWorkingSystemAudio || hasMergedTranscript
+    func hasRecoverableInput(for mode: CaptureMode) -> Bool {
+        switch mode {
+        case .systemAndMicrophone:
+            return hasSystemAudio || hasWorkingSystemAudio || hasMergedTranscript
+        case .microphoneOnly:
+            return hasMicrophoneAudio || hasMergedTranscript
+        }
     }
 }
 
@@ -111,7 +116,7 @@ struct SessionRecoveryScanner {
             let session = RecordingSession(metadata: metadata, directoryURL: directory)
             guard let reason = recoveryReason(for: metadata) else { continue }
             let artifacts = artifacts(for: session)
-            guard artifacts.hasRecoverableInput else {
+            guard artifacts.hasRecoverableInput(for: metadata.resolvedCaptureMode) else {
                 if metadata.status == .failed {
                     continue
                 }
@@ -217,6 +222,20 @@ struct RecoveredAudioInspector {
     }
 
     func inspect(session: RecordingSession, now: Date = Date()) throws -> CaptureSessionDiagnostics {
+        if session.metadata.resolvedCaptureMode == .microphoneOnly {
+            guard fileManager.fileExists(atPath: session.microphoneAudioURL.path) else {
+                throw SessionRecoveryError.requiredMicrophoneAudioMissing
+            }
+            let microphone = try inspectTrack(
+                url: session.microphoneAudioURL,
+                required: true,
+                now: now
+            )
+            var system = AudioCaptureDiagnostics.empty
+            system.fileName = session.systemAudioURL.lastPathComponent
+            return CaptureSessionDiagnostics(systemAudio: system, microphone: microphone)
+        }
+
         var system = try inspectTrack(
             url: session.systemAudioURL,
             required: true,
@@ -355,6 +374,7 @@ enum SessionRecoveryError: Error, Equatable, LocalizedError {
     case issueNotFound
     case sessionNotRecoverable
     case requiredSystemAudioMissing
+    case requiredMicrophoneAudioMissing
     case audioUnreadable(fileName: String, reason: String)
     case audioEmpty(fileName: String)
     case mergedTranscriptUnreadable
@@ -370,6 +390,8 @@ enum SessionRecoveryError: Error, Equatable, LocalizedError {
             return "This session is no longer eligible for recovery."
         case .requiredSystemAudioMissing:
             return "The interrupted session has no recoverable system-audio file. Existing artifacts were preserved."
+        case .requiredMicrophoneAudioMissing:
+            return "The interrupted offline session has no recoverable microphone file. Existing artifacts were preserved."
         case let .audioUnreadable(fileName, reason):
             return "Recovered audio \(fileName) is unreadable: \(reason). Existing artifacts were preserved."
         case let .audioEmpty(fileName):

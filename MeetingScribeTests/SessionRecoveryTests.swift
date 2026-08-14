@@ -372,6 +372,27 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertEqual(diagnostics.microphone.capturedDurationSeconds ?? -1, 0.1, accuracy: 0.001)
     }
 
+    func testRecoveredAudioInspectorAcceptsMicrophoneOnlyWithoutSystemFile() throws {
+        let session = try makeSession(
+            metadata: SessionMetadata(
+                id: "microphone-only-recovery",
+                title: "Offline meeting",
+                status: .recording,
+                createdAt: Date(),
+                startedAt: Date(),
+                captureMode: .microphoneOnly
+            )
+        )
+        try writeAudio(to: session.microphoneAudioURL, frameCount: 4_800)
+
+        let diagnostics = try RecoveredAudioInspector().inspect(session: session)
+
+        XCTAssertEqual(diagnostics.systemAudio.bufferCount, 0)
+        XCTAssertNil(diagnostics.systemAudio.failureReason)
+        XCTAssertEqual(diagnostics.microphone.totalFrames, 4_800)
+        XCTAssertEqual(diagnostics.microphone.firstPresentationTimestamp, 0)
+    }
+
     func testRecoveredAudioInspectorPrefersPersistedCaptureTimeline() throws {
         let systemStart = 10_000.25
         let microphoneStart = 10_000.327

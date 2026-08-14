@@ -5,6 +5,32 @@ enum RecordingSessionStatus: String, Codable, Sendable {
     case recorded
     case failed
 }
+
+enum CaptureMode: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+    case systemAndMicrophone
+    case microphoneOnly
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .systemAndMicrophone:
+            return "Online / hybrid"
+        case .microphoneOnly:
+            return "Offline / microphone"
+        }
+    }
+
+    var selectionHint: String {
+        switch self {
+        case .systemAndMicrophone:
+            return "Records system audio and an optional microphone track."
+        case .microphoneOnly:
+            return "Records the room microphone only and requires it to be working."
+        }
+    }
+}
+
 enum TranscriptionLanguage: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
     case automatic = "auto"
     case czech = "cs"
@@ -83,7 +109,7 @@ struct FinalizedAudioTrackMetadata: Codable, Equatable, Sendable {
 struct AudioFinalizationMetadata: Codable, Equatable, Sendable {
     var completedAt: Date
     var timelineOrigin: Double
-    var system: FinalizedAudioTrackMetadata
+    var system: FinalizedAudioTrackMetadata?
     var microphone: FinalizedAudioTrackMetadata?
     var warnings: [String]
 }
@@ -254,6 +280,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var outputLanguage: OutputLanguage?
     var outputFileNameTemplate: String?
     var calendarEvent: CalendarEventSnapshot?
+    var captureMode: CaptureMode?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
     var systemAudio: AudioTrackMetadata?
@@ -269,7 +296,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 14,
+        schemaVersion: Int = 15,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -280,6 +307,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         outputLanguage: OutputLanguage? = .slovak,
         outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        captureMode: CaptureMode? = .systemAndMicrophone,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
         systemAudio: AudioTrackMetadata? = nil,
@@ -305,6 +333,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.outputLanguage = outputLanguage
         self.outputFileNameTemplate = outputFileNameTemplate
         self.calendarEvent = calendarEvent
+        self.captureMode = captureMode
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
         self.systemAudio = systemAudio
@@ -322,6 +351,10 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
 
     var resolvedOutputLanguage: OutputLanguage {
         outputLanguage ?? .slovak
+    }
+
+    var resolvedCaptureMode: CaptureMode {
+        captureMode ?? .systemAndMicrophone
     }
 
     var resolvedOutputFileNameTemplate: String {

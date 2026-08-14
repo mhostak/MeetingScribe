@@ -38,7 +38,8 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 14)
+        XCTAssertEqual(metadata.schemaVersion, 15)
+        XCTAssertEqual(metadata.resolvedCaptureMode, .systemAndMicrophone)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")
         XCTAssertEqual(metadata.audioFiles.microphone, "microphone-16k.wav")
         XCTAssertNil(metadata.audioFiles.systemWorking)
@@ -51,6 +52,19 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.transcriptFiles?.analysis, "analysis.json")
         XCTAssertEqual(metadata.resolvedOutputLanguage, .english)
         XCTAssertEqual(metadata.resolvedOutputFileNameTemplate, "{date} - {title} - {id}")
+    }
+
+    func testStartPersistsMicrophoneOnlyCaptureMode() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+
+        let session = try await manager.startSession(
+            title: "Offline meeting",
+            captureMode: .microphoneOnly
+        )
+
+        let metadata = try decodeMetadata(at: session.manifestURL)
+        XCTAssertEqual(metadata.captureMode, .microphoneOnly)
+        XCTAssertEqual(metadata.resolvedCaptureMode, .microphoneOnly)
     }
 
     func testStopFinalizesManifestWithoutDeletingSession() async throws {

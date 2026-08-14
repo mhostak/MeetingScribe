@@ -173,7 +173,8 @@ extension SystemAudioCapture: SCStreamOutput {
                 frameCount: result.frameCount,
                 sampleRate: result.sampleRate,
                 channelCount: result.channelCount,
-                presentationTimestamp: presentationTimestamp
+                presentationTimestamp: presentationTimestamp,
+                audioLevel: result.audioLevel
             )
         } catch {
             state.diagnostics.failureReason = error.localizedDescription

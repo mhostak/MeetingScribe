@@ -86,15 +86,19 @@ actor FluidAudioTranscriptionRevisionService {
         try Task.checkCancellation()
 
         let fingerprintStore = UtteranceArtifactStore()
-        var sourceAudioFingerprints = [
-            "system": try fingerprintStore.audioFingerprint(
-                at: session.directoryURL.appendingPathComponent(finalization.system.fileName)
+        var sourceAudioFingerprints: [String: String] = [:]
+        if let system = finalization.system {
+            sourceAudioFingerprints["system"] = try fingerprintStore.audioFingerprint(
+                at: session.directoryURL.appendingPathComponent(system.fileName)
             )
-        ]
+        }
         if let microphone = finalization.microphone {
             sourceAudioFingerprints["microphone"] = try fingerprintStore.audioFingerprint(
                 at: session.directoryURL.appendingPathComponent(microphone.fileName)
             )
+        }
+        guard !sourceAudioFingerprints.isEmpty else {
+            throw TranscriptionRevisionError.finalizedAudioMissing
         }
         let createdAt = now()
         let revisionID = makeID()

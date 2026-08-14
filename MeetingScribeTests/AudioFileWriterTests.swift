@@ -75,6 +75,35 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(file.length, 160, accuracy: 2)
         XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
         XCTAssertEqual(file.processingFormat.channelCount, 1)
+        let audioLevel = try XCTUnwrap(result.audioLevel)
+        XCTAssertEqual(audioLevel.rmsDecibels, -12, accuracy: 1)
+        XCTAssertEqual(audioLevel.peakDecibels, -12, accuracy: 1)
+        XCTAssertGreaterThan(audioLevel.normalizedForDisplay, 0.7)
+    }
+
+    func testWriterReportsSilenceAsMinimumLiveLevel() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeSilentLevel-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: 48_000,
+            channels: 1
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: 480
+        ))
+        buffer.frameLength = 480
+        let writer = AudioFileWriter(outputURL: outputURL)
+
+        let result = try writer.write(buffer)
+        try writer.finish()
+
+        let audioLevel = try XCTUnwrap(result.audioLevel)
+        XCTAssertLessThanOrEqual(audioLevel.rmsDecibels, -60)
+        XCTAssertLessThanOrEqual(audioLevel.peakDecibels, -60)
+        XCTAssertEqual(audioLevel.normalizedForDisplay, 0, accuracy: 0.001)
     }
 
     func testConvertsChangedMicrophoneFormatIntoStableTranscriptionFormat() throws {

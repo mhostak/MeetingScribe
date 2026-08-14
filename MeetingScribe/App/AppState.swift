@@ -4,9 +4,12 @@ import ServiceManagement
 import UniformTypeIdentifiers
 
 struct CaptureMonitoringConfiguration: Sendable {
-    var interval: Duration = .seconds(1)
-    var storageCheckEveryTicks = 5
-    var stalledSystemAudioCheckCount = 3
+    // Five diagnostics snapshots per second keep the live audio meter responsive.
+    // Storage checks retain their previous five-second cadence, and a stalled
+    // source still needs roughly three seconds of consecutive confirmation.
+    var interval: Duration = .milliseconds(200)
+    var storageCheckEveryTicks = 25
+    var stalledSystemAudioCheckCount = 15
     var maximumStorageCheckFailures = 3
 }
 
@@ -52,6 +55,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isRequestingCalendarAccess = false
     @Published private(set) var calendarAccessError: String?
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
+    @Published var selectedCaptureMode: CaptureMode = .systemAndMicrophone
     @Published var aiAnalysisEnabled = false
     @Published var selectedAnalysisTool: AnalysisTool = .codex
     @Published var analysisExecutablePath = ""
@@ -357,6 +361,7 @@ final class AppState: ObservableObject {
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
                 calendarEvent: pendingCalendarEvent,
+                captureMode: selectedCaptureMode,
                 analysisConfiguration: currentAnalysisConfiguration()
             )
             currentSession = session
@@ -1268,7 +1273,13 @@ final class AppState: ObservableObject {
             try? await processingLogger.log(
                 .finalizationCompleted,
                 for: session,
-                attributes: [.durationSeconds(finalization.system.durationSeconds)]
+                attributes: [
+                    .durationSeconds(
+                        finalization.system?.durationSeconds
+                            ?? finalization.microphone?.durationSeconds
+                            ?? 0
+                    ),
+                ]
             )
             setProcessingStep(.preparingAudio, to: .completed)
         } catch {
@@ -1901,15 +1912,20 @@ final class AppState: ObservableObject {
 
                 guard let self else { break }
                 self.captureDiagnostics = await self.captureCoordinator.diagnostics()
-                let systemAudioHealth = self.captureDiagnostics.systemAudio.health()
+                let requiredAudioHealth: AudioCaptureHealth
+                if self.currentSession?.metadata.resolvedCaptureMode == .microphoneOnly {
+                    requiredAudioHealth = self.captureDiagnostics.microphone.health()
+                } else {
+                    requiredAudioHealth = self.captureDiagnostics.systemAudio.health()
+                }
 
-                if systemAudioHealth == .stalled {
+                if requiredAudioHealth == .stalled {
                     self.stalledSystemAudioCheckTick += 1
                 } else {
                     self.stalledSystemAudioCheckTick = 0
                 }
 
-                if systemAudioHealth == .failed {
+                if requiredAudioHealth == .failed {
                     if await self.stopRecordingForCaptureFailure(
                         message: self.localized(.captureFailedSafeStop)
                     ) {
@@ -1921,7 +1937,7 @@ final class AppState: ObservableObject {
                     1,
                     monitoringConfiguration.stalledSystemAudioCheckCount
                 )
-                if systemAudioHealth == .stalled,
+                if requiredAudioHealth == .stalled,
                    self.stalledSystemAudioCheckTick >= stalledCheckCount {
                     if await self.stopRecordingForCaptureFailure(
                         message: self.localized(.captureStalledSafeStop)

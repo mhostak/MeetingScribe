@@ -49,8 +49,9 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(result.metadata.utteranceFallbackUsed, false)
         XCTAssertEqual(result.metadata.provenance?.engine, "FluidAudio")
         XCTAssertEqual(result.metadata.provenance?.engineVersion, "0.15.5")
-        XCTAssertEqual(result.systemTranscript.schemaVersion, 3)
-        XCTAssertEqual(result.systemTranscript.provenance, result.metadata.provenance)
+        let systemTranscript = try XCTUnwrap(result.systemTranscript)
+        XCTAssertEqual(systemTranscript.schemaVersion, 3)
+        XCTAssertEqual(systemTranscript.provenance, result.metadata.provenance)
         XCTAssertEqual(
             result.mergedTranscript.tracks.map(\.provenance),
             [result.metadata.provenance, result.metadata.provenance]
@@ -113,6 +114,44 @@ final class SessionTranscriberTests: XCTestCase {
         XCTAssertEqual(releaseCount, 1)
     }
 
+    func testMicrophoneOnlyTranscribesAndMergesWithoutSyntheticSystemTrack() async throws {
+        let service = MockTranscriptionService()
+        let session = makeSession()
+        let transcriber = SessionTranscriber(service: service)
+        let microphoneOnly = AudioFinalizationMetadata(
+            completedAt: Date(),
+            timelineOrigin: 100,
+            system: nil,
+            microphone: FinalizedAudioTrackMetadata(
+                fileName: "microphone-16k.wav",
+                sampleRate: 16_000,
+                channelCount: 1,
+                totalFrames: 16_000,
+                durationSeconds: 1,
+                timelineOffsetSeconds: 0
+            ),
+            warnings: []
+        )
+
+        let result = try await transcriber.transcribe(
+            session: session,
+            finalization: microphoneOnly,
+            model: fluidAudioModel(),
+            language: .automatic
+        )
+
+        XCTAssertNil(result.systemTranscript)
+        XCTAssertEqual(result.metadata.systemSegmentCount, nil)
+        XCTAssertEqual(result.metadata.microphoneSegmentCount, 1)
+        XCTAssertEqual(result.mergedTranscript.tracks.map(\.source), [.microphone])
+        XCTAssertEqual(result.mergedTranscript.segments.map(\.source), [.microphone])
+        XCTAssertTrue(result.metadata.warnings.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.systemTrackTranscriptURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneTrackTranscriptURL.path))
+        let options = await service.receivedOptions
+        XCTAssertEqual(options.map(\.source), [.microphone])
+    }
+
     func testEmptyMicrophoneTranscriptIsPersistedAndReportedAsNoSpeech() async throws {
         let service = MockTranscriptionService(emptyMicrophone: true)
         let session = makeSession()
@@ -145,8 +184,9 @@ final class SessionTranscriberTests: XCTestCase {
             language: .czech
         )
 
-        XCTAssertEqual(result.systemTranscript.requestedLanguage, .czech)
-        XCTAssertEqual(result.systemTranscript.detectedLanguage, "sk")
+        let systemTranscript = try XCTUnwrap(result.systemTranscript)
+        XCTAssertEqual(systemTranscript.requestedLanguage, .czech)
+        XCTAssertEqual(systemTranscript.detectedLanguage, "sk")
         XCTAssertEqual(result.metadata.warnings.count, 2)
         XCTAssertTrue(result.metadata.warnings.allSatisfy {
             $0.contains("automatic language detection (sk)")

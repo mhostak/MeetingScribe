@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Foundation
 
@@ -5,15 +6,21 @@ struct MicrophoneRecoveryConfiguration: Equatable, Sendable {
     let delay: TimeInterval
     let maximumAttempts: Int
     let minimumBufferCount: Int
+    let maximumStartupAttempts: Int
+    let startupVerificationDelay: TimeInterval
 
     init(
         delay: TimeInterval = 0.5,
         maximumAttempts: Int = 8,
-        minimumBufferCount: Int = 3
+        minimumBufferCount: Int = 3,
+        maximumStartupAttempts: Int = 2,
+        startupVerificationDelay: TimeInterval = 1.0
     ) {
         self.delay = max(0, delay)
         self.maximumAttempts = max(1, maximumAttempts)
         self.minimumBufferCount = max(1, minimumBufferCount)
+        self.maximumStartupAttempts = max(1, maximumStartupAttempts)
+        self.startupVerificationDelay = max(0.05, startupVerificationDelay)
     }
 
     var verificationDelay: TimeInterval {
@@ -32,7 +39,10 @@ struct MicrophoneRecoveryConfiguration: Equatable, Sendable {
 protocol MicrophoneAudioEngine: AnyObject {
     var notificationObject: AnyObject { get }
     func inputFormat() -> AVAudioFormat
-    func installTap(_ handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void)
+    func installTap(
+        format: AVAudioFormat,
+        handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    )
     func removeTap()
     func prepare()
     func start() throws
@@ -53,11 +63,14 @@ private final class AVAudioEngineAdapter: MicrophoneAudioEngine {
         engine.inputNode.inputFormat(forBus: 0)
     }
 
-    func installTap(_ handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) {
+    func installTap(
+        format: AVAudioFormat,
+        handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {
         engine.inputNode.installTap(
             onBus: 0,
             bufferSize: 4_096,
-            format: nil,
+            format: format,
             block: handler
         )
     }
@@ -85,6 +98,8 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         var configurationRecoveryScheduled = false
         var configurationRecoveryAttempts = 0
         var captureGeneration: UUID?
+        var startupVerificationInProgress = false
+        var configurationChangePendingDuringStartup = false
     }
 
     private var engine: any MicrophoneAudioEngine
@@ -157,19 +172,12 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             throw error
         }
 
-        try writerQueue.sync {
+        let generation = try writerQueue.sync {
             guard !state.isCapturing else {
                 throw AudioCaptureServiceError.alreadyCapturing
             }
 
-            let currentEngine = engine
-            let format = currentEngine.inputFormat()
-            guard format.sampleRate > 0, format.channelCount > 0 else {
-                let error = AudioCaptureServiceError.microphoneUnavailable
-                state = failedState(error: error, outputURL: outputURL)
-                throw error
-            }
-
+            let generation = UUID()
             state = State(
                 isCapturing: true,
                 writer: AudioFileWriter(outputURL: outputURL),
@@ -177,22 +185,17 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                     fileName: outputURL.lastPathComponent,
                     startedAt: Date()
                 ),
-                captureGeneration: UUID()
+                captureGeneration: generation,
+                startupVerificationInProgress: true
             )
-            installTap(on: currentEngine)
-            state.tapInstalled = true
+            return generation
+        }
 
-            currentEngine.prepare()
-            do {
-                try currentEngine.start()
-            } catch {
-                currentEngine.removeTap()
-                state.diagnostics.failureReason = error.localizedDescription
-                finishWriter()
-                state.isCapturing = false
-                state.tapInstalled = false
-                throw error
-            }
+        do {
+            try await startAndVerify(generation: generation)
+        } catch {
+            failStartup(error, generation: generation)
+            throw error
         }
     }
 
@@ -217,6 +220,165 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     func diagnostics() async -> AudioCaptureDiagnostics {
         writerQueue.sync { state.diagnostics }
+    }
+
+    private func startAndVerify(generation: UUID) async throws {
+        var attempt = 0
+        while attempt < recoveryConfiguration.maximumStartupAttempts {
+            attempt += 1
+            let baselineBufferCount: Int
+            do {
+                baselineBufferCount = try writerQueue.sync {
+                    try startCurrentEngine(generation: generation)
+                }
+            } catch {
+                guard attempt < recoveryConfiguration.maximumStartupAttempts,
+                      Self.isFormatNotSupported(error) else {
+                    throw error
+                }
+                try writerQueue.sync {
+                    try replaceEngineForStartup(generation: generation)
+                }
+                continue
+            }
+
+            if try await waitForInitialBuffers(
+                after: baselineBufferCount,
+                generation: generation
+            ) {
+                let shouldRecoverConfiguration: Bool = writerQueue.sync {
+                    guard state.captureGeneration == generation else { return false }
+                    state.startupVerificationInProgress = false
+                    state.configurationRecoveryAttempts = 0
+                    state.diagnostics.failureReason = nil
+                    let pending = state.configurationChangePendingDuringStartup
+                    state.configurationChangePendingDuringStartup = false
+                    return pending
+                }
+                if shouldRecoverConfiguration {
+                    scheduleConfigurationRecovery()
+                }
+                return
+            }
+
+            guard attempt < recoveryConfiguration.maximumStartupAttempts else {
+                throw AudioCaptureServiceError.microphoneProducedNoData
+            }
+            try writerQueue.sync {
+                try replaceEngineForStartup(generation: generation)
+            }
+        }
+
+        throw AudioCaptureServiceError.microphoneProducedNoData
+    }
+
+    private func startCurrentEngine(generation: UUID) throws -> Int {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        guard state.isCapturing, state.captureGeneration == generation else {
+            throw CancellationError()
+        }
+
+        let currentEngine = engine
+        let format = currentEngine.inputFormat()
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            throw AudioCaptureServiceError.microphoneUnavailable
+        }
+
+        let baselineBufferCount = state.diagnostics.bufferCount
+        installTap(on: currentEngine, format: format)
+        state.tapInstalled = true
+        currentEngine.prepare()
+        do {
+            try currentEngine.start()
+            return baselineBufferCount
+        } catch {
+            currentEngine.removeTap()
+            currentEngine.stop()
+            currentEngine.reset()
+            state.tapInstalled = false
+            throw error
+        }
+    }
+
+    private func replaceEngineForStartup(generation: UUID) throws {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        guard state.isCapturing, state.captureGeneration == generation else {
+            throw CancellationError()
+        }
+
+        let previousEngine = engine
+        if state.tapInstalled {
+            previousEngine.removeTap()
+            state.tapInstalled = false
+        }
+        previousEngine.stop()
+        previousEngine.reset()
+
+        let replacementEngine = engineFactory()
+        engine = replacementEngine
+        observeConfigurationChanges(for: replacementEngine)
+    }
+
+    private func waitForInitialBuffers(
+        after baselineBufferCount: Int,
+        generation: UUID
+    ) async throws -> Bool {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(
+            by: .milliseconds(Int64(recoveryConfiguration.startupVerificationDelay * 1_000))
+        )
+
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            let status = writerQueue.sync {
+                (
+                    isCurrent: state.isCapturing && state.captureGeneration == generation,
+                    bufferCount: state.diagnostics.bufferCount,
+                    failureReason: state.diagnostics.failureReason
+                )
+            }
+            guard status.isCurrent else { throw CancellationError() }
+            if status.failureReason != nil {
+                throw AudioCaptureServiceError.microphoneUnavailable
+            }
+            if recoveryConfiguration.hasEnoughRecoveredBuffers(
+                baseline: baselineBufferCount,
+                current: status.bufferCount
+            ) {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        let currentBufferCount = writerQueue.sync { state.diagnostics.bufferCount }
+        return recoveryConfiguration.hasEnoughRecoveredBuffers(
+            baseline: baselineBufferCount,
+            current: currentBufferCount
+        )
+    }
+
+    private func failStartup(_ error: Error, generation: UUID) {
+        writerQueue.sync {
+            guard state.captureGeneration == generation else { return }
+            let currentEngine = engine
+            if state.tapInstalled {
+                currentEngine.removeTap()
+            }
+            currentEngine.stop()
+            currentEngine.reset()
+            state.tapInstalled = false
+            state.startupVerificationInProgress = false
+            state.configurationChangePendingDuringStartup = false
+            state.configurationRecoveryScheduled = false
+            state.diagnostics.failureReason = error.localizedDescription
+            finishWriter()
+            state.isCapturing = false
+            state.captureGeneration = nil
+        }
+    }
+
+    private static func isFormatNotSupported(_ error: Error) -> Bool {
+        (error as NSError).code == Int(kAudioUnitErr_FormatNotSupported)
     }
 
     private static func requestPermissionIfNeeded() async throws {
@@ -264,9 +426,12 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         )
     }
 
-    private func installTap(on engine: any MicrophoneAudioEngine) {
+    private func installTap(
+        on engine: any MicrophoneAudioEngine,
+        format: AVAudioFormat
+    ) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-        engine.installTap { [weak self] buffer, time in
+        engine.installTap(format: format) { [weak self] buffer, time in
             guard
                 let self,
                 let copiedBuffer = Self.copy(buffer)
@@ -288,7 +453,12 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private func scheduleConfigurationRecovery() {
         writerQueue.async { [weak self] in
             guard let self else { return }
-            guard state.isCapturing,
+            guard state.isCapturing else { return }
+            if state.startupVerificationInProgress {
+                state.configurationChangePendingDuringStartup = true
+                return
+            }
+            guard
                   !state.configurationRecoveryScheduled,
                   let generation = state.captureGeneration else {
                 return
@@ -332,7 +502,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         }
 
         let baselineBufferCount = state.diagnostics.bufferCount
-        installTap(on: replacementEngine)
+        installTap(on: replacementEngine, format: format)
         state.tapInstalled = true
         replacementEngine.prepare()
         do {
@@ -407,7 +577,8 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 frameCount: result.frameCount,
                 sampleRate: result.sampleRate,
                 channelCount: result.channelCount,
-                presentationTimestamp: presentationTimestamp
+                presentationTimestamp: presentationTimestamp,
+                audioLevel: result.audioLevel
             )
         } catch {
             state.diagnostics.failureReason = error.localizedDescription
