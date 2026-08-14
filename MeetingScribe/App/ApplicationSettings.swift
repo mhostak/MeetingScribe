@@ -340,6 +340,8 @@ enum AppLocalization {
             )
         case .microphoneUnavailable:
             return pick("No usable microphone input is available. System audio recording can continue.", "Nie je dostupný použiteľný mikrofónový vstup. Nahrávanie systémového zvuku môže pokračovať.", "Není dostupný použitelný mikrofonní vstup. Nahrávání systémového zvuku může pokračovat.", language)
+        case .microphoneProducedNoData:
+            return pick("The audio engine started, but the microphone produced no audio buffers.", "Zvukový engine sa spustil, ale mikrofón neposkytol žiadne zvukové dáta.", "Zvukový engine se spustil, ale mikrofon neposkytl žádná zvuková data.", language)
         case .noDisplayAvailable:
             return pick("No display is available for system audio capture.", "Na zachytávanie systémového zvuku nie je dostupný žiadny displej.", "Pro zachytávání systémového zvuku není dostupný žádný displej.", language)
         case .invalidAudioFormat:
@@ -361,6 +363,8 @@ enum AppLocalization {
             return pick("This session is no longer eligible for recovery.", "Túto reláciu už nie je možné obnoviť.", "Tuto relaci již není možné obnovit.", language)
         case .requiredSystemAudioMissing:
             return pick("The interrupted session has no recoverable system-audio file. Existing artifacts were preserved.", "Prerušená relácia nemá obnoviteľný súbor systémového zvuku. Existujúce súbory zostali zachované.", "Přerušená relace nemá obnovitelný soubor systémového zvuku. Existující soubory zůstaly zachované.", language)
+        case .requiredMicrophoneAudioMissing:
+            return pick("The interrupted offline session has no recoverable microphone file. Existing artifacts were preserved.", "Prerušená offline relácia nemá obnoviteľný súbor mikrofónu. Existujúce súbory zostali zachované.", "Přerušená offline relace nemá obnovitelný soubor mikrofonu. Existující soubory zůstaly zachovány.", language)
         case let .audioUnreadable(fileName, reason):
             return pick("Recovered audio \(fileName) is unreadable: \(reason). Existing artifacts were preserved.", "Obnovený zvuk \(fileName) sa nedá prečítať: \(reason). Existujúce súbory zostali zachované.", "Obnovený zvuk \(fileName) nelze přečíst: \(reason). Existující soubory zůstaly zachované.", language)
         case let .audioEmpty(fileName):
@@ -634,6 +638,8 @@ enum AppLocalization {
 
     private static func transcriptMergeError(_ error: TranscriptMergeError, language: AppLanguage) -> String {
         switch error {
+        case .noTracks:
+            return pick("No finalized audio track was available for transcription.", "Na prepis nebola dostupná žiadna finalizovaná zvuková stopa.", "Pro přepis nebyla dostupná žádná finalizovaná zvuková stopa.", language)
         case let .unexpectedTrackSource(expected, actual):
             return pick("Expected a \(expected.rawValue) transcript, received \(actual.rawValue).", "Očakával sa prepis \(expected.rawValue), ale prijatý bol \(actual.rawValue).", "Očekával se přepis \(expected.rawValue), ale přijat byl \(actual.rawValue).", language)
         case let .segmentSourceMismatch(segmentID, track, segment):

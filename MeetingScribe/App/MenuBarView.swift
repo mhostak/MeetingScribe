@@ -123,6 +123,17 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 12) {
             meetingTitleAndCalendarControl
 
+            Picker("Audio source", selection: $appState.selectedCaptureMode) {
+                ForEach(CaptureMode.allCases) { mode in
+                    Text(verbatim: mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(verbatim: appState.selectedCaptureMode.selectionHint)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             Button {
                 Task { await appState.startRecording() }
             } label: {
@@ -176,19 +187,22 @@ struct MenuBarView: View {
                 RecordingDurationView(startedAt: startedAt)
             }
 
-            RecordingWaveformView()
+            RecordingWaveformView(levels: liveRecordingAudioLevels)
                 .frame(height: 42)
 
             VStack(spacing: 7) {
-                audioStatus(
-                    title: "System audio",
-                    diagnostics: appState.captureDiagnostics.systemAudio,
-                    required: true
-                )
+                if appState.currentSession?.metadata.resolvedCaptureMode != .microphoneOnly {
+                    audioStatus(
+                        title: "System audio",
+                        diagnostics: appState.captureDiagnostics.systemAudio,
+                        required: true
+                    )
+                }
                 audioStatus(
                     title: "Microphone",
                     diagnostics: appState.captureDiagnostics.microphone,
-                    required: false
+                    required: appState.currentSession?.metadata.resolvedCaptureMode
+                        == .microphoneOnly
                 )
             }
 
@@ -207,6 +221,14 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private var liveRecordingAudioLevels: [Double] {
+        let now = Date()
+        if appState.currentSession?.metadata.resolvedCaptureMode == .microphoneOnly {
+            return appState.captureDiagnostics.microphone.recentLiveAudioLevels(at: now)
+        }
+        return appState.captureDiagnostics.combinedRecentAudioLevels(at: now)
     }
 
     private var recordingTitleEditor: some View {
@@ -689,8 +711,10 @@ struct MenuBarView: View {
                 .foregroundStyle(health == .stalled || health == .failed ? .orange : .green)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title) + Text(": ") + Text(audioHealthKey(health))
-                if let failureReason = diagnostics.failureReason, !required {
-                    Text(verbatim: failureReason).foregroundStyle(.orange).lineLimit(2)
+                if let failureReason = diagnostics.failureReason {
+                    Text(verbatim: failureReason)
+                        .foregroundStyle(required ? .red : .orange)
+                        .lineLimit(2)
                 }
             }
             Spacer()
@@ -740,30 +764,30 @@ private struct RecordingDurationView: View {
 
 private struct RecordingWaveformView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let levels: [Double]
 
-    var body: some View {
-        Group {
-            if reduceMotion {
-                waveform(phase: 0.8)
-            } else {
-                TimelineView(.animation(minimumInterval: 0.16)) { context in
-                    waveform(phase: context.date.timeIntervalSinceReferenceDate * 4)
-                }
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Recording audio activity")
+    private let barCount = 22
+
+    private var displayedLevels: [Double] {
+        let recent = Array(levels.suffix(barCount)).map { min(1, max(0, $0)) }
+        return Array(repeating: 0, count: max(0, barCount - recent.count)) + recent
     }
 
-    private func waveform(phase: Double) -> some View {
+    var body: some View {
         HStack(alignment: .center, spacing: 4) {
-            ForEach(0..<22, id: \.self) { index in
-                let wave = abs(sin(phase + Double(index) * 0.62))
+            ForEach(displayedLevels.indices, id: \.self) { index in
+                let level = displayedLevels[index]
                 Capsule()
-                    .fill(.red.opacity(0.55 + wave * 0.4))
-                    .frame(width: 5, height: 7 + wave * 31)
+                    .fill(.red.opacity(0.22 + level * 0.73))
+                    .frame(width: 5, height: 4 + level * 34)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(
+            reduceMotion ? nil : .linear(duration: 0.16),
+            value: displayedLevels
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Live recorded audio level")
     }
 }

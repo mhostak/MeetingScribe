@@ -1,5 +1,17 @@
 import Foundation
 
+struct AudioLevelMeasurement: Equatable, Sendable {
+    let rmsDecibels: Double
+    let peakDecibels: Double
+
+    var normalizedForDisplay: Double {
+        // RMS keeps the display stable while a reduced peak contribution makes
+        // short sounds visible. Map the useful speech range from -60 dBFS to 0.
+        let displayDecibels = max(rmsDecibels, peakDecibels - 12)
+        return min(1, max(0, (displayDecibels + 60) / 60))
+    }
+}
+
 enum AudioCaptureHealth: String, Codable, Equatable, Sendable {
     case idle
     case waitingForData
@@ -21,6 +33,9 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
     var firstPresentationTimestamp: Double?
     var lastPresentationTimestamp: Double?
     var lastBufferDurationSeconds: Double?
+    var rmsDecibels: Double?
+    var peakDecibels: Double?
+    var recentNormalizedAudioLevels: [Double]?
     var failureReason: String?
 
     var capturedDurationSeconds: Double? {
@@ -58,6 +73,7 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         sampleRate: Double,
         channelCount: Int,
         presentationTimestamp: Double?,
+        audioLevel: AudioLevelMeasurement? = nil,
         receivedAt: Date = Date()
     ) {
         bufferCount += 1
@@ -67,12 +83,36 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         lastBufferReceivedAt = receivedAt
         lastBufferDurationSeconds = sampleRate > 0 ? Double(frameCount) / sampleRate : nil
 
+        if let audioLevel {
+            rmsDecibels = audioLevel.rmsDecibels
+            peakDecibels = audioLevel.peakDecibels
+            var levels = recentNormalizedAudioLevels ?? []
+            levels.append(audioLevel.normalizedForDisplay)
+            if levels.count > Self.liveLevelHistoryLimit {
+                levels.removeFirst(levels.count - Self.liveLevelHistoryLimit)
+            }
+            recentNormalizedAudioLevels = levels
+        }
+
         if let presentationTimestamp {
             if firstPresentationTimestamp == nil {
                 firstPresentationTimestamp = presentationTimestamp
             }
             lastPresentationTimestamp = presentationTimestamp
         }
+    }
+
+    func recentLiveAudioLevels(
+        at date: Date = Date(),
+        staleAfter: TimeInterval = 1,
+        maximumCount: Int = 22
+    ) -> [Double] {
+        guard maximumCount > 0,
+              let lastBufferReceivedAt,
+              date.timeIntervalSince(lastBufferReceivedAt) <= staleAfter else {
+            return []
+        }
+        return Array((recentNormalizedAudioLevels ?? []).suffix(maximumCount))
     }
 
     var sessionMetadata: AudioTrackMetadata {
@@ -88,6 +128,8 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
             failureReason: failureReason
         )
     }
+
+    private static let liveLevelHistoryLimit = 64
 }
 
 struct CaptureSessionDiagnostics: Codable, Equatable, Sendable {
@@ -98,4 +140,31 @@ struct CaptureSessionDiagnostics: Codable, Equatable, Sendable {
 
     var systemAudio: AudioCaptureDiagnostics
     var microphone: AudioCaptureDiagnostics
+
+    func combinedRecentAudioLevels(
+        at date: Date = Date(),
+        staleAfter: TimeInterval = 1,
+        maximumCount: Int = 22
+    ) -> [Double] {
+        let systemLevels = systemAudio.recentLiveAudioLevels(
+            at: date,
+            staleAfter: staleAfter,
+            maximumCount: maximumCount
+        )
+        let microphoneLevels = microphone.recentLiveAudioLevels(
+            at: date,
+            staleAfter: staleAfter,
+            maximumCount: maximumCount
+        )
+        let resultCount = max(systemLevels.count, microphoneLevels.count)
+        guard resultCount > 0 else { return [] }
+
+        return (0..<resultCount).map { index in
+            let systemIndex = index - (resultCount - systemLevels.count)
+            let microphoneIndex = index - (resultCount - microphoneLevels.count)
+            let systemLevel = systemIndex >= 0 ? systemLevels[systemIndex] : 0
+            let microphoneLevel = microphoneIndex >= 0 ? microphoneLevels[microphoneIndex] : 0
+            return max(systemLevel, microphoneLevel)
+        }
+    }
 }

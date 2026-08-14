@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Foundation
 import XCTest
@@ -11,18 +12,24 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         XCTAssertEqual(configuration.verificationDelay, 1.0)
         XCTAssertEqual(configuration.maximumAttempts, 8)
         XCTAssertEqual(configuration.minimumBufferCount, 3)
+        XCTAssertEqual(configuration.maximumStartupAttempts, 2)
+        XCTAssertEqual(configuration.startupVerificationDelay, 1)
     }
 
     func testRecoveryConfigurationNormalizesUnsafeValues() {
         let configuration = MicrophoneRecoveryConfiguration(
             delay: -1,
             maximumAttempts: 0,
-            minimumBufferCount: 0
+            minimumBufferCount: 0,
+            maximumStartupAttempts: 0,
+            startupVerificationDelay: -1
         )
 
         XCTAssertEqual(configuration.delay, 0)
         XCTAssertEqual(configuration.maximumAttempts, 1)
         XCTAssertEqual(configuration.minimumBufferCount, 1)
+        XCTAssertEqual(configuration.maximumStartupAttempts, 1)
+        XCTAssertEqual(configuration.startupVerificationDelay, 0.05)
     }
 
     func testRecoveryPolicyUsesInjectedAttemptAndBufferLimits() {
@@ -87,6 +94,96 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         let startExit = try XCTUnwrap(operations.firstIndex(of: "start-exit"))
         let stop = try XCTUnwrap(operations.firstIndex(of: "stop"))
         XCTAssertLessThan(startExit, stop)
+    }
+
+    func testStartupInstallsTapWithHardwareInputFormat() async throws {
+        let engine = FakeMicrophoneAudioEngine(inputSampleRate: 48_000)
+        let capture = MicrophoneCapture(
+            engine: engine,
+            engineFactory: { FakeMicrophoneAudioEngine() },
+            notificationCenter: NotificationCenter(),
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0,
+                minimumBufferCount: 1,
+                maximumStartupAttempts: 1,
+                startupVerificationDelay: 0.05
+            ),
+            permissionRequester: {}
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureFormatTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        try await capture.start(outputURL: outputURL)
+
+        XCTAssertEqual(engine.installedTapSampleRates, [48_000])
+        _ = await capture.stop()
+    }
+
+    func testFormatNotSupportedStartupRecreatesEngineAndSucceeds() async throws {
+        let formatError = NSError(
+            domain: NSOSStatusErrorDomain,
+            code: Int(kAudioUnitErr_FormatNotSupported)
+        )
+        let initialEngine = FakeMicrophoneAudioEngine(startError: formatError)
+        let replacementEngine = FakeMicrophoneAudioEngine()
+        let capture = MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: { replacementEngine },
+            notificationCenter: NotificationCenter(),
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0,
+                minimumBufferCount: 1,
+                maximumStartupAttempts: 2,
+                startupVerificationDelay: 0.05
+            ),
+            permissionRequester: {}
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureRetryTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        try await capture.start(outputURL: outputURL)
+
+        XCTAssertTrue(initialEngine.operations.contains("reset"))
+        XCTAssertEqual(replacementEngine.installedTapSampleRates, [48_000])
+        let diagnostics = await capture.diagnostics()
+        XCTAssertGreaterThan(diagnostics.bufferCount, 0)
+        _ = await capture.stop()
+    }
+
+    func testStartupFailsWhenFreshEngineAlsoProducesNoBuffers() async throws {
+        let initialEngine = FakeMicrophoneAudioEngine(producesBuffers: false)
+        let replacementEngine = FakeMicrophoneAudioEngine(producesBuffers: false)
+        let capture = MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: { replacementEngine },
+            notificationCenter: NotificationCenter(),
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0,
+                minimumBufferCount: 1,
+                maximumStartupAttempts: 2,
+                startupVerificationDelay: 0.05
+            ),
+            permissionRequester: {}
+        )
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureNoDataTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        do {
+            try await capture.start(outputURL: outputURL)
+            XCTFail("A microphone with no buffers must fail startup.")
+        } catch let error as AudioCaptureServiceError {
+            XCTAssertEqual(error, .microphoneProducedNoData)
+        }
+
+        let diagnostics = await capture.diagnostics()
+        XCTAssertEqual(diagnostics.bufferCount, 0)
+        XCTAssertEqual(
+            diagnostics.failureReason,
+            AudioCaptureServiceError.microphoneProducedNoData.localizedDescription
+        )
     }
 
     func testDelayedRecoveryFromStoppedCaptureDoesNotAffectNextCapture() async throws {
@@ -211,11 +308,24 @@ private final class FakeMicrophoneAudioEngine: MicrophoneAudioEngine, @unchecked
 
     private let condition = NSCondition()
     private let blockOnStart: Bool
+    private let inputSampleRate: Double
+    private let startError: NSError?
+    private let producesBuffers: Bool
     private var shouldReleaseStart = false
     private var recordedOperations: [String] = []
+    private var tapHandler: ((AVAudioPCMBuffer, AVAudioTime) -> Void)?
+    private var installedSampleRates: [Double] = []
 
-    init(blockOnStart: Bool = false) {
+    init(
+        blockOnStart: Bool = false,
+        inputSampleRate: Double = 48_000,
+        startError: NSError? = nil,
+        producesBuffers: Bool = true
+    ) {
         self.blockOnStart = blockOnStart
+        self.inputSampleRate = inputSampleRate
+        self.startError = startError
+        self.producesBuffers = producesBuffers
     }
 
     var didEnterStart: Bool {
@@ -226,12 +336,23 @@ private final class FakeMicrophoneAudioEngine: MicrophoneAudioEngine, @unchecked
         condition.withLock { recordedOperations }
     }
 
-    func inputFormat() -> AVAudioFormat {
-        AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+    var installedTapSampleRates: [Double] {
+        condition.withLock { installedSampleRates }
     }
 
-    func installTap(_ handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) {
-        record("install-tap")
+    func inputFormat() -> AVAudioFormat {
+        AVAudioFormat(standardFormatWithSampleRate: inputSampleRate, channels: 1)!
+    }
+
+    func installTap(
+        format: AVAudioFormat,
+        handler: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {
+        condition.withLock {
+            recordedOperations.append("install-tap")
+            installedSampleRates.append(format.sampleRate)
+            tapHandler = handler
+        }
     }
 
     func removeTap() { record("remove-tap") }
@@ -245,7 +366,34 @@ private final class FakeMicrophoneAudioEngine: MicrophoneAudioEngine, @unchecked
             condition.wait()
         }
         recordedOperations.append("start-exit")
+        let handler = tapHandler
+        let startError = startError
         condition.unlock()
+
+        if let startError { throw startError }
+        guard producesBuffers else { return }
+
+        guard let handler,
+              let format = AVAudioFormat(
+                standardFormatWithSampleRate: inputSampleRate,
+                channels: 1
+              ),
+              let buffer = AVAudioPCMBuffer(
+                pcmFormat: format,
+                frameCapacity: 128
+              ) else {
+            return
+        }
+        buffer.frameLength = 128
+        for index in 0..<3 {
+            handler(
+                buffer,
+                AVAudioTime(
+                    sampleTime: AVAudioFramePosition(index * 128),
+                    atRate: inputSampleRate
+                )
+            )
+        }
     }
 
     func stop() { record("stop") }

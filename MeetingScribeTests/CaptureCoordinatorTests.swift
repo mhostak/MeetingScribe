@@ -113,7 +113,59 @@ final class CaptureCoordinatorTests: XCTestCase {
         XCTAssertNotNil(stopped.microphone.failureReason)
     }
 
-    private func makeSession() -> RecordingSession {
+    func testMicrophoneOnlyStartsNoSystemCaptureAndRequiresMicrophone() async throws {
+        let systemAudio = MockAudioCaptureService(
+            startError: .screenRecordingPermissionDenied
+        )
+        let microphone = MockAudioCaptureService(bufferCount: 1)
+        let coordinator = CaptureCoordinator(
+            systemAudioCapture: systemAudio,
+            microphoneCapture: microphone
+        )
+
+        let started = try await coordinator.start(
+            for: makeSession(captureMode: .microphoneOnly)
+        )
+
+        let systemStartCount = await systemAudio.startCount()
+        let microphoneStartCount = await microphone.startCount()
+        XCTAssertEqual(systemStartCount, 0)
+        XCTAssertEqual(microphoneStartCount, 1)
+        XCTAssertEqual(started.systemAudio, .empty)
+        XCTAssertEqual(started.microphone.bufferCount, 1)
+        _ = await coordinator.stop()
+    }
+
+    func testMicrophoneOnlyFailureRollsBackAndFailsTransaction() async throws {
+        let systemAudio = MockAudioCaptureService()
+        let microphone = MockAudioCaptureService(
+            startError: .microphonePermissionDenied
+        )
+        let coordinator = CaptureCoordinator(
+            systemAudioCapture: systemAudio,
+            microphoneCapture: microphone
+        )
+
+        do {
+            _ = try await coordinator.start(
+                for: makeSession(captureMode: .microphoneOnly)
+            )
+            XCTFail("Offline recording must not continue without a microphone.")
+        } catch let error as AudioCaptureServiceError {
+            XCTAssertEqual(error, .microphonePermissionDenied)
+        }
+
+        let systemStartCount = await systemAudio.startCount()
+        let microphoneStartCount = await microphone.startCount()
+        let microphoneStopCount = await microphone.stopCount()
+        XCTAssertEqual(systemStartCount, 0)
+        XCTAssertEqual(microphoneStartCount, 1)
+        XCTAssertEqual(microphoneStopCount, 1)
+    }
+
+    private func makeSession(
+        captureMode: CaptureMode = .systemAndMicrophone
+    ) -> RecordingSession {
         let directoryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeCoordinator-\(UUID().uuidString)")
         return RecordingSession(
@@ -121,7 +173,8 @@ final class CaptureCoordinatorTests: XCTestCase {
                 id: "test-session",
                 title: "Test",
                 status: .recording,
-                createdAt: Date()
+                createdAt: Date(),
+                captureMode: captureMode
             ),
             directoryURL: directoryURL
         )

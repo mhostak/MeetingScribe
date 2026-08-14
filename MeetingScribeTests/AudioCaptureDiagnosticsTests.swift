@@ -65,6 +65,67 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
         XCTAssertNil(diagnostics.lastPresentationTimestamp)
     }
 
+    func testRegisterBufferKeepsBoundedLiveAudioLevelHistory() throws {
+        let receivedAt = Date(timeIntervalSince1970: 1_000)
+        var diagnostics = AudioCaptureDiagnostics(startedAt: receivedAt)
+
+        for index in 0..<70 {
+            let normalizedLevel = Double(index) / 69
+            let rmsDecibels = normalizedLevel * 60 - 60
+            diagnostics.registerBuffer(
+                frameCount: 160,
+                sampleRate: 16_000,
+                channelCount: 1,
+                presentationTimestamp: Double(index) / 100,
+                audioLevel: AudioLevelMeasurement(
+                    rmsDecibels: rmsDecibels,
+                    peakDecibels: rmsDecibels + 12
+                ),
+                receivedAt: receivedAt
+            )
+        }
+
+        let levels = try XCTUnwrap(diagnostics.recentNormalizedAudioLevels)
+        XCTAssertEqual(levels.count, 64)
+        XCTAssertEqual(try XCTUnwrap(levels.last), 1, accuracy: 0.000_1)
+        XCTAssertEqual(
+            diagnostics.recentLiveAudioLevels(at: receivedAt.addingTimeInterval(0.5)).count,
+            22
+        )
+        XCTAssertTrue(
+            diagnostics.recentLiveAudioLevels(at: receivedAt.addingTimeInterval(2)).isEmpty
+        )
+    }
+
+    func testCombinedLiveLevelsUseLouderAlignedSource() {
+        let receivedAt = Date(timeIntervalSince1970: 1_000)
+        var system = AudioCaptureDiagnostics(startedAt: receivedAt)
+        var microphone = AudioCaptureDiagnostics(startedAt: receivedAt)
+        system.registerBuffer(
+            frameCount: 160,
+            sampleRate: 16_000,
+            channelCount: 1,
+            presentationTimestamp: 0,
+            audioLevel: AudioLevelMeasurement(rmsDecibels: -48, peakDecibels: -36),
+            receivedAt: receivedAt
+        )
+        microphone.registerBuffer(
+            frameCount: 160,
+            sampleRate: 16_000,
+            channelCount: 1,
+            presentationTimestamp: 0,
+            audioLevel: AudioLevelMeasurement(rmsDecibels: -12, peakDecibels: 0),
+            receivedAt: receivedAt
+        )
+
+        let levels = CaptureSessionDiagnostics(
+            systemAudio: system,
+            microphone: microphone
+        ).combinedRecentAudioLevels(at: receivedAt)
+
+        XCTAssertEqual(levels, [0.8])
+    }
+
     func testAlreadyStoppedAndUserStoppedErrorsAreBenign() {
         let alreadyStopped = NSError(domain: SCStreamErrorDomain, code: -3_808)
         let userStopped = NSError(domain: SCStreamErrorDomain, code: -3_817)

@@ -10,11 +10,9 @@ protocol AudioFinalizing: Sendable {
 
 /// Converts captured tracks and maps them onto one relative session timeline.
 ///
-/// System audio is required. A microphone track is optional and participates
-/// only when it has buffers and its host-time start is within the plausibility
-/// guard of the system start. The origin is `min(valid track starts)` and each
-/// output offset is `max(0, trackStart - origin)`. No silence is inserted into
-/// the WAV files; the offset is added later to transcription segment timestamps.
+/// Online/hybrid sessions require system audio and accept an optional microphone
+/// track. Offline sessions require only the microphone. No silence is inserted
+/// into the WAV files; relative offsets are applied to transcript timestamps.
 struct AudioFinalizer: AudioFinalizing {
     static let maximumPlausibleTrackStartDifference: TimeInterval = 60
 
@@ -37,6 +35,13 @@ struct AudioFinalizer: AudioFinalizing {
         session: RecordingSession,
         diagnostics: CaptureSessionDiagnostics
     ) async throws -> AudioFinalizationMetadata {
+        if session.metadata.resolvedCaptureMode == .microphoneOnly {
+            return try finalizeMicrophoneOnly(
+                session: session,
+                diagnostics: diagnostics.microphone
+            )
+        }
+
         let systemDiagnostics = diagnostics.systemAudio
         let requiredTrackWarning = try validateRequiredTrack(
             systemDiagnostics,
@@ -107,6 +112,33 @@ struct AudioFinalizer: AudioFinalizing {
             system: system,
             microphone: microphone,
             warnings: warnings
+        )
+    }
+
+    private func finalizeMicrophoneOnly(
+        session: RecordingSession,
+        diagnostics: AudioCaptureDiagnostics
+    ) throws -> AudioFinalizationMetadata {
+        let requiredTrackWarning = try validateRequiredTrack(
+            diagnostics,
+            name: "Microphone"
+        )
+        guard let microphoneStart = diagnostics.firstPresentationTimestamp else {
+            throw AudioFinalizerError.missingTimeline(trackName: "Microphone")
+        }
+
+        let microphone = try finalizeTrack(
+            inputURL: session.microphoneAudioURL,
+            outputURL: session.microphoneWorkingAudioURL,
+            startedAt: microphoneStart,
+            timelineOrigin: microphoneStart
+        )
+        return AudioFinalizationMetadata(
+            completedAt: now(),
+            timelineOrigin: microphoneStart,
+            system: nil,
+            microphone: microphone,
+            warnings: requiredTrackWarning.map { [$0] } ?? []
         )
     }
 
@@ -236,14 +268,15 @@ struct AudioSourceCleaner: AudioSourceCleaning, @unchecked Sendable {
 
         var candidates: [Candidate] = []
         if isExistingCAF(session.systemAudioURL) {
-            guard session.metadata.transcription?.systemSegmentCount != nil else {
+            guard let system = finalization.system,
+                  session.metadata.transcription?.systemSegmentCount != nil else {
                 throw AudioSourceCleanupError.trackWasNotTranscribed(
                     fileName: session.systemAudioURL.lastPathComponent
                 )
             }
             candidates.append(Candidate(
                 sourceURL: session.systemAudioURL,
-                finalized: finalization.system,
+                finalized: system,
                 transcriptURL: session.systemTrackTranscriptURL
             ))
         }

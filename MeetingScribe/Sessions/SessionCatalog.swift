@@ -174,7 +174,9 @@ actor SessionCatalog {
         if let startedAt = metadata.startedAt, let endedAt = metadata.endedAt {
             return max(0, endedAt.timeIntervalSince(startedAt))
         }
-        return metadata.audioFinalization?.system.durationSeconds
+        return metadata.audioFinalization.flatMap {
+            $0.system?.durationSeconds ?? $0.microphone?.durationSeconds
+        }
     }
 
     private func overviewStatus(
@@ -220,7 +222,9 @@ actor SessionCatalog {
             metadata.audioFiles.microphoneWorking,
         ].compactMap { $0 })
         if let finalization = metadata.audioFinalization {
-            names.append(finalization.system.fileName)
+            if let system = finalization.system {
+                names.append(system.fileName)
+            }
             if let microphone = finalization.microphone {
                 names.append(microphone.fileName)
             }
@@ -233,7 +237,10 @@ actor SessionCatalog {
             || metadata.systemAudio != nil
             || metadata.microphoneAudio != nil
             || metadata.audioFinalization != nil
-        return shouldExist ? .missing(urls.first ?? session.systemAudioURL) : .notProduced
+        let fallbackURL = metadata.resolvedCaptureMode == .microphoneOnly
+            ? session.microphoneAudioURL
+            : session.systemAudioURL
+        return shouldExist ? .missing(urls.first ?? fallbackURL) : .notProduced
     }
 
     private func transcriptArtifact(for session: RecordingSession) -> SessionArtifactState {

@@ -2,7 +2,7 @@ import Foundation
 
 struct SessionTranscriptionResult: Equatable, Sendable {
     let metadata: SessionTranscriptionMetadata
-    let systemTranscript: TrackTranscript
+    let systemTranscript: TrackTranscript?
     let microphoneTranscript: TrackTranscript?
     let mergedTranscript: MergedTranscript
     let speakerTurnArtifact: SpeakerTurnArtifact?
@@ -13,7 +13,7 @@ struct SessionTranscriptionResult: Equatable, Sendable {
 
     init(
         metadata: SessionTranscriptionMetadata,
-        systemTranscript: TrackTranscript,
+        systemTranscript: TrackTranscript?,
         microphoneTranscript: TrackTranscript?,
         mergedTranscript: MergedTranscript,
         speakerTurnArtifact: SpeakerTurnArtifact? = nil,
@@ -175,31 +175,35 @@ actor SessionTranscriber: SessionTranscribing {
         try Task.checkCancellation()
         let startedAt = now()
         var warnings: [String] = []
-        let systemTranscript = try await service.transcribe(
-            SpeechTranscriptionRequest(
-                audioURL: session.directoryURL.appendingPathComponent(
-                    finalization.system.fileName,
-                    isDirectory: false
-                ),
-                model: model,
-                options: TranscriptionOptions(
-                    language: language,
-                    source: .system,
-                    speaker: TranscriptSource.system.conversationParticipantLabel,
-                    timelineOffsetSeconds: finalization.system.timelineOffsetSeconds
+        var systemTranscript: TrackTranscript?
+        if let system = finalization.system {
+            let transcript = try await service.transcribe(
+                SpeechTranscriptionRequest(
+                    audioURL: session.directoryURL.appendingPathComponent(
+                        system.fileName,
+                        isDirectory: false
+                    ),
+                    model: model,
+                    options: TranscriptionOptions(
+                        language: language,
+                        source: .system,
+                        speaker: TranscriptSource.system.conversationParticipantLabel,
+                        timelineOffsetSeconds: system.timelineOffsetSeconds
+                    )
                 )
             )
-        )
-        try Task.checkCancellation()
-        try persist(systemTranscript, to: session.systemTrackTranscriptURL)
-        if systemTranscript.segments.isEmpty {
-            warnings.append("No speech was detected in system audio.")
+            try Task.checkCancellation()
+            try persist(transcript, to: session.systemTrackTranscriptURL)
+            systemTranscript = transcript
+            if transcript.segments.isEmpty {
+                warnings.append("No speech was detected in system audio.")
+            }
+            appendAutomaticLanguageFallbackWarning(
+                for: transcript,
+                requestedLanguage: language,
+                warnings: &warnings
+            )
         }
-        appendAutomaticLanguageFallbackWarning(
-            for: systemTranscript,
-            requestedLanguage: language,
-            warnings: &warnings
-        )
 
         var microphoneTranscript: TrackTranscript?
         if let microphone = finalization.microphone {
@@ -277,14 +281,14 @@ actor SessionTranscriber: SessionTranscribing {
             model: model.provenance.model,
             startedAt: startedAt,
             completedAt: completedAt,
-            systemSegmentCount: systemTranscript.segments.count,
+            systemSegmentCount: systemTranscript?.segments.count,
             microphoneSegmentCount: microphoneTranscript?.segments.count,
             mergedSegmentCount: mergedTranscript.segments.count,
             utteranceCount: utteranceTranscript?.utterances.count,
             turnBoundaryCount: speakerTurnArtifact?.boundaries.count,
             turnDetectionModel: speakerTurnArtifact?.model,
             utteranceFallbackUsed: false,
-            systemPerformance: systemTranscript.performance,
+            systemPerformance: systemTranscript?.performance,
             microphonePerformance: microphoneTranscript?.performance,
             warnings: warnings,
             failureReason: nil,

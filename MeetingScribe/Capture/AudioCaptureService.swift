@@ -11,6 +11,7 @@ enum AudioCaptureServiceError: Error, Equatable, LocalizedError {
     case screenRecordingPermissionDenied
     case microphonePermissionDenied
     case microphoneUnavailable
+    case microphoneProducedNoData
     case noDisplayAvailable
     case invalidAudioFormat
     case unableToCreateAudioBuffer
@@ -26,6 +27,8 @@ enum AudioCaptureServiceError: Error, Equatable, LocalizedError {
             return "MeetingScribe does not have Microphone permission. Enable it in System Settings → Privacy & Security → Microphone, then quit and reopen MeetingScribe. System audio recording can continue."
         case .microphoneUnavailable:
             return "No usable microphone input is available. System audio recording can continue."
+        case .microphoneProducedNoData:
+            return "The audio engine started, but the microphone produced no audio buffers."
         case .noDisplayAvailable:
             return "No display is available for system audio capture."
         case .invalidAudioFormat:

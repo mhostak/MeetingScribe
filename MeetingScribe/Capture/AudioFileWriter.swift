@@ -24,6 +24,54 @@ final class AudioFileWriter {
         let frameCount: Int
         let sampleRate: Double
         let channelCount: Int
+        let audioLevel: AudioLevelMeasurement?
+    }
+
+    private struct ConversionResult {
+        let frameCount: Int
+        let audioLevel: AudioLevelMeasurement?
+    }
+
+    private struct AudioLevelAccumulator {
+        var squaredMagnitudeSum = 0.0
+        var peakMagnitude = 0.0
+        var sampleCount = 0
+
+        mutating func register(_ buffer: AVAudioPCMBuffer) {
+            let audioBuffers = UnsafeMutableAudioBufferListPointer(
+                buffer.mutableAudioBufferList
+            )
+            var remainingSamples = Int(buffer.frameLength) * Int(buffer.format.channelCount)
+
+            for audioBuffer in audioBuffers where remainingSamples > 0 {
+                guard let data = audioBuffer.mData else { continue }
+                let availableSamples = Int(audioBuffer.mDataByteSize) / MemoryLayout<Int16>.size
+                let samplesToRead = min(remainingSamples, availableSamples)
+                let samples = data.assumingMemoryBound(to: Int16.self)
+
+                for index in 0..<samplesToRead {
+                    let magnitude = abs(Double(samples[index])) / 32_768
+                    squaredMagnitudeSum += magnitude * magnitude
+                    peakMagnitude = max(peakMagnitude, magnitude)
+                }
+                sampleCount += samplesToRead
+                remainingSamples -= samplesToRead
+            }
+        }
+
+        var measurement: AudioLevelMeasurement? {
+            guard sampleCount > 0 else { return nil }
+            let rmsMagnitude = sqrt(squaredMagnitudeSum / Double(sampleCount))
+            return AudioLevelMeasurement(
+                rmsDecibels: Self.decibels(for: rmsMagnitude),
+                peakDecibels: Self.decibels(for: peakMagnitude)
+            )
+        }
+
+        private static func decibels(for magnitude: Double) -> Double {
+            guard magnitude > 0 else { return -120 }
+            return max(-120, 20 * log10(min(1, magnitude)))
+        }
     }
 
     static let targetSampleRate = 16_000.0
@@ -71,7 +119,8 @@ final class AudioFileWriter {
             return WriteResult(
                 frameCount: 0,
                 sampleRate: Self.targetSampleRate,
-                channelCount: Int(Self.targetChannelCount)
+                channelCount: Int(Self.targetChannelCount),
+                audioLevel: nil
             )
         }
         return try sampleBuffer.withAudioBufferList { audioBufferList, _ in
@@ -98,7 +147,8 @@ final class AudioFileWriter {
             return WriteResult(
                 frameCount: 0,
                 sampleRate: Self.targetSampleRate,
-                channelCount: Int(Self.targetChannelCount)
+                channelCount: Int(Self.targetChannelCount),
+                audioLevel: nil
             )
         }
 
@@ -106,12 +156,13 @@ final class AudioFileWriter {
         try prepareConverter(for: pcmBuffer.format)
         guard let converter else { throw AudioCaptureServiceError.invalidAudioFormat }
 
-        let writtenFrames = try convertAndWrite(pcmBuffer, using: converter)
+        let conversion = try convertAndWrite(pcmBuffer, using: converter)
         try checkpointIfNeeded()
         return WriteResult(
-            frameCount: writtenFrames,
+            frameCount: conversion.frameCount,
             sampleRate: Self.targetSampleRate,
-            channelCount: Int(Self.targetChannelCount)
+            channelCount: Int(Self.targetChannelCount),
+            audioLevel: conversion.audioLevel
         )
     }
 
@@ -132,7 +183,6 @@ final class AudioFileWriter {
         }
         fileHandle = nil
         converter = nil
-        inputFormat = nil
         if let finishError { throw finishError }
     }
 
@@ -162,12 +212,13 @@ final class AudioFileWriter {
     private func convertAndWrite(
         _ inputBuffer: AVAudioPCMBuffer,
         using converter: AVAudioConverter
-    ) throws -> Int {
+    ) throws -> ConversionResult {
         let ratio = outputFormat.sampleRate / inputBuffer.format.sampleRate
         let estimatedFrames = ceil(Double(inputBuffer.frameLength) * ratio)
         let outputCapacity = AVAudioFrameCount(max(256, estimatedFrames + 64))
         let input = ConversionInput(buffer: inputBuffer)
         var writtenFrames = 0
+        var audioLevel = AudioLevelAccumulator()
 
         for _ in 0..<16 {
             guard let outputBuffer = AVAudioPCMBuffer(
@@ -192,6 +243,7 @@ final class AudioFileWriter {
             }
             if let conversionError { throw conversionError }
             if outputBuffer.frameLength > 0 {
+                audioLevel.register(outputBuffer)
                 try append(outputBuffer)
                 writtenFrames += Int(outputBuffer.frameLength)
             }
@@ -200,7 +252,10 @@ final class AudioFileWriter {
             case .haveData:
                 continue
             case .inputRanDry, .endOfStream:
-                return writtenFrames
+                return ConversionResult(
+                    frameCount: writtenFrames,
+                    audioLevel: audioLevel.measurement
+                )
             case .error:
                 throw AudioCaptureServiceError.invalidAudioFormat
             @unknown default:

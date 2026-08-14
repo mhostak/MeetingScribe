@@ -129,11 +129,12 @@ actor SpeakerEditingService {
               ) else {
             throw SpeakerEditingError.transcriptMissing
         }
-        guard let finalization = session.metadata.audioFinalization else {
+        guard let finalization = session.metadata.audioFinalization,
+              let system = finalization.system else {
             throw SpeakerEditingError.finalizedAudioMissing
         }
         let audioURL = session.directoryURL.appendingPathComponent(
-            finalization.system.fileName,
+            system.fileName,
             isDirectory: false
         )
         let transcriptFingerprint = try artifactStore.fingerprint(transcript: transcript)
@@ -142,7 +143,7 @@ actor SpeakerEditingService {
             sessionID: session.metadata.id,
             sourceAudioURL: audioURL,
             transcript: transcript,
-            expectedTimelineOffsetSeconds: finalization.system.timelineOffsetSeconds,
+            expectedTimelineOffsetSeconds: system.timelineOffsetSeconds,
             sourceTranscriptFingerprint: transcriptFingerprint
         ) else {
             throw SpeakerEditingError.diarizationMissing

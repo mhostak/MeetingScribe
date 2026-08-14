@@ -13,11 +13,11 @@ struct TranscriptMerger: Sendable {
     func merge(
         sessionID: String,
         title: String,
-        systemTranscript: TrackTranscript,
+        systemTranscript: TrackTranscript?,
         microphoneTranscript: TrackTranscript?,
         completedAt: Date
     ) throws -> MergedTranscript {
-        guard systemTranscript.source == .system else {
+        if let systemTranscript, systemTranscript.source != .system {
             throw TranscriptMergeError.unexpectedTrackSource(
                 expected: .system,
                 actual: systemTranscript.source
@@ -30,8 +30,16 @@ struct TranscriptMerger: Sendable {
             )
         }
 
-        var tracks = [makeTrack(from: systemTranscript)]
-        var candidates = try normalizedCandidates(from: systemTranscript)
+        guard systemTranscript != nil || microphoneTranscript != nil else {
+            throw TranscriptMergeError.noTracks
+        }
+
+        var tracks: [MergedTranscriptTrack] = []
+        var candidates: [Candidate] = []
+        if let systemTranscript {
+            tracks.append(makeTrack(from: systemTranscript))
+            candidates.append(contentsOf: try normalizedCandidates(from: systemTranscript))
+        }
         if let microphoneTranscript {
             tracks.append(makeTrack(from: microphoneTranscript))
             candidates.append(contentsOf: try normalizedCandidates(from: microphoneTranscript))
@@ -166,6 +174,7 @@ struct TranscriptMerger: Sendable {
 }
 
 enum TranscriptMergeError: Error, Equatable, LocalizedError {
+    case noTracks
     case unexpectedTrackSource(expected: TranscriptSource, actual: TranscriptSource)
     case segmentSourceMismatch(
         segmentID: String,
@@ -176,6 +185,8 @@ enum TranscriptMergeError: Error, Equatable, LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .noTracks:
+            return "No finalized audio track was available for transcription."
         case let .unexpectedTrackSource(expected, actual):
             return "Expected a \(expected.rawValue) transcript, received \(actual.rawValue)."
         case let .segmentSourceMismatch(segmentID, track, segment):

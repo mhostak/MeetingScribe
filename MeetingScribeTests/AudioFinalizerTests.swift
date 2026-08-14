@@ -141,9 +141,10 @@ final class AudioFinalizerTests: XCTestCase {
 
         XCTAssertEqual(metadata.completedAt, completedAt)
         XCTAssertEqual(metadata.timelineOrigin, 100)
-        XCTAssertEqual(metadata.system.timelineOffsetSeconds, 0.25, accuracy: 0.000_001)
+        let system = try XCTUnwrap(metadata.system)
+        XCTAssertEqual(system.timelineOffsetSeconds, 0.25, accuracy: 0.000_001)
         XCTAssertEqual(metadata.microphone?.timelineOffsetSeconds, 0)
-        XCTAssertEqual(metadata.system.sampleRate, 16_000)
+        XCTAssertEqual(system.sampleRate, 16_000)
         XCTAssertEqual(metadata.microphone?.sampleRate, 16_000)
         XCTAssertTrue(metadata.warnings.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemWorkingAudioURL.path))
@@ -175,10 +176,37 @@ final class AudioFinalizerTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(metadata.system.fileName, "system-16k.wav")
-        XCTAssertEqual(metadata.system.sampleRate, 16_000)
-        XCTAssertEqual(metadata.system.channelCount, 1)
+        let system = try XCTUnwrap(metadata.system)
+        XCTAssertEqual(system.fileName, "system-16k.wav")
+        XCTAssertEqual(system.sampleRate, 16_000)
+        XCTAssertEqual(system.channelCount, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+    }
+
+    func testMicrophoneOnlyFinalizesRequiredMicrophoneWithoutSystemTrack() async throws {
+        var session = makeSession()
+        session.metadata.captureMode = .microphoneOnly
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: .empty,
+                microphone: diagnostics(
+                    fileName: "microphone.caf",
+                    channelCount: 1,
+                    presentationTimestamp: 42
+                )
+            )
+        )
+
+        XCTAssertNil(metadata.system)
+        let microphone = try XCTUnwrap(metadata.microphone)
+        XCTAssertEqual(metadata.timelineOrigin, 42)
+        XCTAssertEqual(microphone.timelineOffsetSeconds, 0)
+        XCTAssertEqual(microphone.sampleRate, 16_000)
+        XCTAssertTrue(metadata.warnings.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
     func testFinalizerPreservesRequiredSystemTrackWhenMicrophoneIsUnavailable() async throws {
@@ -256,7 +284,7 @@ final class AudioFinalizerTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(metadata.system.sampleRate, 16_000)
+        XCTAssertEqual(try XCTUnwrap(metadata.system).sampleRate, 16_000)
         XCTAssertTrue(metadata.warnings.contains {
             $0.contains("System audio capture ended early")
                 && $0.contains("No displays were available")
