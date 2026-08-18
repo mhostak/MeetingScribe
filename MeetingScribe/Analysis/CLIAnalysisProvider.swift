@@ -446,7 +446,7 @@ struct CLIAnalysisProvider: AnalysisProvider {
             ? "TRANSCRIPT CHUNK"
             : "PARTIAL ANALYSES TO CONSOLIDATE"
         let modeInstruction = request.mode == .transcript
-            ? "Analyze only the supplied transcript chunk."
+            ? "Analyze only the supplied transcript chunk. It may repeat a small amount of context from the previous chunk; use that context for continuity but do not count repeated content twice."
             : "Combine and deduplicate the supplied partial analyses into one final Markdown analysis. Apply the user's requested structure and do not add facts."
         return """
         You are analyzing exactly one MeetingScribe meeting. Return only a JSON object that matches

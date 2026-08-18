@@ -74,16 +74,110 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertEqual(requests.map(\.preferredLanguage), [.czech])
     }
 
-    func testOversizedSingleSegmentIsRejectedWithoutProviderCall() async {
+    func testOversizedSingleSourceBlockIsSplitBeforeAnalysis() async throws {
         let provider = MockAnalysisProvider()
         let segment = TranscriptSegment(
-            id: "segment-000000",
+            id: "source-block-000000",
+            source: .microphone,
+            speaker: "On-site participants",
+            start: 0,
+            end: 3_600,
+            language: "sk",
+            text: String(repeating: "slovo ", count: 400),
+            confidence: nil
+        )
+
+        let run = try await MeetingAnalyzer(
+            provider: provider,
+            maxInputCharacters: 1_000
+        ).analyze(
+            session: makeSession(),
+            transcript: makeTranscript(segments: [segment])
+        )
+
+        let requests = await provider.requests
+        XCTAssertGreaterThan(run.transcriptChunkCount, 1)
+        XCTAssertEqual(requests.filter { $0.mode == .transcript }.count, run.transcriptChunkCount)
+        XCTAssertTrue(requests.allSatisfy { $0.content.count <= 1_000 })
+        XCTAssertTrue(requests[0].content.contains("[source-block-000000]"))
+        XCTAssertTrue(requests[0].content.contains("On-site participants {microphone, sk}"))
+        XCTAssertTrue(requests[1].content.contains("[00:"))
+
+        let transcriptRequests = requests.filter { $0.mode == .transcript }
+        let firstWords = Set(transcriptRequests[0].content.split(separator: " ").suffix(10))
+        let secondWords = Set(transcriptRequests[1].content.split(separator: " ").prefix(20))
+        XCTAssertFalse(firstWords.isDisjoint(with: secondWords))
+    }
+
+    func testLongBlockPrefersSentenceBoundaryAndInterpolatesOverlapTimestamp() async throws {
+        let provider = MockAnalysisProvider()
+        let sentence = String(repeating: "a", count: 680) + ". "
+        let segment = TranscriptSegment(
+            id: "source-block-1",
+            source: .microphone,
+            speaker: "On-site participants",
+            start: 0,
+            end: 1_000,
+            language: "sk",
+            text: sentence + String(repeating: "b", count: 500),
+            confidence: nil
+        )
+
+        _ = try await MeetingAnalyzer(
+            provider: provider,
+            maxInputCharacters: 1_000
+        ).analyze(
+            session: makeSession(),
+            transcript: makeTranscript(segments: [segment])
+        )
+
+        let requests = await provider.requests.filter { $0.mode == .transcript }
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(requests[0].content.hasSuffix("."))
+        XCTAssertTrue(requests[1].content.contains("[00:"))
+        XCTAssertFalse(requests[1].content.contains("[00:00:00]"))
+    }
+
+    func testShortSegmentsOverlapAcrossTranscriptChunks() async throws {
+        let provider = MockAnalysisProvider()
+        let segments = (0..<12).map { index in
+            TranscriptSegment(
+                id: "segment-\(index)",
+                source: .microphone,
+                speaker: "Martin",
+                start: Double(index),
+                end: Double(index + 1),
+                language: "sk",
+                text: String(repeating: "word", count: 12),
+                confidence: nil
+            )
+        }
+
+        _ = try await MeetingAnalyzer(
+            provider: provider,
+            maxInputCharacters: 1_000
+        ).analyze(
+            session: makeSession(),
+            transcript: makeTranscript(segments: segments)
+        )
+
+        let requests = await provider.requests.filter { $0.mode == .transcript }
+        XCTAssertGreaterThan(requests.count, 1)
+        let firstIDs = Set(requests[0].content.matches(of: /segment-\d+/).map(\.output))
+        let secondIDs = Set(requests[1].content.matches(of: /segment-\d+/).map(\.output))
+        XCTAssertFalse(firstIDs.isDisjoint(with: secondIDs))
+    }
+
+    func testSegmentMetadataThatLeavesNoRoomForTextIsRejected() async {
+        let provider = MockAnalysisProvider()
+        let segment = TranscriptSegment(
+            id: "segment-1",
             source: .system,
-            speaker: "Other",
+            speaker: String(repeating: "x", count: 1_000),
             start: 0,
             end: 1,
             language: "sk",
-            text: String(repeating: "x", count: 1_100),
+            text: "Text meetingu",
             confidence: nil
         )
 
@@ -95,7 +189,7 @@ final class MeetingAnalyzerTests: XCTestCase {
                 session: makeSession(),
                 transcript: makeTranscript(segments: [segment])
             )
-            XCTFail("Expected oversized input to be rejected.")
+            XCTFail("Expected oversized segment metadata to be rejected.")
         } catch {
             XCTAssertEqual(error as? AnalysisError, .transcriptChunkTooLarge)
         }
