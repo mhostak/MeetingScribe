@@ -262,25 +262,13 @@ final class AppState: ObservableObject {
         let configuration = configuredAnalysisConfiguration()
         var analysisSession = session
         analysisSession.metadata.analysisConfiguration = configuration
-        let rawTranscript = recovered.transcript
-        let analysisTranscript: MergedTranscript
-        if let sourceBlocks = recovered.utteranceTranscript,
-           sourceBlocks.sessionID == rawTranscript.sessionID,
-           sourceBlocks.configuration == .sourceBlocks {
-            analysisTranscript = sourceBlocks.asMergedTranscript(basedOn: rawTranscript)
-        } else {
-            analysisTranscript = SourceConversationBlockGrouper().group(
-                transcript: rawTranscript,
-                sourceFingerprint: "analysis-source-blocks"
-            ).asMergedTranscript(basedOn: rawTranscript)
-        }
 
         aiAnalysisReprocessingSessionID = session.metadata.id
         defer { aiAnalysisReprocessingSessionID = nil }
         do {
             let outcome = try await runAnalysis(
                 session: analysisSession,
-                transcript: analysisTranscript,
+                transcript: recovered.transcript,
                 configuration: configuration
             )
             guard let artifact = outcome.analysis, let metadata = outcome.metadata else {
@@ -1389,20 +1377,9 @@ final class AppState: ObservableObject {
             if let recoveredAnalysis {
                 analysis = recoveredAnalysis
             } else {
-                let analysisTranscript = transcription.mergedTranscript.map { raw in
-                    if let sourceBlocks = transcription.utteranceTranscript,
-                       sourceBlocks.sessionID == raw.sessionID,
-                       sourceBlocks.configuration == .sourceBlocks {
-                        return sourceBlocks.asMergedTranscript(basedOn: raw)
-                    }
-                    return SourceConversationBlockGrouper().group(
-                        transcript: raw,
-                        sourceFingerprint: "analysis-source-blocks"
-                    ).asMergedTranscript(basedOn: raw)
-                }
                 analysis = await analyzeIfPossible(
                     session: session,
-                    transcript: analysisTranscript
+                    transcript: transcription.mergedTranscript
                 )
             }
             if let metadata = analysis.metadata {

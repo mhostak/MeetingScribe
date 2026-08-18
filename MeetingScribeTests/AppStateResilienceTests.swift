@@ -356,6 +356,14 @@ final class AppStateResilienceTests: XCTestCase {
             to: session.mergedTranscriptURL,
             options: .atomic
         )
+        let sourceBlocks = SourceConversationBlockGrouper().group(
+            transcript: transcript,
+            sourceFingerprint: "test-source-blocks"
+        )
+        try TranscriptJSONCoder.makeEncoder().encode(sourceBlocks).write(
+            to: session.utteranceTranscriptURL,
+            options: .atomic
+        )
         try SessionJSONCoder.makeEncoder().encode(metadata).write(
             to: session.manifestURL,
             options: .atomic
@@ -403,6 +411,8 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertFalse(markdown.contains("AI analýza zatiaľ nebola vytvorená"))
         let analysisInputs = await runner.analysisInputs()
         XCTAssertEqual(analysisInputs.count, 1)
+        XCTAssertTrue(analysisInputs[0].contains("[segment-000000]"))
+        XCTAssertFalse(analysisInputs[0].contains("[source-block-000000]"))
     }
 
     func testCompletedMeetingWithoutTranscriptSegmentsSkipsCLIAnalysis() async throws {
