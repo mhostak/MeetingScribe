@@ -28,7 +28,8 @@ struct MeetingAnalyzer: Sendable {
         try Task.checkCancellation()
         let chunks = try transcriptChunks(
             from: transcript.segments,
-            participantNames: participantNamesForAnalysis(from: session)
+            participantNames: participantNamesForAnalysis(from: session),
+            eventDescription: eventDescriptionForAnalysis(from: session)
         )
         guard !chunks.isEmpty else {
             return MeetingAnalysisRun(
@@ -101,12 +102,14 @@ struct MeetingAnalyzer: Sendable {
 
     private func transcriptChunks(
         from segments: [TranscriptSegment],
-        participantNames: [String]
+        participantNames: [String],
+        eventDescription: String?
     ) throws -> [String] {
-        let context = participantNames.isEmpty
-            ? nil
-            : "Confirmed participants: " + participantNames.joined(separator: ", ")
-        let contentLimit = maxInputCharacters - (context.map { $0.count + 1 } ?? 0)
+        let context = analysisContext(
+            participantNames: participantNames,
+            eventDescription: eventDescription
+        )
+        let contentLimit = maxInputCharacters - context.count - 1
         guard contentLimit >= 1 else { throw AnalysisError.transcriptChunkTooLarge }
 
         let lines = try segments.flatMap { segment in
@@ -115,10 +118,26 @@ struct MeetingAnalyzer: Sendable {
         let chunks = try chunk(
             lines,
             limit: contentLimit,
-            overlapLimit: overlapLimit(for: contentLimit)
+            overlapLimit: overlapLimit(for: maxInputCharacters)
         )
-        guard let context else { return chunks }
         return chunks.map { context + "\n" + $0 }
+    }
+
+    private func analysisContext(
+        participantNames: [String],
+        eventDescription: String?
+    ) -> String {
+        let remoteDescription = participantNames.isEmpty
+            ? "remote participant(s)"
+            : "remote participant(s): " + participantNames.joined(separator: ", ")
+        var context = """
+        Authoritative audio-source mapping (do not infer or swap these roles): microphone = recording user (on-site); system = \(remoteDescription).
+        Cite evidence only with the provided meeting timestamps. Never invent or output internal segment identifiers.
+        """
+        if let eventDescription {
+            context += "\nConfirmed calendar event description:\n" + eventDescription
+        }
+        return context
     }
 
     /// Source-based conversation grouping can turn an entire single-source meeting into one
@@ -158,8 +177,11 @@ struct MeetingAnalyzer: Sendable {
         for segment: TranscriptSegment,
         start: Double
     ) -> String {
-        "[\(elapsedTime(start))] [\(segment.id)] "
-            + "\(segment.speaker) {\(segment.source.rawValue), \(segment.language)}: "
+        let speaker = segment.source == .microphone
+            ? "On-site user"
+            : "Remote participant(s)"
+        return "[\(elapsedTime(start))] "
+            + "\(speaker) {\(segment.source.rawValue), \(segment.language)}: "
     }
 
     private func splitText(
@@ -243,6 +265,12 @@ struct MeetingAnalyzer: Sendable {
                 .joined(separator: " ")
             return name.isEmpty ? nil : name
         }
+    }
+
+    private func eventDescriptionForAnalysis(from session: SessionMetadata) -> String? {
+        let normalized = session.calendarEvent?.eventDescription?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? nil : normalized
     }
 
     private func consolidationGroups(

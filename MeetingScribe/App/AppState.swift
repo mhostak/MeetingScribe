@@ -1028,8 +1028,7 @@ final class AppState: ObservableObject {
     func approveCalendarEvent(
         _ candidate: CalendarEventCandidate,
         participantIDs: Set<String>,
-        useEventTitle: Bool,
-        shareParticipantNamesWithAnalysis: Bool,
+        eventDescription: String?,
         now: Date = Date()
     ) async -> Bool {
         let participants = candidate.participants.compactMap { participant -> ConfirmedParticipant? in
@@ -1043,22 +1042,21 @@ final class AppState: ObservableObject {
             endsAt: candidate.endsAt,
             selectedAt: now,
             participants: participants,
-            shareParticipantNamesWithAnalysis: shareParticipantNamesWithAnalysis
-                && !participants.isEmpty
+            shareParticipantNamesWithAnalysis: !participants.isEmpty,
+            eventDescription: normalizedCalendarDescription(eventDescription)
         )
-        let approvedTitle = useEventTitle ? candidate.title : nil
 
         do {
             if currentSession != nil {
                 let updated = try await sessionManager.updateActiveSessionCalendarEvent(
                     snapshot,
-                    title: approvedTitle
+                    title: candidate.title
                 )
                 currentSession = updated
-                if useEventTitle { meetingTitle = updated.metadata.title }
+                meetingTitle = updated.metadata.title
             } else {
                 pendingCalendarEvent = snapshot
-                if let approvedTitle { meetingTitle = approvedTitle }
+                meetingTitle = candidate.title
             }
             calendarEventCandidates = []
             lastError = nil
@@ -1067,6 +1065,11 @@ final class AppState: ObservableObject {
             lastError = localized(error)
             return false
         }
+    }
+
+    private func normalizedCalendarDescription(_ description: String?) -> String? {
+        let normalized = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? nil : normalized
     }
 
     func clearCalendarSelection() async {

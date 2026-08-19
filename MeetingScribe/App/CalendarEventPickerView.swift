@@ -7,8 +7,8 @@ struct CalendarEventPickerView: View {
     let onOpenSettings: () -> Void
     @State private var selectedEventID: String?
     @State private var selectedParticipantIDs = Set<String>()
-    @State private var useEventTitle = false
-    @State private var shareParticipantNamesWithAnalysis = false
+    @State private var includeEventDescription = false
+    @State private var eventDescription = ""
     @State private var isApproving = false
 
     init(
@@ -45,7 +45,7 @@ struct CalendarEventPickerView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(20)
-        .frame(width: 580, height: 560)
+        .frame(width: 580, height: 680)
         .task {
             appState.refreshCalendarAuthorizationStatus()
             if appState.calendarAuthorizationStatus.canReadEvents {
@@ -104,7 +104,6 @@ struct CalendarEventPickerView: View {
 
             if let selectedEvent {
                 Divider()
-                Toggle("Use the event title for this meeting", isOn: $useEventTitle)
 
                 Text("People who actually attended")
                     .font(.headline)
@@ -125,13 +124,21 @@ struct CalendarEventPickerView: View {
                     .frame(maxHeight: 105)
                 }
 
-                Toggle(
-                    "Share selected participant names with AI analysis",
-                    isOn: $shareParticipantNamesWithAnalysis
-                )
-                .disabled(selectedParticipantIDs.isEmpty || !appState.aiAnalysisEnabled)
-                if !appState.aiAnalysisEnabled {
-                    Text("AI analysis is off. Participant names will remain local.")
+                Text("Selected participant names are included in meeting metadata and AI analysis.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Include event description", isOn: $includeEventDescription)
+                TextEditor(text: $eventDescription)
+                    .font(.body)
+                    .frame(minHeight: 72, maxHeight: 96)
+                    .padding(4)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .disabled(!includeEventDescription)
+                    .opacity(includeEventDescription ? 1 : 0.55)
+                if selectedEvent.eventDescription == nil, eventDescription.isEmpty {
+                    Text("This event has no description. Enable the option to add one.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -153,10 +160,9 @@ struct CalendarEventPickerView: View {
     private func eventRow(_ candidate: CalendarEventCandidate) -> some View {
         Button {
             selectedEventID = candidate.id
-            selectedParticipantIDs = []
-            shareParticipantNamesWithAnalysis = false
-            useEventTitle = appState.meetingTitle
-                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            selectedParticipantIDs = Set(candidate.participants.map(\.id))
+            eventDescription = candidate.eventDescription ?? ""
+            includeEventDescription = candidate.eventDescription != nil
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: selectedEventID == candidate.id ? "checkmark.circle.fill" : "circle")
@@ -207,9 +213,6 @@ struct CalendarEventPickerView: View {
                     selectedParticipantIDs.insert(id)
                 } else {
                     selectedParticipantIDs.remove(id)
-                    if selectedParticipantIDs.isEmpty {
-                        shareParticipantNamesWithAnalysis = false
-                    }
                 }
             }
         )
@@ -222,8 +225,7 @@ struct CalendarEventPickerView: View {
             let approved = await appState.approveCalendarEvent(
                 selectedEvent,
                 participantIDs: selectedParticipantIDs,
-                useEventTitle: useEventTitle,
-                shareParticipantNamesWithAnalysis: shareParticipantNamesWithAnalysis
+                eventDescription: includeEventDescription ? eventDescription : nil
             )
             isApproving = false
             if approved { onConfirmation() }

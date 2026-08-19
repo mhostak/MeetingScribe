@@ -25,7 +25,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>MeetingScribe reads event titles, times, and invitee display names only after you choose and confirm a meeting.</string>
+	<string>MeetingScribe reads event titles, times, invitee names, and event descriptions only after you choose and confirm a meeting.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MeetingScribe records your microphone as a separate local audio track.</string>
 	<key>NSScreenCaptureUsageDescription</key>

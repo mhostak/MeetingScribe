@@ -81,7 +81,13 @@ final class CalendarEventService: CalendarEventProviding {
             startsAt: event.startDate,
             endsAt: max(event.endDate, event.startDate),
             isAllDay: event.isAllDay,
-            participants: participants
+            participants: participants,
+            eventDescription: normalizedDescription(event.notes)
         )
+    }
+
+    private func normalizedDescription(_ description: String?) -> String? {
+        let normalized = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return normalized.isEmpty ? nil : normalized
     }
 }

@@ -177,7 +177,7 @@ struct AnalysisRequest: Equatable, Sendable {
 }
 
 enum AnalysisPrompt {
-    static let defaultTemplate = """
+    static let legacySegmentReferenceTemplate = """
     Analyzuj transcript pracovného meetingu.
 
     Výstup vytvor v jazyku {{output_language}} ako Markdown fragment.
@@ -194,6 +194,25 @@ enum AnalysisPrompt {
     Návrhy neoznačuj ako rozhodnutia.
     Ak vlastník alebo termín nie sú explicitne uvedené, napíš „neurčené“.
     Pri rozhodnutiach a úlohách zachovaj timestamp alebo odkaz na relevantný segment.
+    """
+
+    static let defaultTemplate = """
+    Analyzuj transcript pracovného meetingu.
+
+    Výstup vytvor v jazyku {{output_language}} ako Markdown fragment.
+
+    Použi túto štruktúru:
+    1. stručný faktický súhrn,
+    2. prijaté rozhodnutia,
+    3. úlohy vrátane vlastníka a termínu,
+    4. otvorené otázky,
+    5. riziká a blokery,
+    6. dôležité témy na ďalší meeting.
+
+    Nevymýšľaj informácie, ktoré nie sú v transcripte.
+    Návrhy neoznačuj ako rozhodnutia.
+    Ak vlastník alebo termín nie sú explicitne uvedené, napíš „neurčené“.
+    Pri rozhodnutiach a úlohách uveď relevantný timestamp z meetingu. Nepoužívaj interné ID segmentov.
     """
 
     static func render(template: String, session: SessionMetadata) -> String {

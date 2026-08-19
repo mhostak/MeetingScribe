@@ -110,6 +110,32 @@ final class AnalysisSettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.isEnabled)
     }
 
+    @MainActor
+    func testLegacyDefaultPromptMigratesToTimestampOnlyPrompt() throws {
+        let suiteName = "MeetingScribeTests.AnalysisPromptMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(AnalysisPrompt.legacySegmentReferenceTemplate, forKey: "aiAnalysisPrompt")
+
+        let store = AnalysisSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.prompt, AnalysisPrompt.defaultTemplate)
+        XCTAssertTrue(store.prompt.contains("relevantný timestamp"))
+        XCTAssertTrue(store.prompt.contains("Nepoužívaj interné ID segmentov"))
+    }
+
+    @MainActor
+    func testTimestampPromptMigrationPreservesCustomPrompt() throws {
+        let suiteName = "MeetingScribeTests.CustomAnalysisPromptMigration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("My custom prompt", forKey: "aiAnalysisPrompt")
+
+        let store = AnalysisSettingsStore(defaults: defaults)
+
+        XCTAssertEqual(store.prompt, "My custom prompt")
+    }
+
     func testPromptRenderingAndHashAreDeterministic() {
         let session = SessionMetadata(
             id: "recording-42",

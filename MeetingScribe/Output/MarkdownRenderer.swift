@@ -45,6 +45,9 @@ struct MarkdownRenderer: Sendable {
         ]
         appendYAMLList(name: "languages", values: languages, to: &lines)
         appendYAMLList(name: "participants", values: participants, to: &lines)
+        if let eventDescription = session.calendarEvent?.eventDescription {
+            lines.append("calendar_description: \(yamlQuoted(eventDescription))")
+        }
         appendYAMLList(name: "tags", values: ["meeting"], to: &lines)
         lines.append("recording_id: \(yamlQuoted(session.id))")
         if let analysis {

@@ -34,6 +34,25 @@ struct CalendarEventCandidate: Identifiable, Equatable, Sendable {
     let endsAt: Date
     let isAllDay: Bool
     let participants: [CalendarParticipantCandidate]
+    let eventDescription: String?
+
+    init(
+        id: String,
+        title: String,
+        startsAt: Date,
+        endsAt: Date,
+        isAllDay: Bool,
+        participants: [CalendarParticipantCandidate],
+        eventDescription: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.isAllDay = isAllDay
+        self.participants = participants
+        self.eventDescription = eventDescription
+    }
 
     var interval: DateInterval {
         DateInterval(start: startsAt, end: max(endsAt, startsAt))
@@ -61,6 +80,27 @@ struct CalendarEventSnapshot: Codable, Equatable, Sendable {
     var selectedAt: Date
     var participants: [ConfirmedParticipant]
     var shareParticipantNamesWithAnalysis: Bool
+    var eventDescription: String?
+
+    init(
+        source: CalendarMetadataSource,
+        title: String,
+        startsAt: Date,
+        endsAt: Date,
+        selectedAt: Date,
+        participants: [ConfirmedParticipant],
+        shareParticipantNamesWithAnalysis: Bool,
+        eventDescription: String? = nil
+    ) {
+        self.source = source
+        self.title = title
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.selectedAt = selectedAt
+        self.participants = participants
+        self.shareParticipantNamesWithAnalysis = shareParticipantNamesWithAnalysis
+        self.eventDescription = eventDescription
+    }
 }
 
 enum CalendarEventIdentity {

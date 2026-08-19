@@ -86,7 +86,7 @@ final class CalendarIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testApprovalPreservesManualTitleAndStoresOnlySelectedDisplayNames() async {
+    func testApprovalUsesCalendarTitleAndSharesSelectedNamesAndDescription() async {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("CalendarAppStateTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -100,7 +100,8 @@ final class CalendarIntegrationTests: XCTestCase {
             startsAt: Date(timeIntervalSince1970: 10_000),
             endsAt: Date(timeIntervalSince1970: 11_000),
             isAllDay: false,
-            participants: [participant]
+            participants: [participant],
+            eventDescription: "  Agenda for the meeting.  "
         )
         let appState = AppState(
             sessionManager: SessionManager(recordingsRoot: root),
@@ -114,15 +115,15 @@ final class CalendarIntegrationTests: XCTestCase {
         let approved = await appState.approveCalendarEvent(
             event,
             participantIDs: [participant.id],
-            useEventTitle: false,
-            shareParticipantNamesWithAnalysis: false,
+            eventDescription: event.eventDescription,
             now: Date(timeIntervalSince1970: 9_500)
         )
 
         XCTAssertTrue(approved, "A valid event selection must succeed on the first confirmation")
-        XCTAssertEqual(appState.meetingTitle, "Manual title")
+        XCTAssertEqual(appState.meetingTitle, "Calendar title")
         XCTAssertEqual(appState.pendingCalendarEvent?.participants.map(\.displayName), ["Jana Nováková"])
-        XCTAssertFalse(appState.pendingCalendarEvent?.shareParticipantNamesWithAnalysis ?? true)
+        XCTAssertTrue(appState.pendingCalendarEvent?.shareParticipantNamesWithAnalysis ?? false)
+        XCTAssertEqual(appState.pendingCalendarEvent?.eventDescription, "Agenda for the meeting.")
     }
 
     @MainActor
@@ -192,7 +193,8 @@ final class CalendarIntegrationTests: XCTestCase {
             participants: [
                 ConfirmedParticipant(displayName: "Jana Nováková"),
             ],
-            shareParticipantNamesWithAnalysis: false
+            shareParticipantNamesWithAnalysis: false,
+            eventDescription: "Discuss roadmap."
         )
 
         let json = String(decoding: try SessionJSONCoder.makeEncoder().encode(snapshot), as: UTF8.self)
@@ -202,6 +204,7 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertFalse(json.localizedCaseInsensitiveContains("calendarIdentifier"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("location"))
         XCTAssertTrue(json.contains("Jana Nováková"))
+        XCTAssertTrue(json.contains("Discuss roadmap."))
     }
 
     private func candidate(

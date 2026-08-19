@@ -218,7 +218,8 @@ final class MarkdownRendererTests: XCTestCase {
                     ConfirmedParticipant(displayName: "Jana Nováková"),
                     ConfirmedParticipant(displayName: "Peter Hrivnák"),
                 ],
-                shareParticipantNamesWithAnalysis: false
+                shareParticipantNamesWithAnalysis: false,
+                eventDescription: "Discuss roadmap.\nConfirm launch date."
             )
         )
         let transcript = makeTranscript(segments: [
@@ -239,6 +240,11 @@ final class MarkdownRendererTests: XCTestCase {
         )
 
         XCTAssertTrue(markdown.contains("  - \"Jana Nováková\"\n  - \"Peter Hrivnák\""))
+        XCTAssertTrue(
+            markdown.contains(
+                "calendar_description: \"Discuss roadmap.\\nConfirm launch date.\""
+            )
+        )
         XCTAssertFalse(markdown.contains("participants:\n  - \"Other\""))
     }
 

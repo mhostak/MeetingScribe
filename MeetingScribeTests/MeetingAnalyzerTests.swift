@@ -47,7 +47,8 @@ final class MeetingAnalyzerTests: XCTestCase {
             .transcript, .transcript, .transcript, .transcript, .consolidation,
         ])
         XCTAssertEqual(run.analysis.markdown, "Consolidated")
-        XCTAssertTrue(requests[0].content.contains("[segment-000000]"))
+        XCTAssertTrue(requests[0].content.contains("[00:00:00]"))
+        XCTAssertFalse(requests[0].content.contains("segment-000000"))
     }
 
     func testSessionOutputLanguageIsUsedForEveryAnalysisRequest() async throws {
@@ -99,13 +100,15 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertGreaterThan(run.transcriptChunkCount, 1)
         XCTAssertEqual(requests.filter { $0.mode == .transcript }.count, run.transcriptChunkCount)
         XCTAssertTrue(requests.allSatisfy { $0.content.count <= 1_000 })
-        XCTAssertTrue(requests[0].content.contains("[source-block-000000]"))
-        XCTAssertTrue(requests[0].content.contains("On-site participants {microphone, sk}"))
+        XCTAssertFalse(requests[0].content.contains("source-block-000000"))
+        XCTAssertTrue(requests[0].content.contains("On-site user {microphone, sk}"))
         XCTAssertTrue(requests[1].content.contains("[00:"))
 
         let transcriptRequests = requests.filter { $0.mode == .transcript }
-        let firstWords = Set(transcriptRequests[0].content.split(separator: " ").suffix(10))
-        let secondWords = Set(transcriptRequests[1].content.split(separator: " ").prefix(20))
+        let firstBody = transcriptRequests[0].content.split(separator: "\n").dropFirst(2)
+        let secondBody = transcriptRequests[1].content.split(separator: "\n").dropFirst(2)
+        let firstWords = Set(firstBody.joined(separator: " ").split(separator: " ").suffix(10))
+        let secondWords = Set(secondBody.joined(separator: " ").split(separator: " ").prefix(20))
         XCTAssertFalse(firstWords.isDisjoint(with: secondWords))
     }
 
@@ -163,9 +166,9 @@ final class MeetingAnalyzerTests: XCTestCase {
 
         let requests = await provider.requests.filter { $0.mode == .transcript }
         XCTAssertGreaterThan(requests.count, 1)
-        let firstIDs = Set(requests[0].content.matches(of: /segment-\d+/).map(\.output))
-        let secondIDs = Set(requests[1].content.matches(of: /segment-\d+/).map(\.output))
-        XCTAssertFalse(firstIDs.isDisjoint(with: secondIDs))
+        let firstTimestamps = Set(requests[0].content.matches(of: /\[\d\d:\d\d:\d\d\]/).map(\.output))
+        let secondTimestamps = Set(requests[1].content.matches(of: /\[\d\d:\d\d:\d\d\]/).map(\.output))
+        XCTAssertFalse(firstTimestamps.isDisjoint(with: secondTimestamps))
     }
 
     func testSegmentMetadataThatLeavesNoRoomForTextIsRejected() async {
@@ -173,10 +176,10 @@ final class MeetingAnalyzerTests: XCTestCase {
         let segment = TranscriptSegment(
             id: "segment-1",
             source: .system,
-            speaker: String(repeating: "x", count: 1_000),
+            speaker: "Remote participants",
             start: 0,
             end: 1,
-            language: "sk",
+            language: String(repeating: "x", count: 1_000),
             text: "Text meetingu",
             confidence: nil
         )
@@ -224,8 +227,34 @@ final class MeetingAnalyzerTests: XCTestCase {
 
         let optedInRequests = await optedInProvider.requests
         let optedOutRequests = await optedOutProvider.requests
-        XCTAssertTrue(optedInRequests[0].content.contains("Confirmed participants: Jana Nováková"))
+        XCTAssertTrue(optedInRequests[0].content.contains("system = remote participant(s): Jana Nováková"))
+        XCTAssertTrue(optedInRequests[0].content.contains("microphone = recording user (on-site)"))
         XCTAssertFalse(optedOutRequests[0].content.contains("Jana Nováková"))
+    }
+
+    func testIncludedCalendarDescriptionIsProvidedAsAnalysisContext() async throws {
+        let provider = MockAnalysisProvider()
+        let transcript = makeTranscript(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                source: .system,
+                speaker: "Remote participants",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Text meetingu",
+                confidence: nil
+            ),
+        ])
+
+        _ = try await MeetingAnalyzer(provider: provider).analyze(
+            session: makeSession(eventDescription: "Discuss the launch plan."),
+            transcript: transcript
+        )
+
+        let requests = await provider.requests
+        XCTAssertTrue(requests[0].content.contains("Confirmed calendar event description:"))
+        XCTAssertTrue(requests[0].content.contains("Discuss the launch plan."))
     }
 
     func testConsolidationDeadEndIsRejectedInsteadOfLooping() async {
@@ -293,7 +322,8 @@ final class MeetingAnalyzerTests: XCTestCase {
 
     private func makeSession(
         shareParticipantNamesWithAnalysis: Bool? = nil,
-        outputLanguage: OutputLanguage? = nil
+        outputLanguage: OutputLanguage? = nil,
+        eventDescription: String? = nil
     ) -> SessionMetadata {
         SessionMetadata(
             id: "session-1",
@@ -301,8 +331,8 @@ final class MeetingAnalyzerTests: XCTestCase {
             status: .recorded,
             createdAt: Date(),
             outputLanguage: outputLanguage,
-            calendarEvent: shareParticipantNamesWithAnalysis.map { shareNames in
-                CalendarEventSnapshot(
+            calendarEvent: (shareParticipantNamesWithAnalysis != nil || eventDescription != nil)
+                ? CalendarEventSnapshot(
                     source: .appleCalendar,
                     title: "Test meeting",
                     startsAt: Date(),
@@ -311,9 +341,10 @@ final class MeetingAnalyzerTests: XCTestCase {
                     participants: [
                         ConfirmedParticipant(displayName: "Jana Nováková"),
                     ],
-                    shareParticipantNamesWithAnalysis: shareNames
+                    shareParticipantNamesWithAnalysis: shareParticipantNamesWithAnalysis ?? false,
+                    eventDescription: eventDescription
                 )
-            }
+                : nil
         )
     }
 

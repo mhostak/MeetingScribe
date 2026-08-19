@@ -368,7 +368,7 @@ struct SettingsView: View {
                             .foregroundStyle(.red)
                     }
 
-                    Text("Full access is used only to offer nearby event titles, times, and invitee display names. Email addresses, locations, notes, links, calendar names, and Apple event identifiers are not saved.")
+                    Text("Full access is used only to offer nearby event titles, times, invitee names, and editable event descriptions. Email addresses, locations, links, calendar names, and Apple event identifiers are not saved.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

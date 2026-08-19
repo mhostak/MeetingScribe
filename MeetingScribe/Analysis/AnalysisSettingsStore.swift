@@ -16,6 +16,7 @@ final class AnalysisSettingsStore {
         static let claudeExecutable = "aiAnalysisClaudeExecutable"
         static let migrationCompleted = "aiAnalysisCLIMigrationCompleted"
         static let modelPickerMigrationCompleted = "aiAnalysisModelPickerMigrationCompleted"
+        static let timestampPromptMigrationCompleted = "aiAnalysisTimestampPromptMigrationCompleted"
     }
 
     private let defaults: UserDefaults
@@ -24,6 +25,7 @@ final class AnalysisSettingsStore {
         self.defaults = defaults
         migrateLegacySettingsIfNeeded()
         migrateModelPickerSettingsIfNeeded()
+        migrateTimestampPromptIfNeeded()
     }
 
     var isEnabled: Bool { defaults.bool(forKey: Key.enabled) }
@@ -119,5 +121,13 @@ final class AnalysisSettingsStore {
         }
         defaults.removeObject(forKey: Key.legacyCLIModel)
         defaults.set(true, forKey: Key.modelPickerMigrationCompleted)
+    }
+
+    private func migrateTimestampPromptIfNeeded() {
+        guard !defaults.bool(forKey: Key.timestampPromptMigrationCompleted) else { return }
+        if defaults.string(forKey: Key.prompt) == AnalysisPrompt.legacySegmentReferenceTemplate {
+            defaults.set(AnalysisPrompt.defaultTemplate, forKey: Key.prompt)
+        }
+        defaults.set(true, forKey: Key.timestampPromptMigrationCompleted)
     }
 }
