@@ -55,7 +55,6 @@ final class AppState: ObservableObject {
     @Published private(set) var isRequestingCalendarAccess = false
     @Published private(set) var calendarAccessError: String?
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
-    @Published var selectedCaptureMode: CaptureMode = .systemAndMicrophone
     @Published var aiAnalysisEnabled = false
     @Published var selectedAnalysisTool: AnalysisTool = .codex
     @Published var analysisExecutablePath = ""
@@ -349,7 +348,6 @@ final class AppState: ObservableObject {
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
                 calendarEvent: pendingCalendarEvent,
-                captureMode: selectedCaptureMode,
                 analysisConfiguration: currentAnalysisConfiguration()
             )
             currentSession = session

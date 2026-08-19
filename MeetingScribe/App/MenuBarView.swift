@@ -123,17 +123,6 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 12) {
             meetingTitleAndCalendarControl
 
-            Picker("Audio source", selection: $appState.selectedCaptureMode) {
-                ForEach(CaptureMode.allCases) { mode in
-                    Text(verbatim: mode.displayName).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Text(verbatim: appState.selectedCaptureMode.selectionHint)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
             Button {
                 Task { await appState.startRecording() }
             } label: {

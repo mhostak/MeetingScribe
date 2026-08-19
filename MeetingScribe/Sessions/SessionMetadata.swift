@@ -6,29 +6,11 @@ enum RecordingSessionStatus: String, Codable, Sendable {
     case failed
 }
 
-enum CaptureMode: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
+enum CaptureMode: String, Codable, Hashable, Sendable {
     case systemAndMicrophone
+    // Retained so recordings created by older versions can still be decoded
+    // and recovered. New recordings always use systemAndMicrophone.
     case microphoneOnly
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .systemAndMicrophone:
-            return "Online / hybrid"
-        case .microphoneOnly:
-            return "Offline / microphone"
-        }
-    }
-
-    var selectionHint: String {
-        switch self {
-        case .systemAndMicrophone:
-            return "Records system audio and an optional microphone track."
-        case .microphoneOnly:
-            return "Records the room microphone only and requires it to be working."
-        }
-    }
 }
 
 enum TranscriptionLanguage: String, Codable, CaseIterable, Hashable, Identifiable, Sendable {
