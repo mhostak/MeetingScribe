@@ -5,6 +5,7 @@ struct RecordingsWindow: View {
     @ObservedObject var appState: AppState
     @StateObject private var model: RecordingsWindowModel
     @State private var focusedSessionID: String?
+    @State private var isShowingStorageManager = false
 
     init(appState: AppState) {
         self.appState = appState
@@ -87,6 +88,12 @@ struct RecordingsWindow: View {
         .onChange(of: model.selectedDate) { _, _ in
             focusedSessionID = nil
         }
+        .sheet(isPresented: $isShowingStorageManager) {
+            RecordingAudioStorageView(
+                appState: appState,
+                reload: { await model.reload() }
+            )
+        }
     }
 
     private var navigationBar: some View {
@@ -110,6 +117,13 @@ struct RecordingsWindow: View {
             Button("Today", action: model.goToToday)
 
             Spacer()
+
+            Button {
+                isShowingStorageManager = true
+                Task { await appState.refreshRecordingAudioCleanupPlan() }
+            } label: {
+                Label("Manage storage", systemImage: "internaldrive")
+            }
 
             Button {
                 Task { await model.reload() }
@@ -147,6 +161,134 @@ struct RecordingsWindow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(.quaternary.opacity(0.4))
+    }
+}
+
+private struct RecordingAudioStorageView: View {
+    @ObservedObject var appState: AppState
+    let reload: () async -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var isShowingDeletionConfirmation = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label("Recording storage", systemImage: "internaldrive")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                Button("Done") { dismiss() }
+            }
+
+            if appState.isScanningRecordingAudio,
+               appState.recordingAudioCleanupPlan.generatedAt == .distantPast {
+                ProgressView("Scanning recordings…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
+                    GridRow {
+                        Text("Stored recording audio")
+                        Text(byteCount(appState.recordingAudioCleanupPlan.totalAudioBytes))
+                            .fontWeight(.semibold)
+                    }
+                    GridRow {
+                        Text("Can be removed now")
+                        Text(byteCount(appState.recordingAudioCleanupPlan.reclaimableBytes))
+                            .fontWeight(.semibold)
+                    }
+                    GridRow {
+                        Text("Eligible recordings")
+                        Text(verbatim: "\(appState.recordingAudioCleanupPlan.candidates.count)")
+                    }
+                    if appState.recordingAudioCleanupPlan.keptSessionCount > 0 {
+                        GridRow {
+                            Text("Protected recordings")
+                            Text(verbatim: "\(appState.recordingAudioCleanupPlan.keptSessionCount)")
+                        }
+                    }
+                }
+
+                Label(
+                    "Transcript and Markdown remain available. Repeat transcription and speaker editing will no longer be possible for cleaned recordings.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+
+                if let report = appState.recordingAudioCleanupReport,
+                   report.reclaimedBytes > 0 {
+                    Label(
+                        "Last cleanup freed \(byteCount(report.reclaimedBytes)) from \(report.cleanedSessionIDs.count) recordings.",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                }
+
+                if let error = appState.recordingAudioCleanupError {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack {
+                    Button {
+                        Task { await appState.refreshRecordingAudioCleanupPlan() }
+                    } label: {
+                        Label("Rescan", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(
+                        appState.isScanningRecordingAudio
+                            || appState.isCleaningRecordingAudio
+                    )
+
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        isShowingDeletionConfirmation = true
+                    } label: {
+                        if appState.isCleaningRecordingAudio {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Remove processed audio…", systemImage: "trash")
+                        }
+                    }
+                    .disabled(
+                        appState.recordingAudioCleanupPlan.reclaimableBytes == 0
+                            || appState.isScanningRecordingAudio
+                            || appState.isCleaningRecordingAudio
+                            || appState.fluidAudioReprocessingSessionID != nil
+                            || appState.aiAnalysisReprocessingSessionID != nil
+                            || appState.status == .recording
+                            || appState.status.isProcessing
+                    )
+                }
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .frame(minHeight: 330)
+        .confirmationDialog(
+            "Permanently remove processed recording audio?",
+            isPresented: $isShowingDeletionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Remove audio permanently", role: .destructive) {
+                Task {
+                    await appState.cleanProcessedRecordingAudio()
+                    await reload()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently remove \(byteCount(appState.recordingAudioCleanupPlan.reclaimableBytes)) from \(appState.recordingAudioCleanupPlan.candidates.count) processed recordings. This cannot be undone.")
+        }
+    }
+
+    private func byteCount(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 
@@ -215,6 +357,14 @@ private struct RecordingSessionRow: View {
                 ArtifactBadge(title: "Audio", state: entry.audio)
                 ArtifactBadge(title: "Transcript", state: entry.transcript)
                 ArtifactBadge(title: "Markdown", state: entry.markdown)
+                if entry.session.metadata.keepsRecordingAudio {
+                    Label("Audio kept", systemImage: "pin.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.blue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.12), in: Capsule())
+                }
             }
 
             Divider()
@@ -268,6 +418,25 @@ private struct RecordingSessionRow: View {
                         || appState.fluidAudioReprocessingSessionID != nil
                         || appState.aiAnalysisReprocessingSessionID != nil
                         || !entry.audio.isAvailable
+                )
+
+                Button {
+                    toggleAudioProtection()
+                } label: {
+                    Image(systemName: entry.session.metadata.keepsRecordingAudio
+                        ? "pin.slash"
+                        : "pin")
+                }
+                .help(entry.session.metadata.keepsRecordingAudio
+                    ? "Allow automatic audio cleanup"
+                    : "Keep audio")
+                .disabled(
+                    !entry.audio.isAvailable
+                        || appState.status == .recording
+                        || appState.status.isProcessing
+                        || appState.isCleaningRecordingAudio
+                        || appState.fluidAudioReprocessingSessionID != nil
+                        || appState.aiAnalysisReprocessingSessionID != nil
                 )
 
                 Button {
@@ -386,6 +555,29 @@ private struct RecordingSessionRow: View {
             }
         }
 
+        if entry.audio.isAvailable {
+            Button(entry.session.metadata.keepsRecordingAudio
+                ? "Allow audio cleanup"
+                : "Keep audio") {
+                toggleAudioProtection()
+            }
+        }
+
+    }
+
+    private func toggleAudioProtection() {
+        Task {
+            do {
+                reprocessingError = nil
+                try await appState.setKeepRecordingAudio(
+                    !entry.session.metadata.keepsRecordingAudio,
+                    for: entry.session
+                )
+                await reload()
+            } catch {
+                reprocessingError = appState.errorMessage(for: error)
+            }
+        }
     }
 
     private var statusTitle: String {
@@ -429,7 +621,11 @@ private struct ArtifactBadge: View {
 
     var body: some View {
         Label {
-            Text(title)
+            if state.isRemoved {
+                Text("Audio removed")
+            } else {
+                Text(title)
+            }
         } icon: {
             Image(systemName: image)
         }
@@ -445,6 +641,7 @@ private struct ArtifactBadge: View {
         switch state {
         case .available: return "checkmark.circle.fill"
         case .missing: return "exclamationmark.triangle.fill"
+        case .removed: return "trash.circle.fill"
         case .notProduced: return "minus.circle"
         }
     }
@@ -453,6 +650,7 @@ private struct ArtifactBadge: View {
         switch state {
         case .available: return .green
         case .missing: return .orange
+        case .removed: return .secondary
         case .notProduced: return .secondary
         }
     }
@@ -461,6 +659,7 @@ private struct ArtifactBadge: View {
         switch state {
         case .available: return "Available"
         case .missing: return "Expected file is missing"
+        case .removed: return "Removed to save space"
         case .notProduced: return "Not produced"
         }
     }

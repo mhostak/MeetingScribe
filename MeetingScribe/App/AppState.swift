@@ -54,6 +54,11 @@ final class AppState: ObservableObject {
     @Published private(set) var isLoadingCalendarEvents = false
     @Published private(set) var isRequestingCalendarAccess = false
     @Published private(set) var calendarAccessError: String?
+    @Published private(set) var recordingAudioCleanupPlan = RecordingAudioCleanupPlan.empty
+    @Published private(set) var recordingAudioCleanupReport: RecordingAudioCleanupReport?
+    @Published private(set) var recordingAudioCleanupError: String?
+    @Published private(set) var isScanningRecordingAudio = false
+    @Published private(set) var isCleaningRecordingAudio = false
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
     @Published var selectedAnalysisTool: AnalysisTool = .codex
@@ -63,6 +68,7 @@ final class AppState: ObservableObject {
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
     @Published var automaticallyDeleteSourceCAF = false
+    @Published var audioRetentionPolicy: AudioRetentionPolicy = .keepForever
     @Published var selectedAppLanguage: AppLanguage = .system
     @Published var selectedOutputLanguage: OutputLanguage = .slovak
     @Published var markdownFileNameTemplate = MarkdownFileNameTemplate.defaultValue
@@ -88,6 +94,7 @@ final class AppState: ObservableObject {
     private let applicationSettingsStore: ApplicationSettingsStore
     private let calendarEventProvider: any CalendarEventProviding
     private let audioSourceCleaner: any AudioSourceCleaning
+    private let recordingAudioCleanupService: RecordingAudioCleanupService
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
@@ -123,6 +130,7 @@ final class AppState: ObservableObject {
         applicationSettingsStore: ApplicationSettingsStore? = nil,
         calendarEventProvider: (any CalendarEventProviding)? = nil,
         audioSourceCleaner: any AudioSourceCleaning = AudioSourceCleaner(),
+        recordingAudioCleanupService: RecordingAudioCleanupService? = nil,
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
@@ -148,6 +156,8 @@ final class AppState: ObservableObject {
             ?? ApplicationSettingsStore()
         self.calendarEventProvider = calendarEventProvider ?? CalendarEventService()
         self.audioSourceCleaner = audioSourceCleaner
+        self.recordingAudioCleanupService = recordingAudioCleanupService
+            ?? RecordingAudioCleanupService(recordingsRoot: sessionManager.recordingsRoot)
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
@@ -180,6 +190,7 @@ final class AppState: ObservableObject {
         await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
         automaticallyDeleteSourceCAF = audioRetentionSettingsStore
             .automaticallyDeleteSourceCAF
+        audioRetentionPolicy = audioRetentionSettingsStore.policy
         aiAnalysisEnabled = analysisSettingsStore.isEnabled
         selectedAnalysisTool = analysisSettingsStore.tool
         selectedAnalysisModel = analysisSettingsStore.modelSelection(for: selectedAnalysisTool)
@@ -198,12 +209,14 @@ final class AppState: ObservableObject {
         refreshLegacyModelCleanupReport()
         await refreshRecoveryCandidates()
         hasPreparedStorage = true
+        await runAutomaticRecordingAudioCleanup()
     }
 
     func reprocessWithFluidAudio(
         session: RecordingSession
     ) async throws -> TranscriptionRevisionResult {
         guard status != .recording, !status.isProcessing,
+              !isCleaningRecordingAudio,
               fluidAudioReprocessingSessionID == nil,
               aiAnalysisReprocessingSessionID == nil else {
             throw TranscriptionRevisionError.applicationBusy
@@ -241,6 +254,7 @@ final class AppState: ObservableObject {
         session: RecordingSession
     ) async throws -> URL {
         guard status != .recording, !status.isProcessing,
+              !isCleaningRecordingAudio,
               fluidAudioReprocessingSessionID == nil,
               aiAnalysisReprocessingSessionID == nil else {
             throw AnalysisRevisionError.applicationBusy
@@ -825,6 +839,90 @@ final class AppState: ObservableObject {
         audioRetentionSettingsStore.setAutomaticallyDeleteSourceCAF(
             automaticallyDeleteSourceCAF
         )
+    }
+
+    func setAudioRetentionPolicy(_ policy: AudioRetentionPolicy) async {
+        audioRetentionPolicy = policy
+        audioRetentionSettingsStore.setPolicy(policy)
+        await runAutomaticRecordingAudioCleanup()
+    }
+
+    func refreshRecordingAudioCleanupPlan() async {
+        guard !isScanningRecordingAudio, !isCleaningRecordingAudio else { return }
+        isScanningRecordingAudio = true
+        recordingAudioCleanupError = nil
+        defer { isScanningRecordingAudio = false }
+        do {
+            recordingAudioCleanupPlan = try await recordingAudioCleanupService.scan()
+        } catch {
+            recordingAudioCleanupError = localized(error)
+        }
+    }
+
+    func cleanProcessedRecordingAudio() async {
+        guard !isScanningRecordingAudio, !isCleaningRecordingAudio,
+              currentSession == nil,
+              fluidAudioReprocessingSessionID == nil,
+              aiAnalysisReprocessingSessionID == nil else { return }
+        isCleaningRecordingAudio = true
+        recordingAudioCleanupError = nil
+        defer { isCleaningRecordingAudio = false }
+        do {
+            let plan = try await recordingAudioCleanupService.scan()
+            let report = try await recordingAudioCleanupService.execute(
+                plan,
+                trigger: .manual
+            )
+            recordingAudioCleanupReport = report
+            recordingAudioCleanupPlan = try await recordingAudioCleanupService.scan()
+            if !report.failures.isEmpty {
+                recordingAudioCleanupError = report.failures.joined(separator: "\n")
+            }
+        } catch {
+            recordingAudioCleanupError = localized(error)
+        }
+    }
+
+    func setKeepRecordingAudio(
+        _ keepAudio: Bool,
+        for session: RecordingSession
+    ) async throws {
+        guard currentSession?.metadata.id != session.metadata.id,
+              fluidAudioReprocessingSessionID == nil,
+              aiAnalysisReprocessingSessionID == nil,
+              !isCleaningRecordingAudio else {
+            throw RecordingAudioCleanupError.sessionNotEligible(session.metadata.id)
+        }
+        _ = try await recordingAudioCleanupService.setKeepAudio(
+            keepAudio,
+            sessionID: session.metadata.id
+        )
+        await refreshRecordingAudioCleanupPlan()
+    }
+
+    private func runAutomaticRecordingAudioCleanup() async {
+        guard let cutoff = audioRetentionPolicy.cutoffDate(now: Date()),
+              !isScanningRecordingAudio,
+              !isCleaningRecordingAudio,
+              currentSession == nil,
+              fluidAudioReprocessingSessionID == nil,
+              aiAnalysisReprocessingSessionID == nil else { return }
+        isCleaningRecordingAudio = true
+        defer { isCleaningRecordingAudio = false }
+        do {
+            let plan = try await recordingAudioCleanupService.scan(olderThan: cutoff)
+            guard !plan.candidates.isEmpty else { return }
+            let report = try await recordingAudioCleanupService.execute(
+                plan,
+                trigger: .automatic
+            )
+            recordingAudioCleanupReport = report
+            if !report.failures.isEmpty {
+                recordingAudioCleanupError = report.failures.joined(separator: "\n")
+            }
+        } catch {
+            recordingAudioCleanupError = localized(error)
+        }
     }
 
     func persistApplicationSettings() async {
@@ -1444,6 +1542,7 @@ final class AppState: ObservableObject {
             }
             try transition(to: .completed)
             await refreshRecoveryCandidates()
+            await runAutomaticRecordingAudioCleanup()
         } catch {
             if await sessionManager.currentSession() != nil {
                 let failed = try? await sessionManager.failSession(
@@ -1467,7 +1566,8 @@ final class AppState: ObservableObject {
     private func cleanupSourceAudioIfEnabled(
         for session: RecordingSession
     ) async -> RecordingSession {
-        guard automaticallyDeleteSourceCAF else { return session }
+        guard automaticallyDeleteSourceCAF,
+              !session.metadata.keepsRecordingAudio else { return session }
         let cleaner = audioSourceCleaner
         do {
             let cleanupTask = Task.detached(priority: .utility) {

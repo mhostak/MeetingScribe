@@ -392,6 +392,129 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
     }
 
+    func testRecordingAudioCleanupDeletesOnlyReferencedAudioAndPersistsAudit() async throws {
+        let completedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let session = try makeProcessedRecordingSession(
+            id: "eligible",
+            completedAt: completedAt
+        )
+        let unrelatedURL = session.directoryURL.appendingPathComponent("notes.wav")
+        try Data(repeating: 3, count: 64).write(to: unrelatedURL)
+        let service = RecordingAudioCleanupService(
+            recordingsRoot: temporaryRoot,
+            now: { completedAt.addingTimeInterval(60) }
+        )
+
+        let plan = try await service.scan()
+        XCTAssertEqual(plan.candidates.map(\.id), ["eligible"])
+        XCTAssertEqual(plan.candidates.first?.files.map(\.relativePath), [
+            "microphone-16k.wav",
+            "system-16k.wav",
+        ])
+        XCTAssertGreaterThan(plan.reclaimableBytes, 0)
+
+        let report = try await service.execute(plan, trigger: .manual)
+
+        XCTAssertEqual(report.cleanedSessionIDs, ["eligible"])
+        XCTAssertEqual(report.deletedFileCount, 2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.systemAudioURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneAudioURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: session.mergedTranscriptURL.path))
+        let metadata = try SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: Data(contentsOf: session.manifestURL)
+        )
+        XCTAssertEqual(metadata.recordingAudioRetention?.cleanupStatus, .purged)
+        XCTAssertEqual(metadata.recordingAudioRetention?.cleanupTrigger, .manual)
+        XCTAssertEqual(metadata.recordingAudioRetention?.deletedFiles.count, 2)
+        XCTAssertGreaterThan(metadata.recordingAudioRetention?.reclaimedBytes ?? 0, 0)
+    }
+
+    func testRecordingAudioCleanupSkipsKeptIncompleteAndTooRecentSessions() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        _ = try makeProcessedRecordingSession(
+            id: "kept",
+            completedAt: now.addingTimeInterval(-10 * 24 * 60 * 60),
+            keepAudio: true
+        )
+        var incomplete = try makeProcessedRecordingSession(
+            id: "incomplete",
+            completedAt: now.addingTimeInterval(-10 * 24 * 60 * 60)
+        )
+        incomplete.metadata.output?.status = .failed
+        try persistCleanupSession(incomplete)
+        _ = try makeProcessedRecordingSession(
+            id: "recent",
+            completedAt: now.addingTimeInterval(-60)
+        )
+        _ = try makeProcessedRecordingSession(
+            id: "old",
+            completedAt: now.addingTimeInterval(-10 * 24 * 60 * 60)
+        )
+        let service = RecordingAudioCleanupService(
+            recordingsRoot: temporaryRoot,
+            now: { now }
+        )
+
+        let plan = try await service.scan(
+            olderThan: AudioRetentionPolicy.sevenDays.cutoffDate(now: now)
+        )
+
+        XCTAssertEqual(plan.candidates.map(\.id), ["old"])
+        XCTAssertEqual(plan.keptSessionCount, 1)
+        XCTAssertEqual(plan.ineligibleSessionCount, 2)
+    }
+
+    func testRecordingAudioCleanupRejectsPathTraversalWithoutTouchingOutsideFile() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var session = try makeProcessedRecordingSession(id: "unsafe", completedAt: now)
+        let outsideURL = temporaryRoot.appendingPathComponent("outside.wav")
+        try Data(repeating: 9, count: 32).write(to: outsideURL)
+        session.metadata.audioFiles.system = "../outside.wav"
+        session.metadata.audioFiles.microphone = "missing.wav"
+        session.metadata.audioFinalization = nil
+        try persistCleanupSession(session)
+        let service = RecordingAudioCleanupService(recordingsRoot: temporaryRoot)
+
+        let plan = try await service.scan()
+
+        XCTAssertTrue(plan.candidates.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outsideURL.path))
+    }
+
+    func testRecordingAudioCleanupRejectsSymlinkOutsideSession() async throws {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let session = try makeProcessedRecordingSession(id: "symlink", completedAt: now)
+        let outsideURL = temporaryRoot.appendingPathComponent("outside-target.wav")
+        try Data(repeating: 8, count: 48).write(to: outsideURL)
+        try FileManager.default.removeItem(at: session.systemAudioURL)
+        try FileManager.default.createSymbolicLink(
+            at: session.systemAudioURL,
+            withDestinationURL: outsideURL
+        )
+        let service = RecordingAudioCleanupService(recordingsRoot: temporaryRoot)
+
+        let plan = try await service.scan()
+
+        XCTAssertTrue(plan.candidates.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outsideURL.path))
+    }
+
+    func testRecordingAudioCleanupCanProtectAndUnprotectSession() async throws {
+        let session = try makeProcessedRecordingSession(id: "pin", completedAt: Date())
+        let service = RecordingAudioCleanupService(recordingsRoot: temporaryRoot)
+
+        _ = try await service.setKeepAudio(true, sessionID: session.metadata.id)
+        let keptPlan = try await service.scan()
+        XCTAssertTrue(keptPlan.candidates.isEmpty)
+        XCTAssertEqual(keptPlan.keptSessionCount, 1)
+
+        _ = try await service.setKeepAudio(false, sessionID: session.metadata.id)
+        let unprotectedPlan = try await service.scan()
+        XCTAssertEqual(unprotectedPlan.candidates.map(\.id), ["pin"])
+    }
+
     private func makeSession() -> RecordingSession {
         RecordingSession(
             metadata: SessionMetadata(
@@ -409,6 +532,74 @@ final class AudioFinalizerTests: XCTestCase {
             ),
             directoryURL: temporaryRoot
         )
+    }
+
+    private func makeProcessedRecordingSession(
+        id: String,
+        completedAt: Date,
+        keepAudio: Bool = false
+    ) throws -> RecordingSession {
+        let directory = temporaryRoot.appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let markdownURL = directory.appendingPathComponent("meeting.md")
+        try Data("# Meeting".utf8).write(to: markdownURL)
+        var metadata = SessionMetadata(
+            id: id,
+            title: id,
+            status: .recorded,
+            createdAt: completedAt.addingTimeInterval(-60),
+            startedAt: completedAt.addingTimeInterval(-60),
+            endedAt: completedAt,
+            transcription: SessionTranscriptionMetadata(
+                status: .completed,
+                model: "test",
+                systemSegmentCount: 1,
+                microphoneSegmentCount: 1,
+                mergedSegmentCount: 2,
+                warnings: [],
+                failureReason: nil
+            ),
+            output: SessionOutputMetadata(
+                status: .completed,
+                markdownFileName: markdownURL.lastPathComponent,
+                markdownPath: markdownURL.path,
+                exportedAt: completedAt,
+                failureReason: nil
+            )
+        )
+        if keepAudio {
+            metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(keepAudio: true)
+        }
+        let session = RecordingSession(metadata: metadata, directoryURL: directory)
+        try Data(repeating: 1, count: 128).write(to: session.systemAudioURL)
+        try Data(repeating: 2, count: 96).write(to: session.microphoneAudioURL)
+        let transcript = MergedTranscript(
+            sessionID: id,
+            title: id,
+            completedAt: completedAt,
+            tracks: [],
+            segments: [
+                TranscriptSegment(
+                    id: "segment-1",
+                    source: .system,
+                    speaker: "Other",
+                    start: 0,
+                    end: 1,
+                    language: "sk",
+                    text: "Test",
+                    confidence: nil
+                ),
+            ]
+        )
+        try TranscriptJSONCoder.makeEncoder().encode(transcript)
+            .write(to: session.mergedTranscriptURL, options: .atomic)
+        try persistCleanupSession(session)
+        return session
+    }
+
+    private func persistCleanupSession(_ session: RecordingSession) throws {
+        try SessionJSONCoder.makeEncoder().encode(session.metadata)
+            .write(to: session.manifestURL, options: .atomic)
     }
 
     private func makeCleanupSession(

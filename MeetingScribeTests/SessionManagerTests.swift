@@ -38,7 +38,7 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
-        XCTAssertEqual(metadata.schemaVersion, 15)
+        XCTAssertEqual(metadata.schemaVersion, 16)
         XCTAssertEqual(metadata.captureMode, .systemAndMicrophone)
         XCTAssertEqual(metadata.resolvedCaptureMode, .systemAndMicrophone)
         XCTAssertEqual(metadata.audioFiles.system, "system-16k.wav")

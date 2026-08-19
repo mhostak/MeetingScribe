@@ -3,19 +3,25 @@ import Foundation
 enum SessionArtifactState: Equatable, Sendable {
     case available(URL)
     case missing(URL)
+    case removed
     case notProduced
 
     var url: URL? {
         switch self {
         case let .available(url), let .missing(url):
             return url
-        case .notProduced:
+        case .removed, .notProduced:
             return nil
         }
     }
 
     var isAvailable: Bool {
         if case .available = self { return true }
+        return false
+    }
+
+    var isRemoved: Bool {
+        if case .removed = self { return true }
         return false
     }
 }
@@ -216,6 +222,9 @@ actor SessionCatalog {
 
     private func audioArtifact(for session: RecordingSession) -> SessionArtifactState {
         let metadata = session.metadata
+        if metadata.isRecordingAudioPurged {
+            return .removed
+        }
         var names = [metadata.audioFiles.system, metadata.audioFiles.microphone]
         names.append(contentsOf: [
             metadata.audioFiles.systemWorking,

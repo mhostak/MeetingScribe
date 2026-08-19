@@ -382,3 +382,391 @@ enum AudioSourceCleanupError: Error, LocalizedError {
         }
     }
 }
+
+struct RecordingAudioCleanupFile: Equatable, Sendable {
+    let relativePath: String
+    let allocatedBytes: Int64
+}
+
+struct RecordingAudioCleanupCandidate: Equatable, Identifiable, Sendable {
+    let session: RecordingSession
+    let files: [RecordingAudioCleanupFile]
+
+    var id: String { session.metadata.id }
+    var allocatedBytes: Int64 { files.reduce(0) { $0 + $1.allocatedBytes } }
+}
+
+struct RecordingAudioCleanupPlan: Equatable, Sendable {
+    let generatedAt: Date
+    let totalAudioBytes: Int64
+    let reclaimableBytes: Int64
+    let candidates: [RecordingAudioCleanupCandidate]
+    let keptSessionCount: Int
+    let ineligibleSessionCount: Int
+
+    static let empty = RecordingAudioCleanupPlan(
+        generatedAt: .distantPast,
+        totalAudioBytes: 0,
+        reclaimableBytes: 0,
+        candidates: [],
+        keptSessionCount: 0,
+        ineligibleSessionCount: 0
+    )
+}
+
+struct RecordingAudioCleanupReport: Equatable, Sendable {
+    let cleanedSessionIDs: [String]
+    let deletedFileCount: Int
+    let reclaimedBytes: Int64
+    let failures: [String]
+}
+
+enum RecordingAudioCleanupError: Error, LocalizedError {
+    case invalidAudioPath(String)
+    case sessionNotEligible(String)
+    case audioAlreadyPurged(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidAudioPath(path):
+            return "The audio path is outside its recording folder: \(path)"
+        case let .sessionNotEligible(id):
+            return "Recording \(id) is no longer eligible for audio cleanup."
+        case let .audioAlreadyPurged(id):
+            return "Recording \(id) no longer has audio that can be retained."
+        }
+    }
+}
+
+/// Scans and permanently removes recording audio only after durable transcript
+/// and Markdown artifacts have been verified. The actor serializes manual and
+/// automatic cleanup so the same session cannot be purged concurrently.
+actor RecordingAudioCleanupService {
+    private let recordingsRoot: URL
+    private let fileManager: FileManager
+    private let now: @Sendable () -> Date
+
+    init(
+        recordingsRoot: URL = SessionManager.defaultRecordingsRoot,
+        fileManager: FileManager = .default,
+        now: @escaping @Sendable () -> Date = { Date() }
+    ) {
+        self.recordingsRoot = recordingsRoot
+        self.fileManager = fileManager
+        self.now = now
+    }
+
+    func scan(olderThan cutoff: Date? = nil) throws -> RecordingAudioCleanupPlan {
+        let generatedAt = now()
+        var totalAudioBytes: Int64 = 0
+        var candidates: [RecordingAudioCleanupCandidate] = []
+        var keptSessionCount = 0
+        var ineligibleSessionCount = 0
+
+        for var session in try loadSessions() {
+            session = try reconcileInterruptedCleanup(session)
+            let files: [RecordingAudioCleanupFile]
+            do {
+                files = try existingAudioFiles(in: session)
+            } catch {
+                ineligibleSessionCount += 1
+                continue
+            }
+            totalAudioBytes += files.reduce(0) { $0 + $1.allocatedBytes }
+            guard !files.isEmpty, !session.metadata.isRecordingAudioPurged else { continue }
+            if session.metadata.keepsRecordingAudio {
+                keptSessionCount += 1
+                continue
+            }
+            guard isEligible(session, olderThan: cutoff) else {
+                ineligibleSessionCount += 1
+                continue
+            }
+            candidates.append(RecordingAudioCleanupCandidate(session: session, files: files))
+        }
+
+        return RecordingAudioCleanupPlan(
+            generatedAt: generatedAt,
+            totalAudioBytes: totalAudioBytes,
+            reclaimableBytes: candidates.reduce(0) { $0 + $1.allocatedBytes },
+            candidates: candidates.sorted {
+                ($0.session.metadata.endedAt ?? $0.session.metadata.createdAt)
+                    < ($1.session.metadata.endedAt ?? $1.session.metadata.createdAt)
+            },
+            keptSessionCount: keptSessionCount,
+            ineligibleSessionCount: ineligibleSessionCount
+        )
+    }
+
+    func execute(
+        _ plan: RecordingAudioCleanupPlan,
+        trigger: RecordingAudioCleanupTrigger
+    ) throws -> RecordingAudioCleanupReport {
+        var cleanedSessionIDs: [String] = []
+        var deletedFileCount = 0
+        var reclaimedBytes: Int64 = 0
+        var failures: [String] = []
+
+        for planned in plan.candidates {
+            do {
+                var session = try loadSession(at: planned.session.directoryURL)
+                guard !session.metadata.keepsRecordingAudio,
+                      !session.metadata.isRecordingAudioPurged,
+                      isEligible(session, olderThan: nil) else {
+                    throw RecordingAudioCleanupError.sessionNotEligible(session.metadata.id)
+                }
+                let files = try existingAudioFiles(in: session)
+                guard !files.isEmpty else {
+                    throw RecordingAudioCleanupError.sessionNotEligible(session.metadata.id)
+                }
+
+                let startedAt = now()
+                session.metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(
+                    keepAudio: false,
+                    cleanupStatus: .inProgress,
+                    cleanupTrigger: trigger,
+                    cleanupStartedAt: startedAt,
+                    candidateFiles: files.map(\.relativePath),
+                    reclaimedBytes: files.reduce(0) { $0 + $1.allocatedBytes }
+                )
+                try persist(session)
+
+                var deleted: [String] = []
+                var deletedBytes: Int64 = 0
+                do {
+                    for file in files {
+                        let url = try validatedAudioURL(
+                            relativePath: file.relativePath,
+                            sessionDirectory: session.directoryURL
+                        )
+                        guard fileManager.fileExists(atPath: url.path) else { continue }
+                        try fileManager.removeItem(at: url)
+                        deleted.append(file.relativePath)
+                        deletedBytes += file.allocatedBytes
+                    }
+                    session.metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(
+                        keepAudio: false,
+                        cleanupStatus: .purged,
+                        cleanupTrigger: trigger,
+                        cleanupStartedAt: startedAt,
+                        cleanupCompletedAt: now(),
+                        candidateFiles: files.map(\.relativePath),
+                        deletedFiles: deleted,
+                        reclaimedBytes: deletedBytes
+                    )
+                    try persist(session)
+                    cleanedSessionIDs.append(session.metadata.id)
+                    deletedFileCount += deleted.count
+                    reclaimedBytes += deletedBytes
+                } catch {
+                    session.metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(
+                        keepAudio: false,
+                        cleanupStatus: .failed,
+                        cleanupTrigger: trigger,
+                        cleanupStartedAt: startedAt,
+                        cleanupCompletedAt: now(),
+                        candidateFiles: files.map(\.relativePath),
+                        deletedFiles: deleted,
+                        reclaimedBytes: deletedBytes,
+                        failureReason: error.localizedDescription
+                    )
+                    try? persist(session)
+                    throw error
+                }
+            } catch {
+                failures.append("\(planned.session.metadata.title): \(error.localizedDescription)")
+            }
+        }
+
+        return RecordingAudioCleanupReport(
+            cleanedSessionIDs: cleanedSessionIDs,
+            deletedFileCount: deletedFileCount,
+            reclaimedBytes: reclaimedBytes,
+            failures: failures
+        )
+    }
+
+    func setKeepAudio(_ keepAudio: Bool, sessionID: String) throws -> RecordingSession {
+        guard let directory = try sessionDirectories().first(where: {
+            $0.lastPathComponent == sessionID
+        }) else {
+            throw RecordingAudioCleanupError.sessionNotEligible(sessionID)
+        }
+        var session = try loadSession(at: directory)
+        guard !session.metadata.isRecordingAudioPurged else {
+            throw RecordingAudioCleanupError.audioAlreadyPurged(sessionID)
+        }
+        var retention = session.metadata.recordingAudioRetention
+            ?? RecordingAudioRetentionMetadata()
+        retention.keepAudio = keepAudio
+        retention.failureReason = nil
+        session.metadata.recordingAudioRetention = retention
+        try persist(session)
+        return session
+    }
+
+    private func loadSessions() throws -> [RecordingSession] {
+        try sessionDirectories().compactMap { try? loadSession(at: $0) }
+    }
+
+    private func sessionDirectories() throws -> [URL] {
+        guard fileManager.fileExists(atPath: recordingsRoot.path) else { return [] }
+        return try fileManager.contentsOfDirectory(
+            at: recordingsRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ).filter {
+            (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+    }
+
+    private func loadSession(at directory: URL) throws -> RecordingSession {
+        let manifestURL = directory.appendingPathComponent("session.json", isDirectory: false)
+        let metadata = try SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        return RecordingSession(metadata: metadata, directoryURL: directory)
+    }
+
+    private func persist(_ session: RecordingSession) throws {
+        let data = try SessionJSONCoder.makeEncoder().encode(session.metadata)
+        try data.write(to: session.manifestURL, options: .atomic)
+    }
+
+    private func reconcileInterruptedCleanup(
+        _ original: RecordingSession
+    ) throws -> RecordingSession {
+        guard original.metadata.recordingAudioRetention?.cleanupStatus == .inProgress,
+              let retention = original.metadata.recordingAudioRetention else {
+            return original
+        }
+        let hasRemainingFile = try retention.candidateFiles.contains { path in
+            let url = try validatedAudioURL(
+                relativePath: path,
+                sessionDirectory: original.directoryURL
+            )
+            return fileManager.fileExists(atPath: url.path)
+        }
+        guard !hasRemainingFile else { return original }
+
+        var session = original
+        session.metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(
+            keepAudio: false,
+            cleanupStatus: .purged,
+            cleanupTrigger: retention.cleanupTrigger,
+            cleanupStartedAt: retention.cleanupStartedAt,
+            cleanupCompletedAt: now(),
+            candidateFiles: retention.candidateFiles,
+            deletedFiles: retention.candidateFiles,
+            reclaimedBytes: retention.reclaimedBytes
+        )
+        try persist(session)
+        return session
+    }
+
+    private func isEligible(_ session: RecordingSession, olderThan cutoff: Date?) -> Bool {
+        guard session.metadata.status == .recorded,
+              session.metadata.transcription?.status == .completed,
+              session.metadata.output?.status == .completed,
+              session.metadata.recovery?.status != .inProgress,
+              validateMergedTranscript(session),
+              validateMarkdown(session.metadata.output) else {
+            return false
+        }
+        guard let cutoff else { return true }
+        let completedAt = session.metadata.output?.exportedAt
+            ?? session.metadata.endedAt
+            ?? session.metadata.createdAt
+        return completedAt <= cutoff
+    }
+
+    private func validateMergedTranscript(_ session: RecordingSession) -> Bool {
+        guard let data = try? Data(contentsOf: session.mergedTranscriptURL), !data.isEmpty else {
+            return false
+        }
+        return (try? TranscriptJSONCoder.makeDecoder().decode(
+            MergedTranscript.self,
+            from: data
+        )) != nil
+    }
+
+    private func validateMarkdown(_ output: SessionOutputMetadata?) -> Bool {
+        guard let path = output?.markdownPath, !path.isEmpty,
+              let attributes = try? fileManager.attributesOfItem(atPath: path),
+              let size = attributes[.size] as? NSNumber else {
+            return false
+        }
+        return size.int64Value > 0
+    }
+
+    private func existingAudioFiles(
+        in session: RecordingSession
+    ) throws -> [RecordingAudioCleanupFile] {
+        var names = [
+            session.metadata.audioFiles.system,
+            session.metadata.audioFiles.microphone,
+            session.metadata.audioFiles.mixed,
+            session.metadata.audioFiles.systemWorking,
+            session.metadata.audioFiles.microphoneWorking,
+            session.metadata.systemAudio?.fileName,
+            session.metadata.microphoneAudio?.fileName,
+            session.metadata.audioFinalization?.system?.fileName,
+            session.metadata.audioFinalization?.microphone?.fileName,
+        ].compactMap { $0 }
+        names = Array(Set(names)).sorted()
+
+        return try names.compactMap { name in
+            let fileExtension = URL(fileURLWithPath: name).pathExtension.lowercased()
+            guard fileExtension == "wav" || fileExtension == "caf" else { return nil }
+            let url = try validatedAudioURL(
+                relativePath: name,
+                sessionDirectory: session.directoryURL
+            )
+            guard fileManager.fileExists(atPath: url.path) else { return nil }
+            let values = try url.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .totalFileAllocatedSizeKey,
+                .fileAllocatedSizeKey,
+                .fileSizeKey,
+            ])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw RecordingAudioCleanupError.invalidAudioPath(name)
+            }
+            let bytes = Int64(
+                values.totalFileAllocatedSize
+                    ?? values.fileAllocatedSize
+                    ?? values.fileSize
+                    ?? 0
+            )
+            return RecordingAudioCleanupFile(relativePath: name, allocatedBytes: bytes)
+        }
+    }
+
+    private func validatedAudioURL(
+        relativePath: String,
+        sessionDirectory: URL
+    ) throws -> URL {
+        guard !relativePath.isEmpty,
+              !relativePath.hasPrefix("/"),
+              URL(fileURLWithPath: relativePath).lastPathComponent == relativePath else {
+            throw RecordingAudioCleanupError.invalidAudioPath(relativePath)
+        }
+        let root = sessionDirectory.standardizedFileURL
+        let url = root.appendingPathComponent(relativePath, isDirectory: false).standardizedFileURL
+        if fileManager.fileExists(atPath: url.path),
+           (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
+            throw RecordingAudioCleanupError.invalidAudioPath(relativePath)
+        }
+        let resolvedRoot = root.resolvingSymlinksInPath()
+        let resolvedURL = url.resolvingSymlinksInPath()
+        let prefix = resolvedRoot.path.hasSuffix("/")
+            ? resolvedRoot.path
+            : resolvedRoot.path + "/"
+        guard resolvedURL.path.hasPrefix(prefix) else {
+            throw RecordingAudioCleanupError.invalidAudioPath(relativePath)
+        }
+        return resolvedURL
+    }
+}

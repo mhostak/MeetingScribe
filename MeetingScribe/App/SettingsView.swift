@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState
-    @State private var isShowingCAFDeletionWarning = false
+    @State private var pendingAudioRetentionPolicy: AudioRetentionPolicy?
     @State private var isShowingLegacyModelDeletionWarning = false
 
     var body: some View {
@@ -36,17 +36,21 @@ struct SettingsView: View {
         .frame(width: 680, height: 500)
         .environment(\.locale, appState.selectedAppLanguage.locale)
         .confirmationDialog(
-            "Delete original CAF recordings after successful processing?",
-            isPresented: $isShowingCAFDeletionWarning,
+            "Enable automatic recording audio deletion?",
+            isPresented: Binding(
+                get: { pendingAudioRetentionPolicy != nil },
+                set: { if !$0 { pendingAudioRetentionPolicy = nil } }
+            ),
             titleVisibility: .visible
         ) {
-            Button("Enable automatic CAF deletion", role: .destructive) {
-                appState.automaticallyDeleteSourceCAF = true
-                appState.persistAudioRetentionSettings()
+            Button("Enable automatic audio deletion", role: .destructive) {
+                guard let policy = pendingAudioRetentionPolicy else { return }
+                pendingAudioRetentionPolicy = nil
+                Task { await appState.setAudioRetentionPolicy(policy) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button("Cancel", role: .cancel) { pendingAudioRetentionPolicy = nil }
         } message: {
-            Text("Failed or incomplete sessions always keep their source audio.")
+            Text("Transcript and Markdown will stay available, but repeat transcription and speaker editing require the original audio. Failed, incomplete, and protected recordings are never deleted.")
         }
         .confirmationDialog(
             "Remove unused legacy models?",
@@ -397,18 +401,22 @@ struct SettingsView: View {
                     }
                 }
 
-                Toggle("Delete legacy CAF after successful export", isOn: Binding(
-                    get: { appState.automaticallyDeleteSourceCAF },
-                    set: { enabled in
-                        if enabled {
-                            isShowingCAFDeletionWarning = true
+                Picker("Recording audio retention", selection: Binding(
+                    get: { appState.audioRetentionPolicy },
+                    set: { policy in
+                        if policy == .keepForever {
+                            Task { await appState.setAudioRetentionPolicy(policy) }
                         } else {
-                            appState.automaticallyDeleteSourceCAF = false
-                            appState.persistAudioRetentionSettings()
+                            pendingAudioRetentionPolicy = policy
                         }
                     }
-                ))
-                Text("This applies only after successful transcription and Markdown export.")
+                )) {
+                    ForEach(AudioRetentionPolicy.allCases) { policy in
+                        Text(LocalizedStringKey(policy.displayName)).tag(policy)
+                    }
+                }
+
+                Text("Automatic deletion applies only after successful transcription and Markdown export. Use Keep audio on an individual recording to exempt it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

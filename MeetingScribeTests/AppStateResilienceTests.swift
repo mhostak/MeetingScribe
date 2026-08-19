@@ -67,12 +67,14 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertNotEqual(AppLanguage.system.resolved, .system)
     }
 
-    func testAudioRetentionSettingDefaultsOffAndPersistsOptIn() async throws {
+    func testAudioRetentionSettingsPersistLegacyCleanupAndRetentionPolicy() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let store = AudioRetentionSettingsStore(defaults: fixture.defaults)
         XCTAssertFalse(store.automaticallyDeleteSourceCAF)
+        XCTAssertEqual(store.policy, .keepForever)
         store.setAutomaticallyDeleteSourceCAF(true)
+        store.setPolicy(.sevenDays)
 
         let appState = makeAppState(
             sessionManager: makeSessionManager(
@@ -86,9 +88,68 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.prepareStorage()
 
         XCTAssertTrue(appState.automaticallyDeleteSourceCAF)
+        XCTAssertEqual(appState.audioRetentionPolicy, .sevenDays)
         appState.automaticallyDeleteSourceCAF = false
         appState.persistAudioRetentionSettings()
+        await appState.setAudioRetentionPolicy(.thirtyDays)
         XCTAssertFalse(store.automaticallyDeleteSourceCAF)
+        XCTAssertEqual(store.policy, .thirtyDays)
+    }
+
+    func testImmediateRetentionPurgesEligibleAudioDuringStoragePreparation() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let manager = makeSessionManager(root: recordingsRoot)
+        let session = try await manager.startSession(
+            title: "Cleanup",
+            now: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try Data(repeating: 1, count: 128).write(to: session.systemAudioURL)
+        try Data(repeating: 2, count: 96).write(to: session.microphoneAudioURL)
+        let transcript = makeTranscript(
+            sessionID: session.metadata.id,
+            title: session.metadata.title
+        )
+        try TranscriptJSONCoder.makeEncoder().encode(transcript)
+            .write(to: session.mergedTranscriptURL)
+        let markdownURL = session.directoryURL.appendingPathComponent("meeting.md")
+        try Data("# Meeting".utf8).write(to: markdownURL)
+        let completed = try await manager.stopSession(
+            now: Date(timeIntervalSince1970: 1_700_000_060),
+            transcription: SessionTranscriptionMetadata(
+                status: .completed,
+                model: "test",
+                systemSegmentCount: 1,
+                microphoneSegmentCount: 1,
+                mergedSegmentCount: 1,
+                warnings: [],
+                failureReason: nil
+            ),
+            output: SessionOutputMetadata(
+                status: .completed,
+                markdownFileName: markdownURL.lastPathComponent,
+                markdownPath: markdownURL.path,
+                exportedAt: Date(timeIntervalSince1970: 1_700_000_060),
+                failureReason: nil
+            )
+        )
+        AudioRetentionSettingsStore(defaults: fixture.defaults).setPolicy(.immediately)
+        let appState = makeAppState(
+            sessionManager: manager,
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: completed.systemAudioURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: completed.microphoneAudioURL.path))
+        let metadata = try decodeMetadata(at: completed.manifestURL)
+        XCTAssertEqual(metadata.recordingAudioRetention?.cleanupStatus, .purged)
+        XCTAssertEqual(metadata.recordingAudioRetention?.cleanupTrigger, .automatic)
     }
 
     func testSelectedLanguageIsRestoredAndStoredInNewSession() async throws {

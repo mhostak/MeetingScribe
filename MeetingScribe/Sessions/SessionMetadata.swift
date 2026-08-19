@@ -108,6 +108,51 @@ struct AudioSourceCleanupMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+enum RecordingAudioCleanupStatus: String, Codable, Equatable, Sendable {
+    case inProgress
+    case purged
+    case failed
+}
+
+enum RecordingAudioCleanupTrigger: String, Codable, Equatable, Sendable {
+    case manual
+    case automatic
+}
+
+struct RecordingAudioRetentionMetadata: Codable, Equatable, Sendable {
+    var keepAudio: Bool
+    var cleanupStatus: RecordingAudioCleanupStatus?
+    var cleanupTrigger: RecordingAudioCleanupTrigger?
+    var cleanupStartedAt: Date?
+    var cleanupCompletedAt: Date?
+    var candidateFiles: [String]
+    var deletedFiles: [String]
+    var reclaimedBytes: Int64?
+    var failureReason: String?
+
+    init(
+        keepAudio: Bool = false,
+        cleanupStatus: RecordingAudioCleanupStatus? = nil,
+        cleanupTrigger: RecordingAudioCleanupTrigger? = nil,
+        cleanupStartedAt: Date? = nil,
+        cleanupCompletedAt: Date? = nil,
+        candidateFiles: [String] = [],
+        deletedFiles: [String] = [],
+        reclaimedBytes: Int64? = nil,
+        failureReason: String? = nil
+    ) {
+        self.keepAudio = keepAudio
+        self.cleanupStatus = cleanupStatus
+        self.cleanupTrigger = cleanupTrigger
+        self.cleanupStartedAt = cleanupStartedAt
+        self.cleanupCompletedAt = cleanupCompletedAt
+        self.candidateFiles = candidateFiles
+        self.deletedFiles = deletedFiles
+        self.reclaimedBytes = reclaimedBytes
+        self.failureReason = failureReason
+    }
+}
+
 enum SessionTranscriptionStatus: String, Codable, Sendable {
     case completed
     case failed
@@ -269,6 +314,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var microphoneAudio: AudioTrackMetadata?
     var audioFinalization: AudioFinalizationMetadata?
     var audioSourceCleanup: AudioSourceCleanupMetadata?
+    var recordingAudioRetention: RecordingAudioRetentionMetadata?
     var transcription: SessionTranscriptionMetadata?
     var diarization: SessionDiarizationMetadata?
     var analysisConfiguration: SessionAnalysisConfiguration?
@@ -278,7 +324,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var failureReason: String?
 
     init(
-        schemaVersion: Int = 15,
+        schemaVersion: Int = 16,
         id: String,
         title: String,
         status: RecordingSessionStatus,
@@ -296,6 +342,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         audioSourceCleanup: AudioSourceCleanupMetadata? = nil,
+        recordingAudioRetention: RecordingAudioRetentionMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
         diarization: SessionDiarizationMetadata? = nil,
         analysisConfiguration: SessionAnalysisConfiguration? = nil,
@@ -322,6 +369,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.microphoneAudio = microphoneAudio
         self.audioFinalization = audioFinalization
         self.audioSourceCleanup = audioSourceCleanup
+        self.recordingAudioRetention = recordingAudioRetention
         self.transcription = transcription
         self.diarization = diarization
         self.analysisConfiguration = analysisConfiguration
@@ -337,6 +385,14 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
 
     var resolvedCaptureMode: CaptureMode {
         captureMode ?? .systemAndMicrophone
+    }
+
+    var keepsRecordingAudio: Bool {
+        recordingAudioRetention?.keepAudio == true
+    }
+
+    var isRecordingAudioPurged: Bool {
+        recordingAudioRetention?.cleanupStatus == .purged
     }
 
     var resolvedOutputFileNameTemplate: String {

@@ -175,6 +175,43 @@ final class SessionCatalogTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(snapshot.entries.first).hasAnalysis)
     }
 
+    func testCatalogMarksIntentionallyPurgedAudioAsRemoved() async throws {
+        let markdownURL = root.appendingPathComponent("purged.md")
+        try Data("markdown".utf8).write(to: markdownURL)
+        let directory = try writeCompletedSession(
+            id: "purged",
+            title: "Purged audio",
+            startedAt: Date(timeIntervalSince1970: 100),
+            markdownURL: markdownURL
+        )
+        let manifestURL = directory.appendingPathComponent("session.json")
+        var metadata = try SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        metadata.recordingAudioRetention = RecordingAudioRetentionMetadata(
+            cleanupStatus: .purged,
+            cleanupTrigger: .manual,
+            cleanupStartedAt: Date(timeIntervalSince1970: 200),
+            cleanupCompletedAt: Date(timeIntervalSince1970: 201),
+            candidateFiles: ["system-16k.wav"],
+            deletedFiles: ["system-16k.wav"],
+            reclaimedBytes: 1
+        )
+        try SessionJSONCoder.makeEncoder().encode(metadata).write(to: manifestURL)
+        try FileManager.default.removeItem(
+            at: directory.appendingPathComponent("system-16k.wav")
+        )
+
+        let snapshot = try await SessionCatalog(recordingsRoot: root).load()
+        let entry = try XCTUnwrap(snapshot.entries.first)
+
+        XCTAssertEqual(entry.status, .completed)
+        XCTAssertEqual(entry.audio, .removed)
+        XCTAssertFalse(entry.audio.isAvailable)
+        XCTAssertTrue(entry.audio.isRemoved)
+    }
+
     @discardableResult
     private func writeCompletedSession(
         id: String,
