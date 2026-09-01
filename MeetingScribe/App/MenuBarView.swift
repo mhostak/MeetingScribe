@@ -176,24 +176,11 @@ struct MenuBarView: View {
                 RecordingDurationView(startedAt: startedAt)
             }
 
-            RecordingWaveformView(levels: liveRecordingAudioLevels)
-                .frame(height: 42)
-
-            VStack(spacing: 7) {
-                if appState.currentSession?.metadata.resolvedCaptureMode != .microphoneOnly {
-                    audioStatus(
-                        title: "System audio",
-                        diagnostics: appState.captureDiagnostics.systemAudio,
-                        required: true
-                    )
-                }
-                audioStatus(
-                    title: "Microphone",
-                    diagnostics: appState.captureDiagnostics.microphone,
-                    required: appState.currentSession?.metadata.resolvedCaptureMode
-                        == .microphoneOnly
-                )
-            }
+            LiveCaptureDiagnosticsView(
+                model: appState.captureDiagnosticsModel,
+                captureMode: appState.currentSession?.metadata.resolvedCaptureMode
+                    ?? .systemAndMicrophone
+            )
 
             Button {
                 Task { await appState.stopRecording() }
@@ -210,14 +197,6 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
-    }
-
-    private var liveRecordingAudioLevels: [Double] {
-        let now = Date()
-        if appState.currentSession?.metadata.resolvedCaptureMode == .microphoneOnly {
-            return appState.captureDiagnostics.microphone.recentLiveAudioLevels(at: now)
-        }
-        return appState.captureDiagnostics.combinedRecentAudioLevels(at: now)
     }
 
     private var recordingTitleEditor: some View {
@@ -688,19 +667,70 @@ struct MenuBarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
     }
+}
 
-    private func audioStatus(
-        title: LocalizedStringKey,
-        diagnostics: AudioCaptureDiagnostics,
-        required: Bool
-    ) -> some View {
-        let health = diagnostics.health()
-        return HStack(spacing: 8) {
+private struct LiveCaptureDiagnosticsView: View {
+    let model: CaptureDiagnosticsModel
+    let captureMode: CaptureMode
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.2)) { context in
+            let snapshot = model.snapshot
+            VStack(spacing: 14) {
+                RecordingWaveformView(
+                    levels: liveRecordingAudioLevels(
+                        from: snapshot,
+                        at: context.date
+                    )
+                )
+                .frame(height: 42)
+
+                VStack(spacing: 7) {
+                    if captureMode != .microphoneOnly {
+                        AudioCaptureStatusView(
+                            title: "System audio",
+                            health: snapshot.systemAudio.health(at: context.date),
+                            failureReason: snapshot.systemAudio.failureReason,
+                            required: true
+                        )
+                        .equatable()
+                    }
+                    AudioCaptureStatusView(
+                        title: "Microphone",
+                        health: snapshot.microphone.health(at: context.date),
+                        failureReason: snapshot.microphone.failureReason,
+                        required: captureMode == .microphoneOnly
+                    )
+                    .equatable()
+                }
+            }
+        }
+    }
+
+    private func liveRecordingAudioLevels(
+        from snapshot: CaptureSessionDiagnostics,
+        at date: Date
+    ) -> [Double] {
+        if captureMode == .microphoneOnly {
+            return snapshot.microphone.recentLiveAudioLevels(at: date)
+        }
+        return snapshot.combinedRecentAudioLevels(at: date)
+    }
+}
+
+private struct AudioCaptureStatusView: View, Equatable {
+    let title: String
+    let health: AudioCaptureHealth
+    let failureReason: String?
+    let required: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
             Image(systemName: audioIcon(for: health))
                 .foregroundStyle(health == .stalled || health == .failed ? .orange : .green)
             VStack(alignment: .leading, spacing: 1) {
-                Text(title) + Text(": ") + Text(audioHealthKey(health))
-                if let failureReason = diagnostics.failureReason {
+                Text(LocalizedStringKey(title)) + Text(": ") + Text(audioHealthKey(health))
+                if let failureReason {
                     Text(verbatim: failureReason)
                         .foregroundStyle(required ? .red : .orange)
                         .lineLimit(2)
@@ -752,7 +782,6 @@ private struct RecordingDurationView: View {
 }
 
 private struct RecordingWaveformView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let levels: [Double]
 
     private let barCount = 22
@@ -772,10 +801,6 @@ private struct RecordingWaveformView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(
-            reduceMotion ? nil : .linear(duration: 0.16),
-            value: displayedLevels
-        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Live recorded audio level")
     }

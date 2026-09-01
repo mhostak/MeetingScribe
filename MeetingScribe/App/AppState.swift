@@ -13,6 +13,19 @@ struct CaptureMonitoringConfiguration: Sendable {
     var maximumStorageCheckFailures = 3
 }
 
+@MainActor
+final class CaptureDiagnosticsModel {
+    private(set) var snapshot: CaptureSessionDiagnostics
+
+    init(snapshot: CaptureSessionDiagnostics = .empty) {
+        self.snapshot = snapshot
+    }
+
+    func update(_ snapshot: CaptureSessionDiagnostics) {
+        self.snapshot = snapshot
+    }
+}
+
 struct RecordingsNavigationRequest: Equatable, Sendable {
     let requestID: UUID
     let sessionID: String
@@ -25,7 +38,11 @@ final class AppState: ObservableObject {
     @Published private(set) var currentSession: RecordingSession?
     @Published private(set) var lastCompletedSession: RecordingSession?
     @Published private(set) var lastError: String?
-    @Published private(set) var captureDiagnostics = CaptureSessionDiagnostics.empty
+    let captureDiagnosticsModel = CaptureDiagnosticsModel()
+
+    var captureDiagnostics: CaptureSessionDiagnostics {
+        captureDiagnosticsModel.snapshot
+    }
     @Published private(set) var fluidAudioASRModelStatus: FluidAudioModelStatus = .missing
     @Published private(set) var fluidAudioASRDownloadProgress: FluidAudioModelDownloadProgress?
     @Published private(set) var isInstallingFluidAudioASRModel = false
@@ -369,7 +386,7 @@ final class AppState: ObservableObject {
             try? await processingLogger.log(.sessionCreated, for: session)
 
             do {
-                captureDiagnostics = try await captureCoordinator.start(for: session)
+                updateCaptureDiagnostics(try await captureCoordinator.start(for: session))
                 try transition(to: .recording)
             } catch {
                 let diagnostics = await captureCoordinator.stop()
@@ -380,7 +397,7 @@ final class AppState: ObservableObject {
                 )
                 currentSession = nil
                 lastCompletedSession = failedSession
-                captureDiagnostics = diagnostics
+                updateCaptureDiagnostics(diagnostics)
                 try? await processingLogger.log(
                     .captureFailed,
                     for: session,
@@ -422,7 +439,7 @@ final class AppState: ObservableObject {
             stopCaptureMonitoring()
 
             let diagnostics = await captureCoordinator.stop()
-            captureDiagnostics = diagnostics
+            updateCaptureDiagnostics(diagnostics)
 
             guard let session = currentSession else {
                 throw SessionManagerError.noActiveSession
@@ -488,7 +505,7 @@ final class AppState: ObservableObject {
             ) {
                 setProcessingStep(.preparingAudio, to: .completed)
                 let diagnostics = recoveredMetadataDiagnostics(for: session)
-                captureDiagnostics = diagnostics
+                updateCaptureDiagnostics(diagnostics)
                 await completeProcessedSession(
                     session: session,
                     diagnostics: diagnostics,
@@ -508,7 +525,7 @@ final class AppState: ObservableObject {
                 )
             } else {
                 let diagnostics = try recoveredAudioInspector.inspect(session: session)
-                captureDiagnostics = diagnostics
+                updateCaptureDiagnostics(diagnostics)
                 await processStoppedSession(
                     session: session,
                     diagnostics: diagnostics,
@@ -577,7 +594,7 @@ final class AppState: ObservableObject {
         do {
             try transition(to: .idle)
             lastError = nil
-            captureDiagnostics = .empty
+            updateCaptureDiagnostics(.empty)
             resetProcessingProgress()
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
@@ -1989,12 +2006,13 @@ final class AppState: ObservableObject {
                 }
 
                 guard let self else { break }
-                self.captureDiagnostics = await self.captureCoordinator.diagnostics()
+                let diagnostics = await self.captureCoordinator.diagnostics()
+                self.updateCaptureDiagnostics(diagnostics)
                 let requiredAudioHealth: AudioCaptureHealth
                 if self.currentSession?.metadata.resolvedCaptureMode == .microphoneOnly {
-                    requiredAudioHealth = self.captureDiagnostics.microphone.health()
+                    requiredAudioHealth = diagnostics.microphone.health()
                 } else {
-                    requiredAudioHealth = self.captureDiagnostics.systemAudio.health()
+                    requiredAudioHealth = diagnostics.systemAudio.health()
                 }
 
                 if requiredAudioHealth == .stalled {
@@ -2104,6 +2122,10 @@ final class AppState: ObservableObject {
     private func stopCaptureMonitoring() {
         captureMonitorTask?.cancel()
         captureMonitorTask = nil
+    }
+
+    private func updateCaptureDiagnostics(_ diagnostics: CaptureSessionDiagnostics) {
+        captureDiagnosticsModel.update(diagnostics)
     }
 }
 

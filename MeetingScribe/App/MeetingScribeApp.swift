@@ -47,7 +47,11 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
         self.appState = appState
         super.init()
 
-        statusObservation = appState.objectWillChange.sink { [weak self] in
+        statusObservation = Publishers.CombineLatest3(
+            appState.$status,
+            appState.$recoveryCandidates.map { !$0.isEmpty },
+            appState.$recoveryIssues.map { !$0.isEmpty }
+        ).sink { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatusIcon()
             }

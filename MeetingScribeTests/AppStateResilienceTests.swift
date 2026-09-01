@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import XCTest
 @testable import MeetingScribe
@@ -903,6 +904,34 @@ final class AppStateResilienceTests: XCTestCase {
         let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
         XCTAssertTrue(log.contains(#""event":"captureFailed""#))
         XCTAssertFalse(log.contains("System audio capture stopped producing buffers."))
+    }
+
+    func testLiveCaptureDiagnosticsDoNotInvalidateCompleteAppState() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            defaults: fixture.defaults
+        )
+
+        var appStateChangeCount = 0
+        let appStateObservation = appState.objectWillChange.sink {
+            appStateChangeCount += 1
+        }
+        defer { appStateObservation.cancel() }
+
+        var diagnostics = CaptureSessionDiagnostics.empty
+        for bufferCount in 1...1_000 {
+            diagnostics.systemAudio.bufferCount = bufferCount
+            appState.captureDiagnosticsModel.update(diagnostics)
+        }
+
+        XCTAssertEqual(appStateChangeCount, 0)
+        XCTAssertEqual(appState.captureDiagnostics.systemAudio.bufferCount, 1_000)
     }
 
     private func makeSessionManager(root: URL) -> SessionManager {
