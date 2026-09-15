@@ -1,6 +1,6 @@
 # Apple Calendar and participants
 
-Status date: 2026-07-16
+Status date: 2026-09-15
 
 ## Delivery status
 
@@ -22,11 +22,17 @@ Phase A is accepted as implemented with these guarantees:
 - the event picker is an independent foreground window and remains open until the user confirms or cancels it;
 - event title use is explicit and never silently replaces a manually edited recording title;
 - every attendee is unselected by default and only explicitly selected display names are retained;
-- the session snapshot stores the event title, interval, confirmation time, selected display names, and the per-meeting AI-sharing choice;
-- email addresses, calendar and event identifiers, calendar names, location, notes, URLs, organizer data, and unconfirmed candidates are not persisted;
-- a confirmed snapshot can be attached before or during recording and survives recovery through schema 10 session metadata;
-- Markdown participants use confirmed names, while external AI receives them only after the separate per-meeting opt-in;
+- the session snapshot stores the event title, interval, confirmation time, selected display names, participant-sharing flag, and optional edited event description;
+- attendee email addresses, calendar and event identifiers, calendar names, location, URLs, organizer fields, and unconfirmed candidates are not separately persisted; an included free-form description may contain these details;
+- a confirmed snapshot can be attached before or during recording and survives recovery through current schema 16 session metadata;
+- Markdown participants use confirmed names; selecting attendees and confirming the current picker also enables their use when AI analysis runs, without a second sharing toggle;
 - disabling the integration stops future Calendar reads but preserves already confirmed snapshots so previous output remains reproducible.
+
+### Description and AI-sharing behavior
+
+The picker loads Calendar notes into an editable description and initially enables **Include event description** when the event has one. The user can edit, omit, or add a description before confirming. Included text is persisted and exported in the Markdown `calendar_description` frontmatter field. It is also included in AI requests when analysis is enabled, independently of the participant-sharing flag. Audio remains local, but the selected CLI can send this text and the transcript to its provider.
+
+Current confirmation sets participant sharing to true when any attendees are selected. Older snapshots with that flag false still withhold participant names from AI. Turning off Calendar integration does not remove previously confirmed metadata or change the saved analysis inputs.
 
 The implementation is covered by the standard automated suite, including consent boundaries, ranking, persistence, recovery compatibility, Markdown rendering, and AI-sharing privacy. The signed application was also exercised through the native Calendar permission and picker UI.
 
@@ -40,7 +46,7 @@ Phase B will not attempt to infer a person's identity from Calendar membership. 
 4. change or remove a mapping later;
 5. regenerate the resolved transcript, Markdown, and optional analysis input without rerunning speech-to-text or diarization.
 
-The mapping remains local session data. Calendar names are sent to an external AI provider only when the existing per-meeting participant-sharing consent is enabled.
+The mapping remains local session data. Calendar names are sent to an external AI provider only when the saved participant-sharing flag is enabled; current attendee confirmation enables that flag for selected names.
 
 ## Phase B prerequisite status
 
