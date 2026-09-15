@@ -17,6 +17,7 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertEqual(response.markdown, "## Súhrn\n\nHotovo.")
         let commands = await runner.commands
         let command = try XCTUnwrap(commands.first)
+        XCTAssertEqual(command.timeout, .seconds(600))
         XCTAssertTrue(command.arguments.contains("--ephemeral"))
         XCTAssertTrue(command.arguments.contains("read-only"))
         XCTAssertTrue(command.arguments.contains("gpt-test"))
@@ -45,10 +46,17 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertEqual(response.markdown, "## Custom\n\nA table can go here.")
         let commands = await runner.commands
         let command = try XCTUnwrap(commands.first)
+        XCTAssertEqual(command.timeout, .seconds(600))
         XCTAssertTrue(command.arguments.contains("--no-session-persistence"))
         XCTAssertTrue(command.arguments.contains("--json-schema"))
+        XCTAssertTrue(command.arguments.contains("--disable-slash-commands"))
+        XCTAssertTrue(command.arguments.contains("--strict-mcp-config"))
         let toolsIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--tools"))
         XCTAssertEqual(command.arguments[toolsIndex + 1], "")
+        let mcpIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--mcp-config"))
+        XCTAssertEqual(command.arguments[mcpIndex + 1], #"{"mcpServers":{}}"#)
+        let settingsIndex = try XCTUnwrap(command.arguments.firstIndex(of: "--setting-sources"))
+        XCTAssertEqual(command.arguments[settingsIndex + 1], "")
         let prompt = String(decoding: command.standardInput, as: UTF8.self)
         XCTAssertTrue(prompt.contains(
             "Write every part of the `markdown` value in Czech (čeština, ISO 639-1: cs)."
@@ -97,6 +105,47 @@ final class CLIAnalysisProviderTests: XCTestCase {
                     message: "The command wrote 17 bytes to stderr; its content was not persisted."
                 )
             )
+        }
+    }
+
+    func testClaudeExpiredTokenProvidesLoginInstructions() async {
+        for exitCode: Int32 in [0, 1] {
+            let provider = CLIAnalysisProvider(
+                tool: .claude,
+                executableURL: URL(fileURLWithPath: "/bin/echo"),
+                runner: RawClaudeResultRunner(
+                    exitCode: exitCode,
+                    output: #"{"is_error":true,"api_error_status":401,"result":"OAuth access token has expired. private-content"}"#
+                )
+            )
+            do {
+                _ = try await provider.analyze(makeRequest())
+                XCTFail("Expected authentication failure.")
+            } catch {
+                XCTAssertEqual(error as? AnalysisError, .authenticationRequired(
+                    tool: .claude, loginCommand: "'/bin/echo' auth login"
+                ))
+                XCTAssertFalse(error.localizedDescription.contains("private-content"))
+            }
+        }
+    }
+
+    func testClaudeOtherAPIErrorDoesNotRequestLoginOrLeakOutput() async {
+        let provider = CLIAnalysisProvider(
+            tool: .claude,
+            executableURL: URL(fileURLWithPath: "/bin/echo"),
+            runner: RawClaudeResultRunner(
+                exitCode: 0,
+                output: #"{"is_error":true,"api_error_status":429,"result":"private-content"}"#
+            )
+        )
+        do {
+            _ = try await provider.analyze(makeRequest())
+            XCTFail("Expected API failure.")
+        } catch {
+            XCTAssertEqual(error as? AnalysisError, .processFailed(
+                tool: .claude, exitCode: 0, message: "Claude reported an API error (HTTP 429)."
+            ))
         }
     }
 
@@ -338,6 +387,18 @@ private actor MockCLICommandRunner: AnalysisCommandRunning {
             exitCode: exitCode,
             standardOutput: output,
             standardError: Data(standardError.utf8)
+        )
+    }
+}
+
+
+private struct RawClaudeResultRunner: AnalysisCommandRunning {
+    let exitCode: Int32
+    let output: String
+
+    func run(_ command: AnalysisCommand, tool: AnalysisTool) async throws -> AnalysisCommandResult {
+        AnalysisCommandResult(
+            exitCode: exitCode, standardOutput: Data(output.utf8), standardError: Data()
         )
     }
 }

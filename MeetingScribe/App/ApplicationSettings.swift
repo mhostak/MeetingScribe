@@ -397,6 +397,13 @@ enum AppLocalization {
             return pick("\(tool.displayName) could not be started: \(message)", "\(tool.displayName) sa nepodarilo spustiť: \(message)", "\(tool.displayName) se nepodařilo spustit: \(message)", language)
         case let .processFailed(tool, exitCode, message):
             return pick("\(tool.displayName) failed with exit code \(exitCode): \(message)", "\(tool.displayName) zlyhal s kódom \(exitCode): \(message)", "\(tool.displayName) selhal s kódem \(exitCode): \(message)", language)
+        case let .authenticationRequired(tool, loginCommand):
+            return pick(
+                "\(tool.displayName) sign-in has expired or is invalid. Open Terminal and run:\n\(loginCommand)\nComplete sign-in, then retry AI analysis. Your recording and transcript are saved.",
+                "Prihlásenie do \(tool.displayName) vypršalo alebo je neplatné. Otvorte Terminál a spustite:\n\(loginCommand)\nDokončite prihlásenie a znova spustite AI analýzu. Nahrávka aj prepis sú uložené.",
+                "Přihlášení do \(tool.displayName) vypršelo nebo je neplatné. Otevřete Terminál a spusťte:\n\(loginCommand)\nDokončete přihlášení a znovu spusťte AI analýzu. Nahrávka i přepis jsou uložené.",
+                language
+            )
         case let .processTimedOut(tool):
             return pick("\(tool.displayName) analysis timed out.", "Analýza cez \(tool.displayName) prekročila časový limit.", "Analýza přes \(tool.displayName) překročila časový limit.", language)
         case .transcriptChunkTooLarge:

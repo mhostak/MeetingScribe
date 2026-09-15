@@ -341,6 +341,7 @@ private struct RecordingSessionRow: View {
 
             if let message {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .textSelection(.enabled)
                     .font(.caption)
                     .foregroundStyle(statusColor)
                     .fixedSize(horizontal: false, vertical: true)
@@ -348,6 +349,7 @@ private struct RecordingSessionRow: View {
 
             if let reprocessingError {
                 Label(reprocessingError, systemImage: "exclamationmark.triangle.fill")
+                    .textSelection(.enabled)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)

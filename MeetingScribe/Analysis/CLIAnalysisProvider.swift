@@ -253,6 +253,8 @@ enum AnalysisAuthenticationStatus: Equatable, Sendable {
 }
 
 struct CLIAnalysisProvider: AnalysisProvider {
+    static let defaultRequestTimeout: Duration = .seconds(600)
+
     let tool: AnalysisTool
     let executableURL: URL
     let model: String?
@@ -264,7 +266,7 @@ struct CLIAnalysisProvider: AnalysisProvider {
         executableURL: URL,
         model: String? = nil,
         runner: any AnalysisCommandRunning = AnalysisProcessRunner(),
-        requestTimeout: Duration = .seconds(180)
+        requestTimeout: Duration = Self.defaultRequestTimeout
     ) {
         self.tool = tool
         self.executableURL = executableURL
@@ -302,6 +304,25 @@ struct CLIAnalysisProvider: AnalysisProvider {
             ),
             tool: tool
         )
+        // Claude reports API errors in stdout, sometimes even with exit code zero.
+        // Inspect only error envelopes; never surface raw output containing meeting data.
+        if tool == .claude,
+           let failure = try? JSONDecoder().decode(ClaudeFailureEnvelope.self, from: result.standardOutput),
+           failure.isError == true {
+            if failure.apiErrorStatus == 401
+                || failure.result?.localizedCaseInsensitiveContains("OAuth access token has expired") == true
+                || failure.result?.hasPrefix("Failed to authenticate.") == true {
+                throw AnalysisError.authenticationRequired(
+                    tool: tool,
+                    loginCommand: tool.loginCommand(executableURL: executableURL)
+                )
+            }
+            throw AnalysisError.processFailed(
+                tool: tool,
+                exitCode: result.exitCode,
+                message: "Claude reported an API error" + (failure.apiErrorStatus.map { " (HTTP \($0))." } ?? ".")
+            )
+        }
         guard result.exitCode == 0 else {
             throw AnalysisError.processFailed(
                 tool: tool,
@@ -435,6 +456,10 @@ struct CLIAnalysisProvider: AnalysisProvider {
                 "--no-session-persistence",
                 "--tools", "",
                 "--permission-mode", "dontAsk",
+                "--disable-slash-commands",
+                "--strict-mcp-config",
+                "--mcp-config", #"{"mcpServers":{}}"#,
+                "--setting-sources", "",
             ]
             if let model { values += ["--model", model] }
             return values
@@ -511,7 +536,7 @@ struct CLIAnalysisProvider: AnalysisProvider {
     }
 
     private func diagnostic(from data: Data) -> String {
-        guard !data.isEmpty else { return "" }
+        guard !data.isEmpty else { return "No diagnostic output. Check the AI tool in Settings, then retry AI analysis." }
         return "The command wrote \(data.count) bytes to stderr; its content was not persisted."
     }
 }
@@ -528,4 +553,17 @@ private struct ClaudeResultEnvelope: Decodable {
 
 private struct ClaudeAuthenticationStatus: Decodable {
     let loggedIn: Bool
+}
+
+
+private struct ClaudeFailureEnvelope: Decodable {
+    let isError: Bool?
+    let apiErrorStatus: Int?
+    let result: String?
+
+    enum CodingKeys: String, CodingKey {
+        case isError = "is_error"
+        case apiErrorStatus = "api_error_status"
+        case result
+    }
 }

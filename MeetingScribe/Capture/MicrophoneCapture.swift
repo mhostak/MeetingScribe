@@ -1,5 +1,6 @@
 import AudioToolbox
 import AVFoundation
+import CoreAudio
 import Foundation
 
 struct MicrophoneRecoveryConfiguration: Equatable, Sendable {
@@ -225,6 +226,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private func startAndVerify(generation: UUID) async throws {
         var attempt = 0
         while attempt < recoveryConfiguration.maximumStartupAttempts {
+            try Task.checkCancellation()
             attempt += 1
             let baselineBufferCount: Int
             do {
@@ -233,9 +235,13 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 }
             } catch {
                 guard attempt < recoveryConfiguration.maximumStartupAttempts,
-                      Self.isFormatNotSupported(error) else {
+                      Self.isRecoverableStartupError(error) else {
                     throw error
                 }
+                // Core Audio can report 'stop' while the input hardware is not ready.
+                // Let it settle, then create a new engine using the current default
+                // input instead of retrying an engine attached to a stale route.
+                try await Task.sleep(for: .seconds(recoveryConfiguration.delay))
                 try writerQueue.sync {
                     try replaceEngineForStartup(generation: generation)
                 }
@@ -377,8 +383,13 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         }
     }
 
-    private static func isFormatNotSupported(_ error: Error) -> Bool {
-        (error as NSError).code == Int(kAudioUnitErr_FormatNotSupported)
+    private static func isRecoverableStartupError(_ error: Error) -> Bool {
+        let error = error as NSError
+        guard error.domain == NSOSStatusErrorDomain || error.domain == "com.apple.coreaudio.avfaudio" else {
+            return false
+        }
+        return error.code == Int(kAudioUnitErr_FormatNotSupported)
+            || error.code == Int(kAudioHardwareNotRunningError)
     }
 
     private static func requestPermissionIfNeeded() async throws {
