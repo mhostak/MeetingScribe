@@ -187,16 +187,18 @@ final class AudioFinalizerTests: XCTestCase {
         var session = makeSession()
         session.metadata.captureMode = .microphoneOnly
         try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+        var microphoneDiagnostics = diagnostics(
+            fileName: "microphone.caf",
+            channelCount: 1,
+            presentationTimestamp: 42
+        )
+        microphoneDiagnostics.registerDroppedBuffers(2)
 
         let metadata = try await AudioFinalizer().finalize(
             session: session,
             diagnostics: CaptureSessionDiagnostics(
                 systemAudio: .empty,
-                microphone: diagnostics(
-                    fileName: "microphone.caf",
-                    channelCount: 1,
-                    presentationTimestamp: 42
-                )
+                microphone: microphoneDiagnostics
             )
         )
 
@@ -205,7 +207,8 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertEqual(metadata.timelineOrigin, 42)
         XCTAssertEqual(microphone.timelineOffsetSeconds, 0)
         XCTAssertEqual(microphone.sampleRate, 16_000)
-        XCTAssertTrue(metadata.warnings.isEmpty)
+        XCTAssertEqual(metadata.warnings.count, 1)
+        XCTAssertTrue(metadata.warnings[0].contains("dropped 2 audio buffers"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 

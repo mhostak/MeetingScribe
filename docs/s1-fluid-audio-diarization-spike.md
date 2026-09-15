@@ -1,18 +1,18 @@
 # S1 FluidAudio offline diarization spike
 
-Status: adapter and long-session offline run complete; labeled CZ/SK quality matrix pending
+Status: archival evidence. The `community-1` candidate failed the later production validation and its runtime, model controls, and editor were removed.
 
 Date: 2026-07-15
 
 ## Decision under evaluation
 
-The leading S1 candidate is the offline `community-1` pipeline in [FluidAudio v0.15.5](https://github.com/FluidInference/FluidAudio/releases/tag/v0.15.5), pinned exactly in `Package.swift` for the spike executable. It matches MeetingScribe's macOS 14 minimum, accepts file-backed audio, processes 16 kHz mono input, returns anonymous speaker clusters with timestamps, and can operate fully offline after the model is installed.
+This document records an evaluation of the offline `community-1` pipeline in [FluidAudio v0.15.5](https://github.com/FluidInference/FluidAudio/releases/tag/v0.15.5). It is not a description of the current app: the spike executable and production diarization path were removed after the candidate failed production validation.
 
 **Decision update (2026-07-15):** the completed long-session diarization run and pure Parakeet v3 comparison are sufficient to approve FluidAudio as the migration direction. Production default cutover remains conditional on the consented labeled fixture gate below. S1 introduces no speaker names, voiceprints, Calendar matching, or cross-meeting identity. The full staged change is documented in [the FluidAudio-only migration plan](fluid-audio-migration-plan.md).
 
 ## Isolation and privacy
 
-`MeetingScribeDiarizationSpike` is a SwiftPM-only executable. The Xcode application target does not link FluidAudio and the normal recording/transcription path does not invoke it.
+`MeetingScribeDiarizationSpike` was a SwiftPM-only executable. It is no longer present in the project.
 
 Network model access is disabled by default through `ModelHub.offlineMode`. A first model download requires the explicit `--allow-model-download` flag. The JSON report stores only the source file name and SHA-256 fingerprint, not its full path or audio content. The supplied fixture must be synthetic or explicitly consented.
 
@@ -42,7 +42,7 @@ The spike report records:
 
 The built-in evaluator uses 10 ms frames, a 250 ms reference collar, ignored overlapping reference speech, and an optimal one-to-one mapping between anonymous hypothesis and reference speaker labels. It separately reports missed speech, false alarm, speaker confusion, and total diarization error rate.
 
-## Running the spike
+## Historical spike procedure
 
 The first explicit model installation and run:
 

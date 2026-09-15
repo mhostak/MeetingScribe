@@ -23,6 +23,12 @@ final class OutputFolderStore {
                 bookmarkDataIsStale: &isStale
             ) {
                 if isStale {
+                    let didStart = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if didStart {
+                            url.stopAccessingSecurityScopedResource()
+                        }
+                    }
                     try? selectFolder(url)
                 }
                 return url

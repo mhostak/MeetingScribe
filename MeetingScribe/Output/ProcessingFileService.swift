@@ -3,8 +3,6 @@ import Foundation
 struct RecoveredProcessingArtifacts: Equatable, Sendable {
     let transcript: MergedTranscript
     let utteranceTranscript: ContinuousUtteranceTranscript?
-    let speakerDiarizationArtifact: SpeakerDiarizationArtifact?
-    let resolvedTranscript: ResolvedTranscript?
     let analysis: AIAnalysisArtifact?
 }
 
@@ -17,7 +15,6 @@ protocol ProcessingFileServicing: Sendable {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
         analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult
@@ -35,7 +32,6 @@ extension ProcessingFileServicing {
             session: session,
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            resolvedTranscript: nil,
             analysis: analysis,
             to: directoryURL
         )
@@ -51,7 +47,6 @@ extension ProcessingFileServicing {
             session: session,
             transcript: transcript,
             utteranceTranscript: nil,
-            resolvedTranscript: nil,
             analysis: analysis,
             to: directoryURL
         )
@@ -113,8 +108,6 @@ actor ProcessingFileService: ProcessingFileServicing {
         return RecoveredProcessingArtifacts(
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            speakerDiarizationArtifact: nil,
-            resolvedTranscript: nil,
             analysis: analysis
         )
     }
@@ -128,7 +121,6 @@ actor ProcessingFileService: ProcessingFileServicing {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
         analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
@@ -136,7 +128,6 @@ actor ProcessingFileService: ProcessingFileServicing {
             session: session,
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            resolvedTranscript: resolvedTranscript,
             analysis: analysis,
             to: directoryURL
         )

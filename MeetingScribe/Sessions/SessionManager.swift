@@ -81,7 +81,6 @@ actor SessionManager {
         microphoneAudio: AudioTrackMetadata? = nil,
         audioFinalization: AudioFinalizationMetadata? = nil,
         transcription: SessionTranscriptionMetadata? = nil,
-        diarization: SessionDiarizationMetadata? = nil,
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil
     ) throws -> RecordingSession {
@@ -95,7 +94,9 @@ actor SessionManager {
         session.metadata.microphoneAudio = microphoneAudio
         session.metadata.audioFinalization = audioFinalization
         session.metadata.transcription = transcription
-        session.metadata.diarization = diarization
+        // Older manifests may contain this compatibility field, but the
+        // retired diarization runtime never writes it for new processing.
+        session.metadata.diarization = nil
         session.metadata.analysis = analysis
         session.metadata.output = output
         if session.metadata.recovery?.status == .inProgress {
@@ -225,8 +226,12 @@ actor SessionManager {
         guard activeSession == nil else {
             throw SessionManagerError.sessionAlreadyActive
         }
-        let result = try scanForRecovery(now: now)
-        guard let candidate = result.candidates.first(where: { $0.id == id }) else {
+        try prepareStorage()
+        guard let candidate = recoveryScanner.candidate(
+            recordingsRoot: recordingsRoot,
+            id: id,
+            now: now
+        ) else {
             throw SessionRecoveryError.candidateNotFound
         }
         guard recoveryScanner.isRecoverable(candidate.session.metadata) else {
@@ -252,12 +257,26 @@ actor SessionManager {
         return session
     }
 
+    /// Reloads one visible recovery candidate after an attempted recovery,
+    /// without scanning every historical session directory.
+    func recoveryCandidate(id: String, now: Date = Date()) throws -> SessionRecoveryCandidate? {
+        guard activeSession == nil else {
+            throw SessionManagerError.sessionAlreadyActive
+        }
+        try prepareStorage()
+        return recoveryScanner.candidate(recordingsRoot: recordingsRoot, id: id, now: now)
+    }
+
     func closeRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
         guard activeSession == nil else {
             throw SessionManagerError.sessionAlreadyActive
         }
-        let result = try scanForRecovery(now: now)
-        guard let candidate = result.candidates.first(where: { $0.id == id }) else {
+        try prepareStorage()
+        guard let candidate = recoveryScanner.candidate(
+            recordingsRoot: recordingsRoot,
+            id: id,
+            now: now
+        ) else {
             throw SessionRecoveryError.candidateNotFound
         }
 
@@ -284,8 +303,11 @@ actor SessionManager {
         guard activeSession == nil else {
             throw SessionManagerError.sessionAlreadyActive
         }
-        let result = try scanForRecovery()
-        guard result.issues.contains(where: { $0.directoryName == directoryName }) else {
+        try prepareStorage()
+        guard recoveryScanner.issue(
+            recordingsRoot: recordingsRoot,
+            directoryName: directoryName
+        ) != nil else {
             throw SessionRecoveryError.issueNotFound
         }
         let standardizedRoot = recordingsRoot.standardizedFileURL

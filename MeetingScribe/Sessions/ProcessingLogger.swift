@@ -83,6 +83,12 @@ enum ProcessingLogAttribute: Sendable {
 actor ProcessingLogger {
     private let fileManager: FileManager
     private let now: @Sendable () -> Date
+    private let whitespaceRegex = try! NSRegularExpression(pattern: "[\\r\\n\\t]+")
+    private let bearerTokenRegex = try! NSRegularExpression(
+        pattern: "(?i)bearer\\s+[a-z0-9._-]+"
+    )
+    private let APIKeyRegex = try! NSRegularExpression(pattern: "sk-[a-zA-Z0-9_-]{8,}")
+    private var openLogHandle: (url: URL, handle: FileHandle)?
 
     init(
         fileManager: FileManager = .default,
@@ -115,28 +121,27 @@ actor ProcessingLogger {
 
         let url = session.processingLogURL
         if !fileManager.fileExists(atPath: url.path) {
+            closeHandle(for: url)
             try data.write(to: url, options: .atomic)
             return
         }
-        let handle = try FileHandle(forWritingTo: url)
-        defer { try? handle.close() }
+        let handle = try handle(for: url)
         try handle.seekToEnd()
         try handle.write(contentsOf: data)
     }
 
     private func sanitize(_ value: String, for session: RecordingSession) -> String {
-        var result = value
-            .replacingOccurrences(of: "[\\r\\n\\t]+", with: " ", options: .regularExpression)
-            .replacingOccurrences(
-                of: "(?i)bearer\\s+[a-z0-9._-]+",
-                with: "Bearer [REDACTED]",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: "sk-[a-zA-Z0-9_-]{8,}",
-                with: "[REDACTED]",
-                options: .regularExpression
-            )
+        var result = replacingMatches(
+            whitespaceRegex,
+            in: value,
+            with: " "
+        )
+        result = replacingMatches(
+            bearerTokenRegex,
+            in: result,
+            with: "Bearer [REDACTED]"
+        )
+        result = replacingMatches(APIKeyRegex, in: result, with: "[REDACTED]")
 
         let title = session.metadata.title
         let titleCandidates = [
@@ -160,6 +165,36 @@ actor ProcessingLogger {
             result = String(result.prefix(500)) + "…"
         }
         return result
+    }
+
+    private func handle(for url: URL) throws -> FileHandle {
+        if let openLogHandle, openLogHandle.url == url {
+            return openLogHandle.handle
+        }
+        if let openLogHandle {
+            try? openLogHandle.handle.close()
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        openLogHandle = (url, handle)
+        return handle
+    }
+
+    private func closeHandle(for url: URL) {
+        guard let openLogHandle, openLogHandle.url == url else { return }
+        try? openLogHandle.handle.close()
+        self.openLogHandle = nil
+    }
+
+    private func replacingMatches(
+        _ regex: NSRegularExpression,
+        in value: String,
+        with replacement: String
+    ) -> String {
+        regex.stringByReplacingMatches(
+            in: value,
+            range: NSRange(value.startIndex..., in: value),
+            withTemplate: replacement
+        )
     }
 }
 

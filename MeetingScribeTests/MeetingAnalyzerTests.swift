@@ -23,7 +23,7 @@ final class MeetingAnalyzerTests: XCTestCase {
             TranscriptSegment(
                 id: String(format: "segment-%06d", index),
                 source: index.isMultiple(of: 2) ? .system : .microphone,
-                speaker: index.isMultiple(of: 2) ? "Other" : "Martin",
+                speaker: index.isMultiple(of: 2) ? "Other" : "Speaker B",
                 start: Double(index * 10),
                 end: Double(index * 10 + 5),
                 language: "sk",
@@ -147,7 +147,7 @@ final class MeetingAnalyzerTests: XCTestCase {
             TranscriptSegment(
                 id: "segment-\(index)",
                 source: .microphone,
-                speaker: "Martin",
+                speaker: "Speaker B",
                 start: Double(index),
                 end: Double(index + 1),
                 language: "sk",
@@ -227,9 +227,9 @@ final class MeetingAnalyzerTests: XCTestCase {
 
         let optedInRequests = await optedInProvider.requests
         let optedOutRequests = await optedOutProvider.requests
-        XCTAssertTrue(optedInRequests[0].content.contains("system = remote participant(s): Jana Nováková"))
+        XCTAssertTrue(optedInRequests[0].content.contains("system = remote participant(s): Participant One"))
         XCTAssertTrue(optedInRequests[0].content.contains("microphone = recording user (on-site)"))
-        XCTAssertFalse(optedOutRequests[0].content.contains("Jana Nováková"))
+        XCTAssertFalse(optedOutRequests[0].content.contains("Participant One"))
     }
 
     func testIncludedCalendarDescriptionIsProvidedAsAnalysisContext() async throws {
@@ -339,7 +339,7 @@ final class MeetingAnalyzerTests: XCTestCase {
                     endsAt: Date().addingTimeInterval(3_600),
                     selectedAt: Date(),
                     participants: [
-                        ConfirmedParticipant(displayName: "Jana Nováková"),
+                        ConfirmedParticipant(displayName: "Participant One"),
                     ],
                     shareParticipantNamesWithAnalysis: shareParticipantNamesWithAnalysis ?? false,
                     eventDescription: eventDescription

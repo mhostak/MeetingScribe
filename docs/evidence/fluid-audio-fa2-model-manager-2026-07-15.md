@@ -1,5 +1,7 @@
 # FluidAudio FA2 model-manager evidence — 2026-07-15
 
+Status: archival evidence. The diarization bundle and its Settings row described below were later removed; the current app manages only the Parakeet ASR bundle.
+
 This record covers the FA2 production model manager and Settings implementation. It intentionally contains no meeting audio, transcript text, participant names, or Calendar data.
 
 ## Pinned inputs
@@ -25,7 +27,7 @@ The application constructs download URLs from the immutable revision rather than
 - repair that reuses valid installed files and fetches only missing or invalid files;
 - repeated offline validation with `ModelHub.offlineMode` enabled;
 - explicit, model-scoped deletion;
-- separate localized Parakeet and diarization rows in Settings with Download, Cancel, Verify and repair, Import, and Delete actions.
+- separate localized Parakeet and diarization rows in Settings with Download, Cancel, Verify and repair, Import, and Delete actions at the time of this evaluation.
 
 The normal Settings status refresh intentionally checks the manifest and expected byte sizes so opening Settings does not repeatedly hash roughly 500 MiB. The explicit **Verify and repair** action performs the full cryptographic and FluidAudio load validation.
 
@@ -56,13 +58,11 @@ Final validation after the implementation, project wiring, localization, and doc
 
 ## Signed-build evidence
 
-Build configuration: Debug, manual signing, Team ID `H8LTS9AT3K`, required identity SHA-1 `4EC5B29E0C39402AE3F49126C45C43B9C9987EB4`.
+Build configuration: Debug, manual signing with the maintainer's locally configured Apple Development team and certificate.
 
 - app: `/private/tmp/MeetingScribe-current-signed-derivedData/Build/Products/Debug/MeetingScribe.app`;
 - `codesign --verify --deep --strict --verbose=4`: valid on disk and satisfies its Designated Requirement;
-- authority: `Apple Development: Martin Hošták (4S99KT7V55)`;
-- Team identifier: `H8LTS9AT3K`;
-- extracted leaf-certificate SHA-1: `4E:C5:B2:9E:0C:39:40:2A:E3:F4:91:26:C4:5C:43:B9:C9:98:7E:B4`.
+- authority, Team identifier, and leaf-certificate fingerprint: verified against the maintainer's then-local signing configuration; values intentionally omitted from the public record.
 
 The build was verified but not launched because this step does not replace or exercise the user's currently installed/running application.
 

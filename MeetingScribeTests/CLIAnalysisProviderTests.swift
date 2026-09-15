@@ -252,6 +252,56 @@ final class CLIAnalysisProviderTests: XCTestCase {
         XCTAssertEqual(version, "fake-codex 1.0")
     }
 
+    func testProductionRunnerExecutesClaudeWithRequiredSafetyArguments() async throws {
+        let fixture = try makeExecutableFixture(script: """
+        #!/bin/sh
+        saw_print=0
+        saw_input=0
+        saw_output=0
+        saw_schema=0
+        saw_no_session=0
+        saw_tools=0
+        saw_permission=0
+        saw_disable_slash=0
+        saw_strict_mcp=0
+        saw_mcp_config=0
+        saw_setting_sources=0
+        saw_model=0
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --print) saw_print=1 ;;
+            --input-format) shift; [ "$1" = text ] || exit 64; saw_input=1 ;;
+            --output-format) shift; [ "$1" = json ] || exit 64; saw_output=1 ;;
+            --json-schema) shift; [ -n "$1" ] || exit 64; saw_schema=1 ;;
+            --no-session-persistence) saw_no_session=1 ;;
+            --tools) shift; [ -z "$1" ] || exit 64; saw_tools=1 ;;
+            --permission-mode) shift; [ "$1" = dontAsk ] || exit 64; saw_permission=1 ;;
+            --disable-slash-commands) saw_disable_slash=1 ;;
+            --strict-mcp-config) saw_strict_mcp=1 ;;
+            --mcp-config) shift; [ "$1" = '{"mcpServers":{}}' ] || exit 64; saw_mcp_config=1 ;;
+            --setting-sources) shift; [ -z "$1" ] || exit 64; saw_setting_sources=1 ;;
+            --model) shift; [ "$1" = sonnet-test ] || exit 64; saw_model=1 ;;
+            *) exit 64 ;;
+          esac
+          shift
+        done
+        [ "$saw_print$saw_input$saw_output$saw_schema$saw_no_session$saw_tools$saw_permission$saw_disable_slash$saw_strict_mcp$saw_mcp_config$saw_setting_sources$saw_model" = 111111111111 ] || exit 64
+        printf '%s' '{"structured_output":{"markdown":"## Fake Claude\\n\\nCompleted."}}'
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let provider = CLIAnalysisProvider(
+            tool: .claude,
+            executableURL: fixture.executable,
+            model: "sonnet-test",
+            runner: AnalysisProcessRunner(),
+            requestTimeout: .seconds(5)
+        )
+
+        let response = try await provider.analyze(makeRequest())
+
+        XCTAssertEqual(response.markdown, "## Fake Claude\n\nCompleted.")
+    }
+
     func testProductionRunnerTerminatesTimedOutProcess() async throws {
         let fixture = try makeExecutableFixture(script: """
         #!/bin/sh

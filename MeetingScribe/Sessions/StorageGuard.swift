@@ -34,7 +34,11 @@ struct StorageGuard: Sendable {
         minimumBytes: Int64 = StorageGuard.defaultMinimumBytes
     ) {
         self.provider = provider
-        self.minimumBytes = max(1, minimumBytes)
+        // The Settings UI has always offered 1 GiB as its lowest safe value.
+        // Keep that invariant at the boundary that actually decides whether a
+        // recording may start, so a stale or manually edited preference cannot
+        // reduce the protection to a single byte.
+        self.minimumBytes = max(Self.defaultMinimumBytes, minimumBytes)
     }
 
     func status(at url: URL) throws -> StorageStatus {

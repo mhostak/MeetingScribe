@@ -32,7 +32,7 @@ final class TranscriptModelsTests: XCTestCase {
                 TranscriptSegment(
                     id: "microphone-000001",
                     source: .microphone,
-                    speaker: "Martin",
+                    speaker: "Speaker B",
                     start: 2.5,
                     end: 8.75,
                     language: "sk",
@@ -65,7 +65,7 @@ final class TranscriptModelsTests: XCTestCase {
     func testMergedTranscriptJSONRoundTripPreservesTrackMetadata() throws {
         let transcript = MergedTranscript(
             sessionID: "session-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             completedAt: Date(timeIntervalSince1970: 1_725_876_700),
             tracks: [
                 MergedTranscriptTrack(
@@ -316,7 +316,7 @@ final class TranscriptModelsTests: XCTestCase {
         TranscriptSegment(
             id: id,
             source: source,
-            speaker: source == .system ? "Other" : "Martin",
+            speaker: source == .system ? "Other" : "Speaker B",
             start: start,
             end: end,
             language: "sk",

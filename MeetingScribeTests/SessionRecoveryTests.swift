@@ -538,5 +538,5 @@ final class SessionRecoveryTests: XCTestCase {
 }
 
 private struct RecoveryCapacityProvider: StorageCapacityProviding {
-    func availableCapacity(at url: URL) throws -> Int64 { 1_000_000 }
+    func availableCapacity(at url: URL) throws -> Int64 { 2_000_000_000 }
 }

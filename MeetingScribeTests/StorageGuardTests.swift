@@ -5,14 +5,17 @@ import XCTest
 final class StorageGuardTests: XCTestCase {
     func testStorageGuardRejectsCapacityBelowThreshold() throws {
         let guardService = StorageGuard(
-            provider: FixedCapacityProvider(capacity: 99),
-            minimumBytes: 100
+            provider: FixedCapacityProvider(capacity: StorageGuard.defaultMinimumBytes - 1),
+            minimumBytes: 1
         )
 
         XCTAssertThrowsError(try guardService.requireCapacity(at: URL(fileURLWithPath: "/tmp"))) {
             XCTAssertEqual(
                 $0 as? StorageGuardError,
-                .insufficientCapacity(availableBytes: 99, requiredBytes: 100)
+                .insufficientCapacity(
+                    availableBytes: StorageGuard.defaultMinimumBytes - 1,
+                    requiredBytes: StorageGuard.defaultMinimumBytes
+                )
             )
         }
     }
@@ -24,8 +27,8 @@ final class StorageGuardTests: XCTestCase {
         let manager = SessionManager(
             recordingsRoot: root,
             storageGuard: StorageGuard(
-                provider: FixedCapacityProvider(capacity: 10),
-                minimumBytes: 100
+                provider: FixedCapacityProvider(capacity: StorageGuard.defaultMinimumBytes - 1),
+                minimumBytes: 1
             )
         )
 
@@ -35,11 +38,25 @@ final class StorageGuardTests: XCTestCase {
         } catch {
             XCTAssertEqual(
                 error as? StorageGuardError,
-                .insufficientCapacity(availableBytes: 10, requiredBytes: 100)
+                .insufficientCapacity(
+                    availableBytes: StorageGuard.defaultMinimumBytes - 1,
+                    requiredBytes: StorageGuard.defaultMinimumBytes
+                )
             )
         }
         let children = try FileManager.default.contentsOfDirectory(atPath: root.path)
         XCTAssertTrue(children.isEmpty)
+    }
+
+    @MainActor
+    func testApplicationSettingsClampPersistedAndIncomingStorageValuesToOneGiB() {
+        let suiteName = "MeetingScribeStorageGuardTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = ApplicationSettingsStore(defaults: defaults)
+
+        store.setMinimumStorageBytes(1)
+        XCTAssertEqual(store.minimumStorageBytes, StorageGuard.defaultMinimumBytes)
     }
 }
 

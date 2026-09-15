@@ -32,6 +32,16 @@ struct RecordingsNavigationRequest: Equatable, Sendable {
     let occurredAt: Date
 }
 
+/// Model installation can report byte-level progress many times per second.
+/// Keeping it separate prevents those updates from invalidating every window
+/// that needs general application state.
+@MainActor
+final class FluidAudioModelState: ObservableObject {
+    @Published var asrStatus: FluidAudioModelStatus = .missing
+    @Published var asrDownloadProgress: FluidAudioModelDownloadProgress?
+    @Published var isInstallingASRModel = false
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published private(set) var status: AppStatus = .idle
@@ -43,12 +53,7 @@ final class AppState: ObservableObject {
     var captureDiagnostics: CaptureSessionDiagnostics {
         captureDiagnosticsModel.snapshot
     }
-    @Published private(set) var fluidAudioASRModelStatus: FluidAudioModelStatus = .missing
-    @Published private(set) var fluidAudioASRDownloadProgress: FluidAudioModelDownloadProgress?
-    @Published private(set) var isInstallingFluidAudioASRModel = false
-    @Published private(set) var fluidAudioDiarizationModelStatus: FluidAudioModelStatus = .missing
-    @Published private(set) var fluidAudioDiarizationDownloadProgress: FluidAudioModelDownloadProgress?
-    @Published private(set) var isInstallingFluidAudioDiarizationModel = false
+    let fluidAudioModelState = FluidAudioModelState()
     @Published private(set) var legacyModelCleanupReport = LegacyModelCleanupReport(
         fileCount: 0,
         totalBytes: 0
@@ -240,7 +245,7 @@ final class AppState: ObservableObject {
         }
         let descriptor = FluidAudioModelDescriptor.parakeetV3
         let modelStatus = await fluidAudioModelManager.status(for: descriptor)
-        fluidAudioASRModelStatus = modelStatus
+        fluidAudioModelState.asrStatus = modelStatus
         guard case let .ready(bundleURL, _) = modelStatus else {
             if case .missing = modelStatus {
                 lastError = localized(.fluidAudioTranscriptionModelRequired)
@@ -495,6 +500,7 @@ final class AppState: ObservableObject {
             resetProcessingProgress()
 
             let session = try await sessionManager.beginRecovery(id: candidate.id)
+            removeRecoveryCandidate(id: candidate.id)
             currentSession = session
             try transition(to: .recording)
             try transition(to: .stopping)
@@ -514,9 +520,7 @@ final class AppState: ObservableObject {
                     transcription: recoveredTranscriptionOutcome(
                         session: session,
                         transcript: recoveredArtifacts.transcript,
-                        utteranceTranscript: recoveredArtifacts.utteranceTranscript,
-                        diarizationMetadata: nil,
-                        resolvedTranscript: nil
+                        utteranceTranscript: recoveredArtifacts.utteranceTranscript
                     ),
                     recoveredAnalysis: recoveredAnalysisOutcome(
                         session: session,
@@ -532,7 +536,6 @@ final class AppState: ObservableObject {
                     recordingEndedAt: candidate.suggestedEndAt
                 )
             }
-            await refreshRecoveryCandidates()
         } catch {
             if await sessionManager.currentSession() != nil {
                 let failed = try? await sessionManager.failSession(reason: error.localizedDescription)
@@ -540,7 +543,7 @@ final class AppState: ObservableObject {
             }
             currentSession = nil
             setFailure(error)
-            await refreshRecoveryCandidates()
+            await refreshRecoveryCandidate(id: candidate.id)
         }
     }
 
@@ -549,7 +552,7 @@ final class AppState: ObservableObject {
             let closed = try await sessionManager.closeRecovery(id: candidate.id)
             lastCompletedSession = closed
             try? await processingLogger.log(.recoveryClosed, for: closed)
-            await refreshRecoveryCandidates()
+            removeRecoveryCandidate(id: candidate.id)
             lastError = nil
         } catch {
             lastError = localized(error)
@@ -561,7 +564,7 @@ final class AppState: ObservableObject {
             try await sessionManager.closeRecoveryIssue(
                 directoryName: issue.directoryName
             )
-            await refreshRecoveryCandidates()
+            recoveryIssues.removeAll { $0.id == issue.id }
             lastError = nil
         } catch {
             lastError = localized(error)
@@ -731,8 +734,8 @@ final class AppState: ObservableObject {
 
     func chooseAnalysisExecutable() {
         let panel = NSOpenPanel()
-        panel.title = "Choose \(selectedAnalysisTool.displayName) executable"
-        panel.prompt = "Choose"
+        panel.title = localized(.chooseAnalysisExecutableTitle(selectedAnalysisTool.displayName))
+        panel.prompt = localized(.choose)
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
@@ -1161,12 +1164,8 @@ final class AppState: ObservableObject {
         .parakeetV3
     }
 
-    var fluidAudioDiarizationDescriptor: FluidAudioModelDescriptor {
-        .speakerDiarization
-    }
-
     func refreshFluidAudioModelStatuses() async {
-        fluidAudioASRModelStatus = localizedFluidAudioStatus(
+        fluidAudioModelState.asrStatus = localizedFluidAudioStatus(
             await fluidAudioModelManager.status(for: fluidAudioASRDescriptor)
         )
     }
@@ -1297,9 +1296,7 @@ final class AppState: ObservableObject {
         )
         switch kind {
         case .transcription:
-            fluidAudioASRModelStatus = status
-        case .diarization:
-            fluidAudioDiarizationModelStatus = status
+            fluidAudioModelState.asrStatus = status
         }
     }
 
@@ -1308,7 +1305,6 @@ final class AppState: ObservableObject {
     ) -> FluidAudioModelDescriptor {
         switch kind {
         case .transcription: return fluidAudioASRDescriptor
-        case .diarization: return fluidAudioDiarizationDescriptor
         }
     }
 
@@ -1318,9 +1314,7 @@ final class AppState: ObservableObject {
     ) {
         switch kind {
         case .transcription:
-            isInstallingFluidAudioASRModel = installing
-        case .diarization:
-            isInstallingFluidAudioDiarizationModel = installing
+            fluidAudioModelState.isInstallingASRModel = installing
         }
     }
 
@@ -1330,9 +1324,7 @@ final class AppState: ObservableObject {
     ) {
         switch kind {
         case .transcription:
-            fluidAudioASRDownloadProgress = progress
-        case .diarization:
-            fluidAudioDiarizationDownloadProgress = progress
+            fluidAudioModelState.asrDownloadProgress = progress
         }
     }
 
@@ -1358,6 +1350,26 @@ final class AppState: ObservableObject {
             recoveryCandidates = []
             recoveryIssues = []
             lastError = localized(.recoveryScan(localized(error)))
+        }
+    }
+
+    private func removeRecoveryCandidate(id: String) {
+        recoveryCandidates.removeAll { $0.id == id }
+    }
+
+    private func refreshRecoveryCandidate(id: String) async {
+        do {
+            if let candidate = try await sessionManager.recoveryCandidate(id: id) {
+                if let index = recoveryCandidates.firstIndex(where: { $0.id == id }) {
+                    recoveryCandidates[index] = candidate
+                } else {
+                    recoveryCandidates.append(candidate)
+                }
+            } else {
+                removeRecoveryCandidate(id: id)
+            }
+        } catch {
+            // The original recovery error remains the actionable error.
         }
     }
 
@@ -1476,19 +1488,6 @@ final class AppState: ObservableObject {
                 )
             }
 
-            if let diarization = transcription.diarizationMetadata {
-                try? await processingLogger.log(
-                    diarization.status == .completed
-                        ? .diarizationCompleted
-                        : .diarizationFailed,
-                    for: session,
-                    attributes: [
-                        .model(diarization.model),
-                        .segmentCount(diarization.segmentCount ?? 0),
-                    ]
-                )
-            }
-
             let analysis: AnalysisOutcome
             if let recoveredAnalysis {
                 analysis = recoveredAnalysis
@@ -1523,7 +1522,6 @@ final class AppState: ObservableObject {
                 session: exportSession,
                 transcript: transcription.mergedTranscript,
                 utteranceTranscript: transcription.utteranceTranscript,
-                resolvedTranscript: transcription.resolvedTranscript,
                 analysis: analysis.analysis
             )
             if let output {
@@ -1545,7 +1543,6 @@ final class AppState: ObservableObject {
                 microphoneAudio: diagnostics.microphone.sessionMetadata,
                 audioFinalization: finalization,
                 transcription: transcription.metadata,
-                diarization: transcription.diarizationMetadata,
                 analysis: analysis.metadata,
                 output: output
             )
@@ -1561,7 +1558,6 @@ final class AppState: ObservableObject {
                 try? await processingLogger.log(.recoveryCompleted, for: completedSession)
             }
             try transition(to: .completed)
-            await refreshRecoveryCandidates()
             await runAutomaticRecordingAudioCleanup()
         } catch {
             if await sessionManager.currentSession() != nil {
@@ -1631,9 +1627,7 @@ final class AppState: ObservableObject {
     private func recoveredTranscriptionOutcome(
         session: RecordingSession,
         transcript: MergedTranscript,
-        utteranceTranscript: ContinuousUtteranceTranscript?,
-        diarizationMetadata: SessionDiarizationMetadata?,
-        resolvedTranscript: ResolvedTranscript?
+        utteranceTranscript: ContinuousUtteranceTranscript?
     ) -> TranscriptionOutcome {
         let metadata = session.metadata.transcription.flatMap {
             $0.status == .completed ? $0 : nil
@@ -1651,9 +1645,7 @@ final class AppState: ObservableObject {
         return TranscriptionOutcome(
             metadata: metadata,
             mergedTranscript: transcript,
-            utteranceTranscript: utteranceTranscript,
-            diarizationMetadata: diarizationMetadata,
-            resolvedTranscript: resolvedTranscript
+            utteranceTranscript: utteranceTranscript
         )
     }
 
@@ -1731,7 +1723,7 @@ final class AppState: ObservableObject {
             descriptor: descriptor
         )
         let modelStatus = await fluidAudioModelManager.status(for: descriptor)
-        fluidAudioASRModelStatus = modelStatus
+        fluidAudioModelState.asrStatus = modelStatus
 
         guard case let .ready(bundleURL, _) = modelStatus else {
             let reason: String
@@ -1775,9 +1767,7 @@ final class AppState: ObservableObject {
             return TranscriptionOutcome(
                 metadata: result.metadata,
                 mergedTranscript: result.mergedTranscript,
-                utteranceTranscript: result.utteranceTranscript,
-                diarizationMetadata: result.diarizationMetadata,
-                resolvedTranscript: result.resolvedTranscript
+                utteranceTranscript: result.utteranceTranscript
             )
         } catch {
             lastError = localized(.recordingSavedTranscription(localized(error)))
@@ -1802,7 +1792,6 @@ final class AppState: ObservableObject {
         session: RecordingSession,
         transcript: MergedTranscript?,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
         analysis: AIAnalysisArtifact?
     ) async -> SessionOutputMetadata? {
         guard let transcript else { return nil }
@@ -1815,7 +1804,6 @@ final class AppState: ObservableObject {
                     session: session.metadata,
                     transcript: transcript,
                     utteranceTranscript: utteranceTranscript,
-                    resolvedTranscript: resolvedTranscript,
                     analysis: analysis,
                     to: destination
                 )
@@ -1961,7 +1949,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func localized(_ message: AppUserMessage) -> String {
+    func localized(_ message: AppUserMessage) -> String {
         AppLocalization.message(message, language: selectedAppLanguage)
     }
 
@@ -2133,21 +2121,15 @@ private struct TranscriptionOutcome: Sendable {
     let metadata: SessionTranscriptionMetadata
     let mergedTranscript: MergedTranscript?
     let utteranceTranscript: ContinuousUtteranceTranscript?
-    let diarizationMetadata: SessionDiarizationMetadata?
-    let resolvedTranscript: ResolvedTranscript?
 
     init(
         metadata: SessionTranscriptionMetadata,
         mergedTranscript: MergedTranscript?,
-        utteranceTranscript: ContinuousUtteranceTranscript? = nil,
-        diarizationMetadata: SessionDiarizationMetadata? = nil,
-        resolvedTranscript: ResolvedTranscript? = nil
+        utteranceTranscript: ContinuousUtteranceTranscript? = nil
     ) {
         self.metadata = metadata
         self.mergedTranscript = mergedTranscript
         self.utteranceTranscript = utteranceTranscript
-        self.diarizationMetadata = diarizationMetadata
-        self.resolvedTranscript = resolvedTranscript
     }
 }
 

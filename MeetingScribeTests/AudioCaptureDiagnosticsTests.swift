@@ -65,6 +65,21 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
         XCTAssertNil(diagnostics.lastPresentationTimestamp)
     }
 
+    func testDroppedBuffersAreRecordedSeparatelyFromWrittenBuffers() {
+        var diagnostics = AudioCaptureDiagnostics(startedAt: Date())
+
+        diagnostics.registerBuffer(
+            frameCount: 160,
+            sampleRate: 16_000,
+            channelCount: 1,
+            presentationTimestamp: 0
+        )
+        diagnostics.registerDroppedBuffers(3)
+
+        XCTAssertEqual(diagnostics.bufferCount, 1)
+        XCTAssertEqual(diagnostics.droppedBufferCount, 3)
+    }
+
     func testRegisterBufferKeepsBoundedLiveAudioLevelHistory() throws {
         let receivedAt = Date(timeIntervalSince1970: 1_000)
         var diagnostics = AudioCaptureDiagnostics(startedAt: receivedAt)

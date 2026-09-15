@@ -6,6 +6,8 @@ import ScreenCaptureKit
 final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendable {
     private struct State {
         var isCapturing = false
+        var isStarting = false
+        var stream: SCStream?
         var writer: AudioFileWriter?
         var diagnostics = AudioCaptureDiagnostics.empty
     }
@@ -15,15 +17,19 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         qos: .userInitiated
     )
     private var state = State()
-    private var stream: SCStream?
 
     func start(outputURL: URL) async throws {
-        let isAlreadyCapturing = callbackQueue.sync { state.isCapturing }
-        guard !isAlreadyCapturing else {
+        let reservedStart = callbackQueue.sync {
+            guard !state.isCapturing, !state.isStarting else { return false }
+            state.isStarting = true
+            return true
+        }
+        guard reservedStart else {
             throw AudioCaptureServiceError.alreadyCapturing
         }
 
         guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
+            callbackQueue.sync { state.isStarting = false }
             throw AudioCaptureServiceError.screenRecordingPermissionDenied
         }
 
@@ -34,9 +40,11 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
                 onScreenWindowsOnly: false
             )
         } catch {
+            callbackQueue.sync { state.isStarting = false }
             throw Self.startError(for: error)
         }
         guard let display = preferredDisplay(from: content.displays) else {
+            callbackQueue.sync { state.isStarting = false }
             throw AudioCaptureServiceError.noDisplayAvailable
         }
 
@@ -47,11 +55,18 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         )
         let configuration = makeConfiguration()
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: callbackQueue)
+        do {
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: callbackQueue)
+        } catch {
+            callbackQueue.sync { state.isStarting = false }
+            throw error
+        }
 
         callbackQueue.sync {
             state = State(
                 isCapturing: true,
+                isStarting: false,
+                stream: stream,
                 writer: AudioFileWriter(outputURL: outputURL),
                 diagnostics: AudioCaptureDiagnostics(
                     fileName: outputURL.lastPathComponent,
@@ -59,8 +74,6 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
                 )
             )
         }
-        self.stream = stream
-
         do {
             try await stream.startCapture()
         } catch {
@@ -68,15 +81,16 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
             callbackQueue.sync {
                 finishWriter()
                 state.isCapturing = false
+                state.isStarting = false
+                state.stream = nil
                 state.diagnostics.failureReason = startError.localizedDescription
             }
-            self.stream = nil
             throw startError
         }
     }
 
     func stop() async -> AudioCaptureDiagnostics {
-        guard let stream else {
+        guard let stream = callbackQueue.sync(execute: { state.stream }) else {
             return callbackQueue.sync { state.diagnostics }
         }
 
@@ -90,10 +104,11 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
             }
         }
 
-        self.stream = nil
         return callbackQueue.sync {
+            guard state.stream === stream else { return state.diagnostics }
             finishWriter()
             state.isCapturing = false
+            state.stream = nil
             return state.diagnostics
         }
     }
@@ -192,6 +207,7 @@ extension SystemAudioCapture: SCStreamDelegate {
             }
             self.finishWriter()
             self.state.isCapturing = false
+            self.state.stream = nil
         }
     }
 }

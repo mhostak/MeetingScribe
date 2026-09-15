@@ -3,8 +3,16 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var appState: AppState
+    @ObservedObject private var fluidAudioModelState: FluidAudioModelState
     @State private var pendingAudioRetentionPolicy: AudioRetentionPolicy?
     @State private var isShowingLegacyModelDeletionWarning = false
+
+    init(appState: AppState) {
+        self.appState = appState
+        _fluidAudioModelState = ObservedObject(
+            wrappedValue: appState.fluidAudioModelState
+        )
+    }
 
     var body: some View {
         TabView(selection: $appState.selectedSettingsSection) {
@@ -128,9 +136,9 @@ struct SettingsView: View {
             Section("Transcription model") {
                 fluidAudioModelControls(
                     descriptor: appState.fluidAudioASRDescriptor,
-                    status: appState.fluidAudioASRModelStatus,
-                    progress: appState.fluidAudioASRDownloadProgress,
-                    isInstalling: appState.isInstallingFluidAudioASRModel,
+                    status: fluidAudioModelState.asrStatus,
+                    progress: fluidAudioModelState.asrDownloadProgress,
+                    isInstalling: fluidAudioModelState.isInstallingASRModel,
                     kind: .transcription
                 )
             }
@@ -282,7 +290,7 @@ struct SettingsView: View {
         settingsForm {
             Section("Markdown destination") {
                 LabeledContent("Folder") {
-                    Text(LocalizedStringKey(appState.outputFolderDescription))
+                    Text(verbatim: appState.outputFolderDescription)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .truncationMode(.middle)
@@ -582,13 +590,13 @@ struct SettingsView: View {
 
     private var analysisToolStatusText: String {
         switch appState.analysisToolStatus {
-        case .unknown: return String(localized: "Availability has not been checked")
-        case .unavailable: return String(localized: "Executable not found")
+        case .unknown: return appState.localized(.analysisAvailabilityNotChecked)
+        case .unavailable: return appState.localized(.analysisExecutableNotFound)
         case let .available(path, version):
             return [version, path].compactMap { $0 }.joined(separator: " — ")
         case let .authenticationRequired(path, version, _):
             let toolDescription = [version, path].compactMap { $0 }.joined(separator: " — ")
-            return "\(String(localized: "Authentication required")) — \(toolDescription)"
+            return "\(appState.localized(.analysisAuthenticationRequired)) — \(toolDescription)"
         case let .failed(path, reason): return "\(path) — \(reason)"
         }
     }

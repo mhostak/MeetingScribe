@@ -87,8 +87,62 @@ private final class AVAudioEngineAdapter: MicrophoneAudioEngine {
 }
 
 final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
+    private static let tapFrameCapacity: AVAudioFrameCount = 8_192
+    private static let tapBufferPoolSize = 8
+
+    private final class PCMBufferPool: @unchecked Sendable {
+        private let lock = NSLock()
+        private var available: [AVAudioPCMBuffer]
+        private var droppedBufferCount = 0
+
+        init?(
+            format: AVAudioFormat,
+            frameCapacity: AVAudioFrameCount,
+            count: Int
+        ) {
+            var buffers: [AVAudioPCMBuffer] = []
+            for _ in 0..<count {
+                guard let buffer = AVAudioPCMBuffer(
+                    pcmFormat: format,
+                    frameCapacity: frameCapacity
+                ) else {
+                    return nil
+                }
+                buffers.append(buffer)
+            }
+            available = buffers
+        }
+
+        func take() -> AVAudioPCMBuffer? {
+            lock.lock()
+            defer { lock.unlock() }
+            return available.popLast()
+        }
+
+        func recycle(_ buffer: AVAudioPCMBuffer) {
+            lock.lock()
+            available.append(buffer)
+            lock.unlock()
+        }
+
+        func registerDroppedBuffer() {
+            lock.lock()
+            droppedBufferCount += 1
+            lock.unlock()
+        }
+
+        func takeDroppedBufferCount() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            let count = droppedBufferCount
+            droppedBufferCount = 0
+            return count
+        }
+    }
+
     private struct TransferredPCMBuffer: @unchecked Sendable {
         let value: AVAudioPCMBuffer
+        let pool: PCMBufferPool
     }
 
     private struct State {
@@ -98,6 +152,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         var tapInstalled = false
         var configurationRecoveryScheduled = false
         var configurationRecoveryAttempts = 0
+        var bufferPools: [PCMBufferPool] = []
         var captureGeneration: UUID?
         var startupVerificationInProgress = false
         var configurationChangePendingDuringStartup = false
@@ -112,6 +167,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         label: "com.martinhostak.MeetingScribe.microphone-audio",
         qos: .userInitiated
     )
+    private let writerQueueKey = DispatchSpecificKey<Void>()
     private var state = State()
     private var configurationObserver: NSObjectProtocol?
 
@@ -141,10 +197,14 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         self.notificationCenter = notificationCenter
         self.recoveryConfiguration = recoveryConfiguration
         self.permissionRequester = permissionRequester
-        observeConfigurationChanges(for: engine)
+        writerQueue.setSpecific(key: writerQueueKey, value: ())
+        writerQueue.sync {
+            observeConfigurationChanges(for: engine)
+        }
     }
 
     private func observeConfigurationChanges(for engine: any MicrophoneAudioEngine) {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
         if let configurationObserver {
             notificationCenter.removeObserver(configurationObserver)
         }
@@ -160,6 +220,16 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     deinit {
+        let removeObserver: () -> NSObjectProtocol? = {
+            defer { self.configurationObserver = nil }
+            return self.configurationObserver
+        }
+        let configurationObserver: NSObjectProtocol?
+        if DispatchQueue.getSpecific(key: writerQueueKey) != nil {
+            configurationObserver = removeObserver()
+        } else {
+            configurationObserver = writerQueue.sync(execute: removeObserver)
+        }
         if let configurationObserver {
             notificationCenter.removeObserver(configurationObserver)
         }
@@ -202,6 +272,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     func stop() async -> AudioCaptureDiagnostics {
         writerQueue.sync {
+            flushDroppedBufferDiagnostics()
             guard state.isCapturing else { return state.diagnostics }
 
             state.isCapturing = false
@@ -220,7 +291,10 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     func diagnostics() async -> AudioCaptureDiagnostics {
-        writerQueue.sync { state.diagnostics }
+        writerQueue.sync {
+            flushDroppedBufferDiagnostics()
+            return state.diagnostics
+        }
     }
 
     private func startAndVerify(generation: UUID) async throws {
@@ -442,17 +516,30 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         format: AVAudioFormat
     ) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
+        guard let pool = PCMBufferPool(
+            format: format,
+            frameCapacity: Self.tapFrameCapacity,
+            count: Self.tapBufferPoolSize
+        ) else {
+            state.diagnostics.failureReason = "Could not allocate microphone capture buffers."
+            return
+        }
+        state.bufferPools.append(pool)
         engine.installTap(format: format) { [weak self] buffer, time in
-            guard
-                let self,
-                let copiedBuffer = Self.copy(buffer)
-            else {
+            guard let self else { return }
+            guard let copiedBuffer = pool.take() else {
+                pool.registerDroppedBuffer()
+                return
+            }
+            guard Self.copy(buffer, into: copiedBuffer) else {
+                pool.recycle(copiedBuffer)
                 return
             }
 
             let timestamp = AudioClock.seconds(for: time)
-            let transferredBuffer = TransferredPCMBuffer(value: copiedBuffer)
+            let transferredBuffer = TransferredPCMBuffer(value: copiedBuffer, pool: pool)
             self.writerQueue.async { [weak self] in
+                defer { transferredBuffer.pool.recycle(transferredBuffer.value) }
                 self?.write(
                     transferredBuffer.value,
                     presentationTimestamp: timestamp
@@ -579,6 +666,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         presentationTimestamp: Double?
     ) {
         dispatchPrecondition(condition: .onQueue(writerQueue))
+        flushDroppedBufferDiagnostics()
         guard state.isCapturing, let writer = state.writer else { return }
 
         do {
@@ -605,27 +693,34 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         }
     }
 
-    private static func copy(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard source.frameLength > 0 else { return nil }
-        guard let copy = AVAudioPCMBuffer(
-            pcmFormat: source.format,
-            frameCapacity: source.frameLength
-        ) else {
-            return nil
+    private func flushDroppedBufferDiagnostics() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        for pool in state.bufferPools {
+            state.diagnostics.registerDroppedBuffers(pool.takeDroppedBufferCount())
+        }
+    }
+
+    private static func copy(
+        _ source: AVAudioPCMBuffer,
+        into destination: AVAudioPCMBuffer
+    ) -> Bool {
+        guard source.frameLength > 0,
+              source.frameLength <= destination.frameCapacity else {
+            return false
         }
 
-        copy.frameLength = source.frameLength
+        destination.frameLength = source.frameLength
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
-        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(destination.mutableAudioBufferList)
 
-        guard sourceBuffers.count == destinationBuffers.count else { return nil }
+        guard sourceBuffers.count == destinationBuffers.count else { return false }
 
         for index in sourceBuffers.indices {
             guard
                 let sourceData = sourceBuffers[index].mData,
                 let destinationData = destinationBuffers[index].mData
             else {
-                return nil
+                return false
             }
 
             let byteCount = Int(sourceBuffers[index].mDataByteSize)
@@ -633,6 +728,6 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
         }
 
-        return copy
+        return true
     }
 }

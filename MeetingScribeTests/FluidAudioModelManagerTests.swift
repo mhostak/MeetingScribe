@@ -20,17 +20,13 @@ final class FluidAudioModelManagerTests: XCTestCase {
 
     func testProductionDescriptorsPinRevisionAndEveryFileHash() {
         let asr = FluidAudioModelDescriptor.parakeetV3
-        let diarization = FluidAudioModelDescriptor.speakerDiarization
 
         XCTAssertEqual(asr.revision, "aed02740059203c4a87495924f685de3722ae9ce")
-        XCTAssertEqual(diarization.revision, "1ed7a662fdc7109e36d822db793ee6eebdaf8594")
         XCTAssertEqual(asr.files.count, 21)
-        XCTAssertEqual(diarization.files.count, 21)
-        XCTAssertTrue((asr.files + diarization.files).allSatisfy {
+        XCTAssertTrue(asr.files.allSatisfy {
             $0.sizeBytes > 0 && $0.sha256.count == 64
         })
         XCTAssertTrue(asr.sourceURL.absoluteString.contains(asr.revision))
-        XCTAssertTrue(diarization.sourceURL.absoluteString.contains(diarization.revision))
     }
 
     func testInstallVerifiesWritesManifestLoadsAndPromotesBundle() async throws {
@@ -224,7 +220,7 @@ final class FluidAudioModelManagerTests: XCTestCase {
 
     func testDeleteRemovesOnlySelectedBundle() async throws {
         let first = makeFixture(kind: .transcription, folder: "first")
-        let second = makeFixture(kind: .diarization, folder: "second")
+        let second = makeFixture(kind: .transcription, folder: "second")
         let downloader = StubFluidAudioDownloader(files: first.files.merging(second.files) { a, _ in a })
         let manager = FluidAudioModelManager(
             modelsRoot: temporaryRoot,
@@ -245,11 +241,10 @@ final class FluidAudioModelManagerTests: XCTestCase {
 
     func testImportsAndReloadsRealPinnedBundlesWhenPathsAreProvided() async throws {
         let environment = ProcessInfo.processInfo.environment
-        guard let asrPath = environment["MEETINGSCRIBE_FLUID_ASR_BUNDLE"],
-              let diarizationPath = environment["MEETINGSCRIBE_FLUID_DIARIZATION_BUNDLE"]
+        guard let asrPath = environment["MEETINGSCRIBE_FLUID_ASR_BUNDLE"]
         else {
             throw XCTSkip(
-                "Set MEETINGSCRIBE_FLUID_ASR_BUNDLE and MEETINGSCRIBE_FLUID_DIARIZATION_BUNDLE for the real offline load test."
+                "Set MEETINGSCRIBE_FLUID_ASR_BUNDLE for the real offline load test."
             )
         }
         let manager = FluidAudioModelManager(
@@ -261,18 +256,9 @@ final class FluidAudioModelManagerTests: XCTestCase {
             from: URL(fileURLWithPath: asrPath, isDirectory: true),
             as: .parakeetV3
         )
-        _ = try await manager.importBundle(
-            from: URL(fileURLWithPath: diarizationPath, isDirectory: true),
-            as: .speakerDiarization
-        )
-
         _ = try await manager.validateInstalledModel(.parakeetV3)
-        _ = try await manager.validateInstalledModel(.speakerDiarization)
         guard case .ready = await manager.status(for: .parakeetV3) else {
             return XCTFail("Real ASR bundle is not ready after offline reload")
-        }
-        guard case .ready = await manager.status(for: .speakerDiarization) else {
-            return XCTFail("Real diarization bundle is not ready after offline reload")
         }
     }
 

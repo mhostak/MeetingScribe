@@ -1,6 +1,6 @@
 # FluidAudio diarization release validation — 2026-07-16
 
-Status: failed; current `community-1` diarization rejected for production speaker identity and further implementation paused
+Status: failed; `community-1` diarization was rejected for production speaker identity and the feature was later permanently retired.
 
 This evidence contains aggregate measurements only. It includes no transcript text, participant names, email addresses, meeting title, Calendar identifiers, local audio paths, or audio content. Detailed source material remains local and was evaluated with participant consent.
 

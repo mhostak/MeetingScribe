@@ -93,7 +93,7 @@ final class CalendarIntegrationTests: XCTestCase {
         let suiteName = "CalendarAppStateDefaults-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
-        let participant = CalendarParticipantCandidate(id: "person-1", displayName: "Jana Nováková")
+        let participant = CalendarParticipantCandidate(id: "person-1", displayName: "Participant One")
         let event = CalendarEventCandidate(
             id: "event-1",
             title: "Calendar title",
@@ -121,7 +121,7 @@ final class CalendarIntegrationTests: XCTestCase {
 
         XCTAssertTrue(approved, "A valid event selection must succeed on the first confirmation")
         XCTAssertEqual(appState.meetingTitle, "Calendar title")
-        XCTAssertEqual(appState.pendingCalendarEvent?.participants.map(\.displayName), ["Jana Nováková"])
+        XCTAssertEqual(appState.pendingCalendarEvent?.participants.map(\.displayName), ["Participant One"])
         XCTAssertTrue(appState.pendingCalendarEvent?.shareParticipantNamesWithAnalysis ?? false)
         XCTAssertEqual(appState.pendingCalendarEvent?.eventDescription, "Agenda for the meeting.")
     }
@@ -191,7 +191,7 @@ final class CalendarIntegrationTests: XCTestCase {
             endsAt: Date(timeIntervalSince1970: 11_000),
             selectedAt: Date(timeIntervalSince1970: 9_500),
             participants: [
-                ConfirmedParticipant(displayName: "Jana Nováková"),
+                ConfirmedParticipant(displayName: "Participant One"),
             ],
             shareParticipantNamesWithAnalysis: false,
             eventDescription: "Discuss roadmap."
@@ -203,7 +203,7 @@ final class CalendarIntegrationTests: XCTestCase {
         XCTAssertFalse(json.localizedCaseInsensitiveContains("eventIdentifier"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("calendarIdentifier"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("location"))
-        XCTAssertTrue(json.contains("Jana Nováková"))
+        XCTAssertTrue(json.contains("Participant One"))
         XCTAssertTrue(json.contains("Discuss roadmap."))
     }
 

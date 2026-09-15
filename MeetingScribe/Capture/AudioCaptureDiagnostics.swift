@@ -27,6 +27,7 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
     var startedAt: Date?
     var lastBufferReceivedAt: Date?
     var bufferCount = 0
+    var droppedBufferCount = 0
     var totalFrames: Int64 = 0
     var sampleRate: Double?
     var channelCount: Int?
@@ -100,6 +101,10 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
             }
             lastPresentationTimestamp = presentationTimestamp
         }
+    }
+
+    mutating func registerDroppedBuffers(_ count: Int) {
+        droppedBufferCount += max(0, count)
     }
 
     func recentLiveAudioLevels(

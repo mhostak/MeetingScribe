@@ -14,14 +14,12 @@ struct MarkdownRenderer: Sendable {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
-        resolvedTranscript: ResolvedTranscript? = nil,
         analysis: AIAnalysisArtifact? = nil
     ) -> String {
         let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let renderedSegments = renderableSegments(
             transcript: transcript,
-            utteranceTranscript: utteranceTranscript,
-            resolvedTranscript: resolvedTranscript
+            utteranceTranscript: utteranceTranscript
         )
         let startedAt = session.startedAt ?? session.createdAt
         let endedAt = session.endedAt ?? transcript.completedAt
@@ -99,10 +97,8 @@ struct MarkdownRenderer: Sendable {
 
     private func renderableSegments(
         transcript: MergedTranscript,
-        utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?
+        utteranceTranscript: ContinuousUtteranceTranscript?
     ) -> [TranscriptSegment] {
-        _ = resolvedTranscript // Legacy input is deliberately ignored for source-based output.
         let sourceBlocks: ContinuousUtteranceTranscript
         if let utteranceTranscript,
            utteranceTranscript.sessionID == transcript.sessionID,
@@ -174,12 +170,21 @@ struct MarkdownRenderer: Sendable {
     }
 
     private func yamlQuoted(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\r\n", with: "\\n")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\n")
+        var escaped = ""
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x5C:
+                escaped += "\\\\"
+            case 0x22:
+                escaped += "\\\""
+            case 0x0A, 0x0D:
+                escaped += "\\n"
+            case 0x09, 0x00...0x08, 0x0B...0x1F, 0x7F:
+                escaped += String(format: "\\u%04X", scalar.value)
+            default:
+                escaped.unicodeScalars.append(scalar)
+            }
+        }
         return "\"\(escaped)\""
     }
 

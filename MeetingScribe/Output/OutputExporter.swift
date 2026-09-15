@@ -24,7 +24,6 @@ struct OutputExporter: Sendable {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
-        resolvedTranscript: ResolvedTranscript? = nil,
         analysis: AIAnalysisArtifact? = nil,
         to directoryURL: URL
     ) throws -> MarkdownExportResult {
@@ -43,38 +42,48 @@ struct OutputExporter: Sendable {
             startedAt: startedAt,
             template: session.resolvedOutputFileNameTemplate
         )
-        let outputURL = try availableURL(
-            preferredName: preferredName,
-            directoryURL: directoryURL
-        )
         let markdown = renderer.render(
             session: session,
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            resolvedTranscript: resolvedTranscript,
             analysis: analysis
         )
         guard let data = markdown.data(using: .utf8) else {
             throw OutputExportError.couldNotEncodeMarkdown
         }
-        try data.write(to: outputURL, options: .atomic)
+        let outputURL = try writeWithoutOverwriting(
+            data,
+            preferredName: preferredName,
+            directoryURL: directoryURL
+        )
         return MarkdownExportResult(fileURL: outputURL, exportedAt: now())
     }
 
-    private func availableURL(preferredName: String, directoryURL: URL) throws -> URL {
+    private func writeWithoutOverwriting(
+        _ data: Data,
+        preferredName: String,
+        directoryURL: URL
+    ) throws -> URL {
         let preferredURL = directoryURL.appendingPathComponent(preferredName)
-        guard FileManager.default.fileExists(atPath: preferredURL.path) else {
-            return preferredURL
-        }
-
         let baseName = preferredURL.deletingPathExtension().lastPathComponent
         let pathExtension = preferredURL.pathExtension
-        for suffix in 2...9_999 {
-            let candidate = directoryURL
-                .appendingPathComponent("\(baseName) (\(suffix))")
-                .appendingPathExtension(pathExtension)
-            if !FileManager.default.fileExists(atPath: candidate.path) {
+        for suffix in 1...9_999 {
+            let candidate: URL
+            if suffix == 1 {
+                candidate = preferredURL
+            } else {
+                candidate = directoryURL
+                    .appendingPathComponent("\(baseName) (\(suffix))")
+                    .appendingPathExtension(pathExtension)
+            }
+            do {
+                // This is an exclusive create, not an existence check followed
+                // by a write. A concurrent exporter can therefore only claim a
+                // different suffix and can never replace an existing note.
+                try data.write(to: candidate, options: .withoutOverwriting)
                 return candidate
+            } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                continue
             }
         }
         throw OutputExportError.couldNotCreateUniqueFileName

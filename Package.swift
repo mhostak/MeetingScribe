@@ -32,8 +32,7 @@ let package = Package(
                 "App/CalendarEventPickerView.swift",
                 "App/SettingsView.swift",
                 "App/RecordingsWindow.swift",
-                "App/RecordingsWindowModel.swift",
-                "App/SpeakerEditorView.swift"
+                "App/RecordingsWindowModel.swift"
             ]
         ),
         .testTarget(

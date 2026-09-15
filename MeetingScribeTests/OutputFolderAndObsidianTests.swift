@@ -47,7 +47,7 @@ final class OutputFolderAndObsidianTests: XCTestCase {
             .appendingPathComponent("2026", isDirectory: true)
         try FileManager.default.createDirectory(at: marker, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: meetings, withIntermediateDirectories: true)
-        let markdownURL = meetings.appendingPathComponent("SOFA weekly.md")
+        let markdownURL = meetings.appendingPathComponent("Project Alpha weekly.md")
 
         let service = ObsidianService()
         let openURL = try XCTUnwrap(service.openURL(for: markdownURL))
@@ -59,7 +59,7 @@ final class OutputFolderAndObsidianTests: XCTestCase {
         XCTAssertEqual(openURL.scheme, "obsidian")
         XCTAssertEqual(openURL.host, "open")
         XCTAssertEqual(query["vault"]!, temporaryRoot.lastPathComponent)
-        XCTAssertEqual(query["file"]!, "Meetings/2026/SOFA weekly.md")
+        XCTAssertEqual(query["file"]!, "Meetings/2026/Project Alpha weekly.md")
     }
 
     @MainActor

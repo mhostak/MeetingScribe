@@ -205,6 +205,23 @@ final class AudioFileWriterTests: XCTestCase {
         XCTAssertEqual(try AVAudioFile(forReading: outputURL).length, 16_000)
     }
 
+    func testRepairerReportsAChangedFileWhenOnlyAnOddTrailingByteWasRemoved() throws {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeRepairTrailingByte-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let writer = AudioFileWriter(outputURL: outputURL)
+        _ = try writer.write(makePCMBuffer(sampleRate: 16_000, channels: 1, frameCount: 100))
+        try writer.finish()
+
+        let handle = try FileHandle(forWritingTo: outputURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0x00]))
+        try handle.close()
+
+        XCTAssertTrue(try PCMRecordingFileRepairer().repairIfNeeded(at: outputURL))
+        XCTAssertEqual(try AVAudioFile(forReading: outputURL).length, 100)
+    }
+
     private func makePCMBuffer(
         sampleRate: Double,
         channels: AVAudioChannelCount,

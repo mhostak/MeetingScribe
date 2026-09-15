@@ -152,6 +152,93 @@ struct SessionRecoveryScanner {
         recoveryReason(for: metadata) != nil
     }
 
+    /// Loads one candidate selected by the user without decoding every
+    /// historical manifest again. The directory and manifest ID must agree so
+    /// this remains equivalent to selecting that item from `scan`.
+    func candidate(
+        recordingsRoot: URL,
+        id: String,
+        now: Date = Date()
+    ) -> SessionRecoveryCandidate? {
+        let root = recordingsRoot.standardizedFileURL
+        let directory = root.appendingPathComponent(id, isDirectory: true).standardizedFileURL
+        guard directory.deletingLastPathComponent() == root,
+              directory.lastPathComponent == id,
+              !fileManager.fileExists(atPath: directory.appendingPathComponent(
+                Self.closedIssueMarkerFileName,
+                isDirectory: false
+              ).path) else {
+            return nil
+        }
+
+        let manifestURL = directory.appendingPathComponent("session.json", isDirectory: false)
+        guard let metadata = try? SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: Data(contentsOf: manifestURL)
+        ), metadata.id == id,
+           let reason = recoveryReason(for: metadata) else {
+            return nil
+        }
+
+        let session = RecordingSession(metadata: metadata, directoryURL: directory)
+        let artifacts = artifacts(for: session)
+        guard artifacts.hasRecoverableInput(for: metadata.resolvedCaptureMode) else {
+            return nil
+        }
+        return SessionRecoveryCandidate(
+            id: id,
+            session: session,
+            reason: reason,
+            artifacts: artifacts,
+            suggestedEndAt: suggestedEndAt(for: session, fallback: now)
+        )
+    }
+
+    /// Validates one visible recovery issue without scanning every historical
+    /// session again before the user dismisses it.
+    func issue(recordingsRoot: URL, directoryName: String) -> SessionRecoveryIssue? {
+        let root = recordingsRoot.standardizedFileURL
+        let directory = root
+            .appendingPathComponent(directoryName, isDirectory: true)
+            .standardizedFileURL
+        guard directory.deletingLastPathComponent() == root,
+              directory.lastPathComponent == directoryName,
+              (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+              !fileManager.fileExists(atPath: directory.appendingPathComponent(
+                Self.closedIssueMarkerFileName,
+                isDirectory: false
+              ).path) else {
+            return nil
+        }
+
+        let manifestURL = directory.appendingPathComponent("session.json", isDirectory: false)
+        guard fileManager.fileExists(atPath: manifestURL.path) else {
+            return SessionRecoveryIssue(
+                directoryName: directoryName,
+                reason: "Session manifest is missing. Existing files were left untouched."
+            )
+        }
+        guard let metadata = try? SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: Data(contentsOf: manifestURL)
+        ) else {
+            return SessionRecoveryIssue(
+                directoryName: directoryName,
+                reason: "Session manifest is unreadable. Existing files were left untouched."
+            )
+        }
+        guard let _ = recoveryReason(for: metadata) else { return nil }
+        let session = RecordingSession(metadata: metadata, directoryURL: directory)
+        guard !artifacts(for: session).hasRecoverableInput(for: metadata.resolvedCaptureMode),
+              metadata.status != .failed else {
+            return nil
+        }
+        return SessionRecoveryIssue(
+            directoryName: directoryName,
+            reason: "No recoverable audio or transcript artifact was found."
+        )
+    }
+
     private func recoveryReason(for metadata: SessionMetadata) -> SessionRecoveryReason? {
         if metadata.recovery?.status == .closed || metadata.recovery?.status == .completed {
             return nil

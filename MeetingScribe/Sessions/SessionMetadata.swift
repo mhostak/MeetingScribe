@@ -53,6 +53,8 @@ struct SessionAudioFiles: Codable, Equatable, Sendable {
     var microphone = "microphone-16k.wav"
     var systemWorking: String? = nil
     var microphoneWorking: String? = nil
+    // Legacy sessions may contain this pre-direct-PCM mix. It is retained so
+    // storage cleanup can discover it without deleting an unrecognized file.
     var mixed = "mixed.wav"
 }
 

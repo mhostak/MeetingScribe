@@ -333,7 +333,15 @@ final class AudioFileWriter {
         try fileHandle.seek(toOffset: 0)
         try fileHandle.write(contentsOf: Self.makeHeader(dataByteCount: dataByteCount))
         try fileHandle.seek(toOffset: endOffset)
-        try fileHandle.synchronize()
+        // SystemAudioCapture invokes this writer from ScreenCaptureKit's audio
+        // delivery queue. Updating the small WAV header there is cheap, while
+        // fsync can block behind a slow disk long enough to lose audio buffers.
+        // A forced checkpoint at finish remains durable; crash recovery derives
+        // the header from the physical PCM length when an ordinary checkpoint
+        // has not reached disk yet.
+        if force {
+            try fileHandle.synchronize()
+        }
         framesAtLastCheckpoint = totalFrames
     }
 
@@ -403,7 +411,8 @@ struct PCMRecordingFileRepairer: @unchecked Sendable {
         else { return false }
 
         let alignedSize = size.uint64Value - ((size.uint64Value - 44) % 2)
-        if alignedSize != size.uint64Value {
+        let didTruncate = alignedSize != size.uint64Value
+        if didTruncate {
             try handle.truncate(atOffset: alignedSize)
         }
         let dataByteCount = alignedSize - 44
@@ -411,7 +420,12 @@ struct PCMRecordingFileRepairer: @unchecked Sendable {
             throw PCMFileWriterError.fileTooLarge
         }
         let expectedHeader = AudioFileWriter.makeHeader(dataByteCount: UInt32(dataByteCount))
-        guard header != expectedHeader else { return false }
+        guard header != expectedHeader else {
+            if didTruncate {
+                try handle.synchronize()
+            }
+            return didTruncate
+        }
         try handle.seek(toOffset: 0)
         try handle.write(contentsOf: expectedHeader)
         try handle.synchronize()

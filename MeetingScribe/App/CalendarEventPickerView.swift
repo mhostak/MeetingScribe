@@ -46,6 +46,7 @@ struct CalendarEventPickerView: View {
         }
         .padding(20)
         .frame(width: 580, height: 680)
+        .environment(\.locale, appState.selectedAppLanguage.locale)
         .task {
             appState.refreshCalendarAuthorizationStatus()
             if appState.calendarAuthorizationStatus.canReadEvents {

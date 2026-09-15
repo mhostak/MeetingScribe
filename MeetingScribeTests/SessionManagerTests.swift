@@ -22,7 +22,7 @@ final class SessionManagerTests: XCTestCase {
         let startedAt = Date(timeIntervalSince1970: 1_725_876_600)
 
         let session = try await manager.startSession(
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             language: .czech,
             outputLanguage: .english,
             outputFileNameTemplate: "{date} - {title} - {id}",
@@ -34,7 +34,7 @@ final class SessionManagerTests: XCTestCase {
 
         let metadata = try decodeMetadata(at: session.manifestURL)
         XCTAssertEqual(metadata.id, session.metadata.id)
-        XCTAssertEqual(metadata.title, "SOFA weekly")
+        XCTAssertEqual(metadata.title, "Project Alpha weekly")
         XCTAssertEqual(metadata.status, .recording)
         XCTAssertEqual(metadata.startedAt, startedAt)
         XCTAssertEqual(metadata.language, .czech)
@@ -361,7 +361,7 @@ final class SessionManagerTests: XCTestCase {
             endsAt: Date(timeIntervalSince1970: 1_800_003_600),
             selectedAt: Date(timeIntervalSince1970: 1_799_999_000),
             participants: [
-                ConfirmedParticipant(displayName: "Martin Hošták"),
+                ConfirmedParticipant(displayName: "Participant One"),
             ],
             shareParticipantNamesWithAnalysis: false
         )

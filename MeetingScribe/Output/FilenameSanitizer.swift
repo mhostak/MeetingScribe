@@ -39,9 +39,16 @@ struct FilenameSanitizer: Sendable {
     }
 
     func sanitizedTitleCandidate(_ title: String) -> String? {
+        sanitizedFilenameComponent(title, maximumBytes: 100)
+    }
+
+    private func sanitizedFilenameComponent(
+        _ value: String,
+        maximumBytes: Int
+    ) -> String? {
         let invalidCharacters = CharacterSet(charactersIn: "/\\:*?\"<>|")
             .union(.controlCharacters)
-        let scalars = title.unicodeScalars.map { scalar -> Character in
+        let scalars = value.unicodeScalars.map { scalar -> Character in
             invalidCharacters.contains(scalar) ? " " : Character(String(scalar))
         }
         let sanitized = String(scalars)
@@ -50,12 +57,40 @@ struct FilenameSanitizer: Sendable {
             .joined(separator: " ")
             .trimmingCharacters(in: CharacterSet(charactersIn: ".- "))
         guard !sanitized.isEmpty else { return nil }
-        let truncated = utf8Prefix(sanitized, maximumBytes: 100)
+        let truncated = utf8Prefix(sanitized, maximumBytes: maximumBytes)
             .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         return truncated.isEmpty ? nil : truncated
     }
 
     private func renderTemplate(_ template: String, values: [String: String]) -> String {
+        var values = values
+        if template.contains("{id}"), template.contains("{title}"),
+           let title = values["{title}"],
+           let identifier = values["{id}"], !identifier.isEmpty {
+            // Sanitizing an empty title first loses adjacent separators (for
+            // example in "{title}-{id}") and can therefore undercount the
+            // space required for the identifier. Instead, accept the longest
+            // title prefix whose *final* sanitized name still contains it.
+            var prefix = ""
+            for character in title {
+                let candidate = prefix + String(character)
+                values["{title}"] = candidate
+                let rendered = sanitizedFilenameComponent(
+                    renderTemplateUnbounded(template, values: values),
+                    maximumBytes: 100
+                ) ?? "Meeting"
+                guard rendered.contains(identifier) else { break }
+                prefix = candidate
+            }
+            values["{title}"] = prefix
+        }
+        return sanitizedFilenameComponent(
+            renderTemplateUnbounded(template, values: values),
+            maximumBytes: 100
+        ) ?? "Meeting"
+    }
+
+    private func renderTemplateUnbounded(_ template: String, values: [String: String]) -> String {
         let expression = try? NSRegularExpression(pattern: #"\{(?:date|time|title|id)\}"#)
         let mutable = NSMutableString(string: template)
         let matches = expression?.matches(
@@ -68,7 +103,7 @@ struct FilenameSanitizer: Sendable {
                 mutable.replaceCharacters(in: match.range, with: value)
             }
         }
-        return sanitizedTitle(mutable as String)
+        return mutable as String
     }
 
     private func utf8Prefix(_ value: String, maximumBytes: Int) -> String {

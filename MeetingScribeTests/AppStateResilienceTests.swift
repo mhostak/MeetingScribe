@@ -221,8 +221,7 @@ final class AppStateResilienceTests: XCTestCase {
         let runCount = await analysisRunner.runCount()
         XCTAssertEqual(runCount, 2)
         XCTAssertEqual(appState.status, .idle)
-        XCTAssertEqual(appState.fluidAudioASRModelStatus, .missing)
-        XCTAssertEqual(appState.fluidAudioDiarizationModelStatus, .missing)
+        XCTAssertEqual(appState.fluidAudioModelState.asrStatus, .missing)
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root
             .appendingPathComponent("Models/FluidAudio/.staging", isDirectory: true).path))
     }
@@ -1063,7 +1062,6 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
         analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
@@ -1072,7 +1070,6 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
             session: session,
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            resolvedTranscript: resolvedTranscript,
             analysis: analysis,
             to: directoryURL
         )
@@ -1215,7 +1212,7 @@ private actor ResilienceFluidAudioModelManager: FluidAudioModelManaging {
 }
 
 private struct AppStateCapacityProvider: StorageCapacityProviding {
-    func availableCapacity(at url: URL) throws -> Int64 { 1_000_000 }
+    func availableCapacity(at url: URL) throws -> Int64 { 2_000_000_000 }
 }
 
 private actor ResilienceAnalysisCommandRunner: AnalysisCommandRunning {

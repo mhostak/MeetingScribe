@@ -7,9 +7,9 @@ Status date: 2026-09-15
 | Phase | Status | Delivery boundary |
 | --- | --- | --- |
 | Phase A — consent-first Calendar metadata | Complete | Select one nearby event, explicitly confirm attendees, and persist a privacy-minimized snapshot for the recording. |
-| Phase B — attendee-to-speaker mapping | Deferred and blocked | The persistence/UI prerequisite exists, but the current diarization model failed real multi-speaker validation and cannot provide trustworthy clusters. |
+| Phase B — attendee-to-speaker mapping | Permanently retired | The diarization runtime and speaker-management UI were removed after the model failed real multi-speaker validation. |
 
-Phase B remains intentionally deferred and is now explicitly blocked on reliable diarization. Its separate [Speaker recognition and management](speaker-recognition-management-plan.md) technical prerequisite is implemented, but the current FluidAudio `community-1` model did not produce trustworthy speaker clusters in a 10-speaker real meeting. Calendar attendees are still only candidate names and cannot identify voices by themselves. Mapping an attendee onto an unreliable cluster would create false identity claims even with user confirmation, so Phase B will not proceed against the current model.
+Phase B is permanently retired. The former FluidAudio `community-1` model did not produce trustworthy speaker clusters in a 10-speaker real meeting, so its runtime, data-processing path, and editor were removed. Calendar attendees remain user-confirmed metadata only; MeetingScribe does not map them to voices.
 
 ## Phase A — complete
 
@@ -36,37 +36,14 @@ Current confirmation sets participant sharing to true when any attendees are sel
 
 The implementation is covered by the standard automated suite, including consent boundaries, ranking, persistence, recovery compatibility, Markdown rendering, and AI-sharing privacy. The signed application was also exercised through the native Calendar permission and picker UI.
 
-## Phase B — deferred
+## Phase B — retired
 
-Phase B will not attempt to infer a person's identity from Calendar membership. If a future diarization model first passes the speaker-quality gates and produces reliable anonymous clusters, the user may then be able to:
-
-1. review the anonymous speakers and representative transcript segments;
-2. map an explicitly confirmed Calendar attendee to a speaker cluster;
-3. leave a cluster unknown or enter a non-Calendar display name;
-4. change or remove a mapping later;
-5. regenerate the resolved transcript, Markdown, and optional analysis input without rerunning speech-to-text or diarization.
-
-The mapping remains local session data. Calendar names are sent to an external AI provider only when the saved participant-sharing flag is enabled; current attendee confirmation enables that flag for selected names.
-
-## Phase B prerequisite status
-
-The technical implementation provides the following handoff contracts:
-
-- [x] stable session-scoped speaker identifiers independent of display names;
-- [x] a persisted diarization artifact tied to fingerprints of the source transcript and audio;
-- [x] deterministic word-level assignment to anonymous speakers, including explicit overlapping and unmatched states;
-- [x] a speaker-management UI that can rename, classify, and merge clusters;
-- [x] a derived speaker-resolved transcript and Markdown that can be regenerated without changing raw track transcripts;
-- [x] backward-compatible loading of sessions that contain no speaker artifacts;
-- [x] missing-model, failure, cancellation, and checkpoint recovery fallbacks;
-- [x] tests proving that saved speaker edits cannot silently change raw transcription data.
-
-These contracts avoid another data-model migration, but they do not make the prerequisite complete. The 2026-07-16 signed long-session validation produced two clusters for 10 actual speakers and split at least one real person across both clusters. Phase B must therefore remain blocked until a future model passes speaker-count and identity-consistency validation. Calendar work may not use the current anonymous labels as a naming substrate.
+MeetingScribe will not infer a person's identity from Calendar membership or map attendees to voices. Historical `speaker-diarization.json` and `resolved-transcript.json` files are retained as untouched session artifacts for compatibility, but they are not read, regenerated, or exposed in the UI. Calendar names are sent to an external AI provider only when the saved participant-sharing flag is enabled; current attendee confirmation enables that flag for selected names.
 
 ## Invariants
 
 - Calendar is a candidate metadata source, not an identity authority.
-- User confirmation is required at the system permission, event, attendee, and attendee-to-speaker mapping boundaries.
-- Raw audio and raw track transcripts remain unchanged by speaker naming.
+- User confirmation is required at the system permission, event, and attendee boundaries.
+- Raw audio and raw track transcripts remain unchanged by Calendar metadata.
 - Biometric identification and cross-session voice profiles remain out of scope.
 - Phase B must preserve the ability to use the application with Calendar integration disabled.

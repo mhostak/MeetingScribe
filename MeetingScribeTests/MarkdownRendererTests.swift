@@ -10,7 +10,7 @@ final class MarkdownRendererTests: XCTestCase {
     func testRenderCreatesFrontmatterSectionsAndTimestampedTranscript() {
         let session = SessionMetadata(
             id: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             status: .recorded,
             createdAt: startedAt,
             startedAt: startedAt,
@@ -29,7 +29,7 @@ final class MarkdownRendererTests: XCTestCase {
             segment(
                 id: "segment-000001",
                 source: .microphone,
-                speaker: "Martin",
+                speaker: "Speaker B",
                 start: 10,
                 end: 15,
                 language: "sk",
@@ -43,7 +43,7 @@ final class MarkdownRendererTests: XCTestCase {
         )
 
         XCTAssertTrue(markdown.hasPrefix("---\ntype: meeting\n"))
-        XCTAssertTrue(markdown.contains("title: \"SOFA weekly\""))
+        XCTAssertTrue(markdown.contains("title: \"Project Alpha weekly\""))
         XCTAssertTrue(markdown.contains("date: 2026-07-10"))
         XCTAssertTrue(markdown.contains("started: 10:30"))
         XCTAssertTrue(markdown.contains("ended: 11:24"))
@@ -68,7 +68,7 @@ final class MarkdownRendererTests: XCTestCase {
     func testRenderUsesContinuousUtterancesWhenValidArtifactIsProvided() throws {
         let session = SessionMetadata(
             id: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             status: .recorded,
             createdAt: startedAt
         )
@@ -158,19 +158,9 @@ final class MarkdownRendererTests: XCTestCase {
                 text: "Stále ten istý zdroj."
             ),
         ])
-        let legacyResolved = ResolvedTranscript(
-            schemaVersion: 1,
-            sessionID: transcript.sessionID,
-            createdAt: endedAt,
-            sourceTranscriptFingerprint: "raw",
-            diarizationFingerprint: "legacy",
-            segments: []
-        )
-
         let markdown = MarkdownRenderer(timeZone: utc).render(
             session: session,
-            transcript: transcript,
-            resolvedTranscript: legacyResolved
+            transcript: transcript
         )
 
         XCTAssertTrue(markdown.contains("Prvá časť. Pokračovanie."))
@@ -185,7 +175,7 @@ final class MarkdownRendererTests: XCTestCase {
     func testRenderEscapesYAMLAndHandlesEmptyTranscript() {
         let session = SessionMetadata(
             id: "id:1",
-            title: "Line \"one\"\nLine two",
+            title: "Line \"one\"\nLine\ttwo",
             status: .recorded,
             createdAt: startedAt
         )
@@ -195,7 +185,7 @@ final class MarkdownRendererTests: XCTestCase {
             transcript: makeTranscript(segments: [])
         )
 
-        XCTAssertTrue(markdown.contains("title: \"Line \\\"one\\\"\\nLine two\""))
+        XCTAssertTrue(markdown.contains("title: \"Line \\\"one\\\"\\nLine\\u0009two\""))
         XCTAssertTrue(markdown.contains("languages:"))
         XCTAssertTrue(markdown.contains("participants: []"))
         XCTAssertTrue(markdown.contains("_Prepis neobsahuje žiadne rozpoznané segmenty._"))
@@ -215,8 +205,8 @@ final class MarkdownRendererTests: XCTestCase {
                 endsAt: endedAt,
                 selectedAt: startedAt,
                 participants: [
-                    ConfirmedParticipant(displayName: "Jana Nováková"),
-                    ConfirmedParticipant(displayName: "Peter Hrivnák"),
+                    ConfirmedParticipant(displayName: "Participant One"),
+                    ConfirmedParticipant(displayName: "Participant Two"),
                 ],
                 shareParticipantNamesWithAnalysis: false,
                 eventDescription: "Discuss roadmap.\nConfirm launch date."
@@ -239,7 +229,7 @@ final class MarkdownRendererTests: XCTestCase {
             transcript: transcript
         )
 
-        XCTAssertTrue(markdown.contains("  - \"Jana Nováková\"\n  - \"Peter Hrivnák\""))
+        XCTAssertTrue(markdown.contains("  - \"Participant One\"\n  - \"Participant Two\""))
         XCTAssertTrue(
             markdown.contains(
                 "calendar_description: \"Discuss roadmap.\\nConfirm launch date.\""
@@ -251,7 +241,7 @@ final class MarkdownRendererTests: XCTestCase {
     func testRenderInsertsFreeformAnalysisBetweenReservedMarkers() {
         let session = SessionMetadata(
             id: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             status: .recorded,
             createdAt: startedAt,
             startedAt: startedAt,
@@ -311,7 +301,7 @@ final class MarkdownRendererTests: XCTestCase {
             segment(
                 id: "microphone-overlap",
                 source: .microphone,
-                speaker: "Martin",
+                speaker: "Speaker B",
                 start: 3,
                 end: 3.5,
                 language: "sk",
@@ -320,7 +310,7 @@ final class MarkdownRendererTests: XCTestCase {
             segment(
                 id: "microphone-boundary",
                 source: .microphone,
-                speaker: "Martin",
+                speaker: "Speaker B",
                 start: 10,
                 end: 12,
                 language: "sk",
@@ -341,7 +331,7 @@ final class MarkdownRendererTests: XCTestCase {
             return segment(
                 id: "segment-\(index)",
                 source: isSystem ? .system : .microphone,
-                speaker: isSystem ? "Other" : "Martin",
+                speaker: isSystem ? "Other" : "Speaker B",
                 start: block + (isSystem ? 0 : 2),
                 end: block + (isSystem ? 1 : 3),
                 language: "sk",
@@ -571,7 +561,7 @@ final class MarkdownRendererTests: XCTestCase {
     private func makeTranscript(segments: [TranscriptSegment]) -> MergedTranscript {
         MergedTranscript(
             sessionID: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             completedAt: endedAt,
             tracks: [
                 MergedTranscriptTrack(

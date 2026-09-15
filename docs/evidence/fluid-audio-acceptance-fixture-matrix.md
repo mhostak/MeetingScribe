@@ -1,6 +1,6 @@
 # FluidAudio acceptance fixture matrix
 
-Status: fixture contract retained for a future model; current `community-1` diarization rejected after failed real multi-speaker validation on 2026-07-16
+Status: archival diarization-fixture contract. `community-1` was rejected after failed real multi-speaker validation on 2026-07-16, and the feature was later permanently retired.
 
 No real recording enters this matrix without explicit consent for local evaluation. Audio and transcript ground truth remain outside Git. The repository stores only fixture IDs, non-identifying characteristics, aggregate scores, and hashes needed to reproduce a local run.
 
@@ -22,7 +22,7 @@ No real recording enters this matrix without explicit consent for local evaluati
 
 The current `2026-07-15T11-03-35Z_086BA6` comparison may satisfy `FA-LONG-UNLABELED`; it cannot satisfy a labeled DER or speaker-count row merely because Calendar participants are present.
 
-`FA-REAL-MULTI-10` failed the current model: automatic output contained two system clusters, while 10 people actually spoke, and at least one known person was split across both clusters. Exact-count experiments did not restore trustworthy identities. Detailed aggregate evidence is in [FluidAudio diarization release validation](fluid-audio-diarization-release-validation-2026-07-16.md). The remaining diarization fixture work is paused until a new model is selected; ASR fixtures remain independently useful.
+`FA-REAL-MULTI-10` failed the evaluated model: automatic output contained two system clusters, while 10 people actually spoke, and at least one known person was split across both clusters. Exact-count experiments did not restore trustworthy identities. Detailed aggregate evidence is in [FluidAudio diarization release validation](fluid-audio-diarization-release-validation-2026-07-16.md). The diarization fixture work is archival because the feature is permanently retired; ASR fixtures remain independently useful.
 
 ## Measurements per fixture
 

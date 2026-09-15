@@ -58,7 +58,11 @@ enum AppUserMessage: Equatable, Sendable {
     case lowStorageSafeStop
     case storageCheckFailedSafeStop
     case chooseOutputFolderTitle
+    case chooseAnalysisExecutableTitle(String)
     case choose
+    case analysisAvailabilityNotChecked
+    case analysisExecutableNotFound
+    case analysisAuthenticationRequired
     case importFluidAudioModelTitle(String)
     case importAction
 }
@@ -211,8 +215,36 @@ enum AppLocalization {
             )
         case .chooseOutputFolderTitle:
             return pick("Choose Markdown output folder", "Vyberte výstupný priečinok pre Markdown", "Vyberte výstupní složku pro Markdown", language)
+        case let .chooseAnalysisExecutableTitle(tool):
+            return pick(
+                "Choose \(tool) executable",
+                "Vyberte spustiteľný súbor \(tool)",
+                "Vyberte spustitelný soubor \(tool)",
+                language
+            )
         case .choose:
             return pick("Choose", "Vybrať", "Vybrat", language)
+        case .analysisAvailabilityNotChecked:
+            return pick(
+                "Availability has not been checked",
+                "Dostupnosť nebola overená",
+                "Dostupnost nebyla ověřena",
+                language
+            )
+        case .analysisExecutableNotFound:
+            return pick(
+                "Executable not found",
+                "Spustiteľný súbor sa nenašiel",
+                "Spustitelný soubor nebyl nalezen",
+                language
+            )
+        case .analysisAuthenticationRequired:
+            return pick(
+                "Authentication required",
+                "Vyžaduje sa prihlásenie",
+                "Je vyžadováno přihlášení",
+                language
+            )
         case let .importFluidAudioModelTitle(model):
             return pick(
                 "Import \(model)",
@@ -749,7 +781,7 @@ final class ApplicationSettingsStore {
 
     var minimumStorageBytes: Int64 {
         let value = defaults.object(forKey: Key.minimumStorageBytes) as? NSNumber
-        return max(value?.int64Value ?? StorageGuard.defaultMinimumBytes, 1)
+        return max(value?.int64Value ?? StorageGuard.defaultMinimumBytes, StorageGuard.defaultMinimumBytes)
     }
 
     var calendarIntegrationEnabled: Bool {
@@ -769,7 +801,7 @@ final class ApplicationSettingsStore {
     }
 
     func setMinimumStorageBytes(_ bytes: Int64) {
-        defaults.set(max(bytes, 1), forKey: Key.minimumStorageBytes)
+        defaults.set(max(bytes, StorageGuard.defaultMinimumBytes), forKey: Key.minimumStorageBytes)
     }
 
     func setCalendarIntegrationEnabled(_ enabled: Bool) {

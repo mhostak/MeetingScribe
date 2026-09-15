@@ -37,7 +37,7 @@ final class TranscriptMergerTests: XCTestCase {
                 makeSegment(
                     id: "microphone-overlap",
                     source: .microphone,
-                    speaker: "Martin",
+                    speaker: "Speaker B",
                     start: 1.0004,
                     end: 2.5006,
                     language: "sk",
@@ -153,7 +153,7 @@ final class TranscriptMergerTests: XCTestCase {
                 makeSegment(
                     id: "wrong-source",
                     source: .microphone,
-                    speaker: "Martin",
+                    speaker: "Speaker B",
                     start: 0,
                     end: 1,
                     language: "sk",

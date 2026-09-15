@@ -1,12 +1,12 @@
-# FluidAudio-only transcription and diarization migration plan
+# FluidAudio transcription migration and retired diarization record
 
-Status: FluidAudio ASR migration and legacy-engine removal complete; `community-1` diarization failed production acceptance on 2026-07-16 and further speaker-recognition work is paused
+Status: FluidAudio ASR migration and legacy-engine removal complete; `community-1` diarization failed production acceptance on 2026-07-16 and is permanently retired from new recordings and Settings
 
-This phase replaced the complete whisper.cpp transcription stack, optional TinyDiarize turn detection, and the separate Silero VAD model with FluidAudio. Parakeet TDT 0.6B v3 is the accepted local speech-to-text runtime. The offline `community-1` pipeline is implemented for anonymous diarization but is not production-accepted after failing a real multi-speaker validation.
+This phase replaced the complete whisper.cpp transcription stack, optional TinyDiarize turn detection, and the separate Silero VAD model with FluidAudio. Parakeet TDT 0.6B v3 is the accepted local speech-to-text runtime. The offline `community-1` runtime was removed after failing a real multi-speaker validation; historical files remain untouched but are not interpreted.
 
-The end state is deliberately not a permanent multi-engine product. A temporary internal rollback switch is allowed while the migration is being validated, but Settings will not ask the user to choose between Whisper and FluidAudio. After the acceptance gates pass, Whisper is removed from the application target and FluidAudio becomes the only transcription and diarization runtime.
+The end state is deliberately not a permanent multi-engine product. Settings has no engine choice: Parakeet is the only active inference runtime. Whisper and the diarization runtime were removed from the application target.
 
-The implemented diarization boundary and persistence remain described in [Speaker recognition and management](speaker-recognition-management-plan.md), but they are not a completed product prerequisite for attendee mapping. The current model does not identify real people reliably and must not be used to map Calendar attendees to clusters.
+The former diarization boundary and persistence are documented only as archival evidence in [Speaker recognition and management](speaker-recognition-management-plan.md). They are not a product prerequisite: attendee-to-speaker mapping is permanently retired.
 
 ## Decision basis
 
@@ -18,23 +18,21 @@ The completed 83.7-minute CZ/SK session `2026-07-15T11-03-35Z_086BA6` was proces
 | --- | ---: | ---: | ---: |
 | Parakeet v3 system transcription | 7,264 words, 93.4% mean confidence | 138.9 s | 36.2x real time |
 | Parakeet v3 microphone transcription | 279 words, 88.5% mean confidence | 131.7 s | 38.1x real time |
-| `community-1` system diarization | 3 anonymous clusters, 633 turns | 58.0 s | 86.7x real time |
-| Resolved conversational output | 550 utterances | — | — |
 
-The ASR run used the long-input configuration equivalent to `--no-mel-context --dual-decode-arbitration` with no forced language hint. The resulting separate Markdown was reviewed as usable. The experiment proves long-input execution, offline reuse, deterministic diarization output on the tested machine, and a practical storage footprint of approximately 469 MiB for Parakeet plus 21.8 MiB for the compiled diarization cache.
+The ASR run used the long-input configuration equivalent to `--no-mel-context --dual-decode-arbitration` with no forced language hint. The resulting separate Markdown was reviewed as usable. The experiment proves long-input ASR execution and offline reuse on the tested machine. Its diarization results are historical only and do not support a shipped feature.
 
 It does not yet prove general transcription accuracy or diarization error rate. There is no timestamped speaker ground truth for that meeting, and the wider Czech, Slovak, mixed-language, overlap, echo, music, sparse-microphone, and older-hardware matrix remains a production gate.
 
 ## Fixed product decisions
 
 - ASR: FluidAudio Parakeet TDT 0.6B v3 Core ML, using the reviewed int8-compatible model bundle.
-- Diarization: FluidAudio offline `community-1` is implemented on the system track, but its production use and further feature development are paused after failed quality validation.
-- Local microphone: represented as the local user independently of system-audio clusters.
+- Diarization: FluidAudio offline `community-1` was permanently removed after failed quality validation; historical artifacts remain untouched.
+- Local microphone: a separately transcribed source, not a named person.
 - Processing: starts only after recording finalization; inference must never compete with active capture.
-- Resource policy: system ASR, microphone ASR, and diarization run sequentially so only one heavyweight engine workload is active at a time.
+- Resource policy: system ASR and microphone ASR run sequentially so only one heavyweight engine workload is active at a time.
 - Language policy: Auto remains the default for mixed CZ/SK meetings. Existing Czech, Slovak, and English preferences remain stored while their exact FluidAudio mapping is validated.
 - Privacy: finalized audio and inference remain local. Network access is used only for an explicit model download.
-- Failure policy: a missing or failed ASR model leaves the session recoverable. Failed diarization does not discard a successful transcript and falls back to source-local deterministic grouping.
+- Failure policy: a missing or failed ASR model leaves the session recoverable. Source-local deterministic grouping does not require a diarization model.
 - Cutover policy: no automatic fallback from FluidAudio ASR to Whisper in the final product.
 - Compatibility policy: opening an old recording never requires Whisper to be installed.
 
@@ -44,24 +42,20 @@ It does not yet prove general transcription accuracy or diarization error rate. 
 finalized system-16k.wav ─┐
                           ├─ FluidAudio ASR, sequential ─ track transcripts ─ raw merge
 finalized microphone-16k.wav ┘                                      │
-                                                                   │
-system-16k.wav ─ FluidAudio diarization ─ anonymous timed turns ───┤
                                                                    ▼
-                                                 speaker resolution and grouping
+                                       deterministic source-local grouping
                                                                    │
                                                                    ▼
                                                     Markdown and optional AI input
 ```
 
-`SessionTranscriber` remains the workflow coordinator, but it will no longer accept a single arbitrary model file URL. Model preparation belongs to a FluidAudio-specific model repository, and project-owned adapters convert FluidAudio results into MeetingScribe domain models. FluidAudio types must not leak into session persistence, Markdown rendering, recovery, or speaker-management code.
+`SessionTranscriber` is the workflow coordinator. Model preparation belongs to a FluidAudio-specific model repository, and project-owned adapters convert FluidAudio results into MeetingScribe domain models. FluidAudio types do not leak into session persistence, Markdown rendering, or recovery.
 
 The production boundaries are:
 
 - `SpeechTranscribing`: engine-neutral request and result interface;
 - `FluidAudioTranscriptionService`: Parakeet initialization, sequential track inference, timestamp normalization, and cleanup;
-- `FluidAudioDiarizationService`: adapter from the existing `SpeakerDiarizing` contract to `community-1`;
-- `FluidAudioModelManager`: ASR and diarization bundle discovery, verified installation, progress, repair, deletion, and offline loading;
-- `SpeakerTranscriptResolver`: deterministic assignment of ASR words or segments to diarized turns;
+- `FluidAudioModelManager`: ASR bundle discovery, verified installation, progress, repair, deletion, and offline loading;
 - `TranscriptSanitizer`: engine-neutral text validation replacing Whisper-named helpers;
 - `SessionTranscriber`: checkpointed orchestration, warnings, recovery metadata, and artifact persistence.
 
@@ -74,8 +68,7 @@ The existing artifact names remain stable so downstream output and recovery do n
 - `system-transcript.json` and `microphone-transcript.json` remain normalized track transcripts;
 - `transcript.json` remains the deterministic, overlap-preserving raw merge;
 - `utterance-transcript.json` remains a derived readable grouping;
-- `speaker-diarization.json` stores FluidAudio model provenance, anonymous turns, configuration, source fingerprint, and later user edits;
-- `resolved-transcript.json` stores the derived speaker-aware transcript used by Markdown and optional analysis when valid;
+- historical `speaker-diarization.json` and `resolved-transcript.json` files remain untouched and are not interpreted;
 - `speaker-turns.json` remains readable for old TinyDiarize sessions but is not written by the FluidAudio-only pipeline.
 
 The next session schema adds optional, engine-neutral provenance rather than overloading the current `model` string:
@@ -99,12 +92,11 @@ FluidAudio models are multi-file bundles, not interchangeable Whisper `.bin` fil
 4. atomically promote the verified directory under `Application Support/MeetingScribe/Models/FluidAudio/`;
 5. support an offline second load, repair, and explicit deletion.
 
-Settings → Transcription becomes a FluidAudio model-status view:
+Settings → Transcription is a FluidAudio model-status view:
 
 - one Parakeet transcription model row;
-- one speaker-diarization model row;
 - Download/Repair, Import where bundle verification can be guaranteed, and Delete actions;
-- combined storage estimate and per-model progress;
+- per-model storage estimate and progress;
 - license and attribution links;
 - no Whisper model picker and no TinyDiarize toggle after final cutover.
 
@@ -112,7 +104,7 @@ Existing Whisper and TinyDiarize files are never deleted automatically. After Fl
 
 ## Licensing and attribution
 
-The FluidAudio SDK is Apache 2.0. The Hugging Face metadata and the parent models identify the selected Parakeet and diarization model families as CC BY 4.0. Before release, MeetingScribe must include:
+The FluidAudio SDK is Apache 2.0. The selected Parakeet model's metadata identifies its license and attribution requirements. Before release, MeetingScribe must include:
 
 - SDK copyright and Apache 2.0 notice;
 - model names, authors/origins, exact repositories and revisions, and CC BY 4.0 attribution;
@@ -126,7 +118,6 @@ Primary references:
 - [FluidAudio project, API, and Apache 2.0 license](https://github.com/FluidInference/FluidAudio)
 - [Parakeet TDT 0.6B v3 Core ML model](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml)
 - [NVIDIA Parakeet TDT 0.6B v3 model and supported languages](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-- [FluidAudio speaker diarization Core ML model](https://huggingface.co/FluidInference/speaker-diarization-coreml)
 
 ## Implementation slices
 
@@ -166,7 +157,7 @@ Exit gate: the current suite passes with no transcript-semantic changes, and eng
 - [x] produce and verify a Debug app signed by the required Apple Development identity;
 - [ ] complete one interactive signed-app smoke test covering Download, Cancel, Verify and repair, Import, and Delete for both rows without beginning a recording.
 
-Implemented on 2026-07-15. The manager owns exact file manifests for Parakeet and speaker diarization, downloads from immutable repository revisions, hashes all files before promotion, validates an actual FluidAudio load, and atomically replaces only a verified bundle. Settings exposes separate state and actions for both bundles. Fast status refresh checks the pinned manifest and file sizes; **Verify and repair** performs full SHA-256 verification and the offline FluidAudio load check. Automated and real-bundle evidence is recorded in [FluidAudio FA2 model-manager evidence](evidence/fluid-audio-fa2-model-manager-2026-07-15.md).
+Implemented on 2026-07-15. The manager now owns the Parakeet manifest, downloads from an immutable repository revision, hashes every file before promotion, validates an actual FluidAudio load, and atomically replaces only a verified bundle. Settings exposes its Parakeet actions. The removed diarization-bundle work remains historical evidence in [FluidAudio FA2 model-manager evidence](evidence/fluid-audio-fa2-model-manager-2026-07-15.md).
 
 Exit gate: a signed app can install, verify, load offline, repair, and delete both model bundles without beginning a recording. The implementation and signed build are complete; the gate remains open only for the explicit interactive smoke test above.
 
@@ -186,7 +177,7 @@ Implemented on 2026-07-15. Normal recording and recovery use the verified Parake
 
 Exit gate: implementation, Xcode compilation, full regression tests, real-model inference, and automated non-destructive reprocessing pass. The gate remains open for one signed-app interactive run covering a new recording, interrupted recovery, Markdown export, and the migration-only reprocessing button while confirming that legacy artifacts and raw audio remain unchanged.
 
-### FA4 — FluidAudio diarization and speaker-aware output
+### FA4 — historical FluidAudio diarization and speaker-aware output
 
 - [x] move the proven `SpeakerDiarizing` adapter into the application target;
 - [x] diarize finalized system audio and persist `speaker-diarization.json` atomically;
@@ -197,9 +188,9 @@ Exit gate: implementation, Xcode compilation, full regression tests, real-model 
 - [x] recover from each completed ASR, diarization, resolution, and output checkpoint;
 - [x] expose stable profiles, rename/classify/merge editing, and deterministic output regeneration.
 
-Implemented on 2026-07-15. The app loads `community-1` strictly offline from the verified installed bundle, processes the finalized system WAV through FluidAudio's disk-backed path, canonicalizes engine labels to stable session IDs, and persists source fingerprints plus configuration provenance. Word-level resolution retains overlap and unmatched ambiguity, while the microphone remains the independent `local-user`. The Recordings window exposes a speaker editor with per-cluster metrics, transcript examples, rename/state/merge controls, and atomic Markdown regeneration. Session schema 13 records optional diarization status, and recovery resumes from valid ASR or diarization checkpoints.
+Implemented on 2026-07-15 and removed on 2026-09-15. The historical implementation loaded `community-1` offline, persisted anonymous clusters, resolved timestamped words, and exposed an editor. Existing artifacts remain untouched; no current recovery or output path interprets them.
 
-Exit gate: **failed on 2026-07-16.** A signed 102.04-minute mixed Czech/Slovak Teams meeting with 10 actual speakers produced only two system clusters, and direct review found one person split across both. Exact 9- and 10-cluster experiments did not establish consistent identities. The technical implementation remains, but FA4 is not production-accepted.
+Exit gate: **failed on 2026-07-16.** A signed 102.04-minute mixed Czech/Slovak Teams meeting with 10 actual speakers produced only two system clusters, and direct review found one person split across both. Exact 9- and 10-cluster experiments did not establish consistent identities. The technical implementation was consequently removed.
 
 ### FA5 — default cutover
 
@@ -223,16 +214,15 @@ Exit gate: the FluidAudio path passes the complete automated and manual matrix a
 
 Source removal completed on 2026-07-15. Old transcript provenance and `speaker-turns.json` remain plain Codable compatibility data; opening or exporting them does not load an inference engine. Settings reports recoverable legacy-model storage and removes only the known obsolete model files after a separate destructive confirmation. An unsigned CI-style Xcode build passed and its application bundle contained no removed binary, model URL, control, or package product; signed interactive acceptance remains tracked in FA5 and FA7.
 
-Exit gate: FluidAudio is the only shipped speech and diarization engine, while old sessions still open and export correctly.
+Exit gate: Parakeet is the only shipped inference engine, while old sessions still open and export correctly.
 
 ### FA7 — acceptance and handoff
 
-- [ ] complete the labeled quality/resource matrix below on the oldest supported Apple Silicon machine and a current reference machine; paused for diarization until a new model is selected;
+- [ ] complete the labeled quality/resource matrix below on the oldest supported Apple Silicon machine and a current reference machine; no longer an active diarization release gate because that feature is permanently retired;
 - [x] run a signed release-candidate meeting of at least 60 minutes end to end; capture, ASR, integrity, and export passed, while diarization failed the quality gate;
 - [x] compare production-like meetings against preserved legacy outputs without overwriting either result;
 - [x] update README, recovery documentation, support instructions, model attribution, and test baselines;
-- [x] complete the speaker persistence, resolution, and management UI contracts originally planned for Calendar Phase B;
-- [x] keep attendee-to-speaker mapping deferred and now blocked on a future diarization model passing quality acceptance.
+- [x] permanently retire attendee-to-speaker mapping with diarization.
 
 ### 2026-07-16 release-validation verdict
 
@@ -247,7 +237,7 @@ Diarization itself failed:
 - after optimal anonymous-label alignment, the constrained variants disagreed on 270.545 seconds of their shared speech timeline;
 - the unmatched tenth cluster was assembled mainly from two different 9-cluster identities, so forcing the expected count did not prove identity consistency.
 
-The absence of time-aligned ground truth prevents a legitimate DER score, but it does not prevent rejection: the speaker-count miss and directly observed identity split independently fail the release gates. FluidAudio ASR acceptance is retained. Diarization, speaker naming, and Calendar attendee mapping are paused until a different model passes the same validation. See [sanitized release evidence](evidence/fluid-audio-diarization-release-validation-2026-07-16.md).
+The absence of time-aligned ground truth prevents a legitimate DER score, but it does not prevent rejection: the speaker-count miss and directly observed identity split independently fail the release gates. FluidAudio ASR acceptance is retained. Diarization, speaker naming, and Calendar attendee mapping are permanently retired. See [sanitized release evidence](evidence/fluid-audio-diarization-release-validation-2026-07-16.md).
 
 ## Acceptance matrix
 
@@ -255,9 +245,8 @@ Automated coverage must include:
 
 - exact schema 1–11 session decoding and current-schema round trips;
 - monotonic, in-range word and segment timestamps on both tracks;
-- deterministic raw merge, overlap preservation, and no dropped non-empty ASR words during speaker resolution;
-- diarization normalization, anonymous-label permutation, overlap, ambiguity, and stale fingerprint handling;
-- cancellation during model download, model initialization, ASR, diarization, resolution, and export;
+- deterministic raw merge, overlap preservation, and no dropped non-empty ASR words;
+- cancellation during model download, model initialization, ASR, and export;
 - process termination after every persisted checkpoint followed by successful recovery;
 - corrupt, partial, missing, and offline model states;
 - old TinyDiarize artifacts remaining readable but never treated as speaker identity;
@@ -271,12 +260,10 @@ Manual acceptance uses consented fixtures and records aggregate metrics only:
 | Acoustics | two to four speakers, overlap, echo, headphones, music, silence, and sparse microphone |
 | Duration | short sample, 60–90-minute meeting, and interrupted/recovered meeting |
 | ASR speed | at least 10x real time per track on the oldest supported Apple Silicon Mac |
-| Diarization speed | at least 10x real time on the system track |
 | Combined processing | no more than 20% of recorded duration on the oldest supported Mac |
-| Model storage | verified installed ASR plus diarization footprint no more than 600 MiB for the selected variants |
+| Model storage | verified installed ASR footprint is documented for the selected variant |
 | Offline behavior | second launch and complete processing succeed with network denied |
-| Determinism | repeated warm-cache diarization produces the same normalized result |
-| Quality | no material regression in decisions, names, numbers, and action items versus the preserved comparison; labeled diarization target DER at or below 20% and speaker-count error at most one |
+| Quality | no material regression in decisions, names, numbers, and action items versus the preserved comparison |
 | Memory | measured peak RSS is documented and does not cause capture or UI instability; workloads remain sequential |
 
 The earlier 83.7-minute experiment remains valid speed, storage, offline, and deterministic-execution evidence. It is not speaker-quality evidence. The later 102.04-minute real meeting explicitly failed speaker count and identity consistency, so the current model is rejected without waiting for the remaining matrix rows.
@@ -284,10 +271,10 @@ The earlier 83.7-minute experiment remains valid speed, storage, offline, and de
 ## Definition of done
 
 - Every new recording is transcribed by FluidAudio Parakeet v3; no user workflow invokes Whisper.
-- [Paused] Reliable system-audio speaker clusters require a future model; `community-1` did not pass production quality acceptance. Deterministic continuous-utterance grouping remains the safe non-identity fallback.
+- Deterministic source-local grouping remains the safe non-identity presentation of a merged transcript.
 - Whisper, TinyDiarize, Silero, their models, settings, package products, and runtime code are absent from the shipped app.
 - Existing Whisper session artifacts remain readable, renderable, and exportable without the old model or engine.
 - Reprocessing never overwrites an earlier transcript or Markdown output.
 - Model installation, offline use, cancellation, deletion, recovery, attribution, and storage reporting work in the signed application.
 - Czech, Slovak, mixed-language, long-session, resource, and recovery gates are recorded independently from the failed speaker-quality gate.
-- Speaker-management and Calendar Phase B remain blocked until diarization artifacts are demonstrated to represent consistent people.
+- Speaker-management and Calendar Phase B are permanently retired; historical artifacts remain untouched for compatibility.

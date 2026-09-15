@@ -216,7 +216,8 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
                     self?.closeCalendarPicker(reopenPopover: false)
                     self?.openSettings()
                 }
-            ),
+            )
+            .environment(\.locale, appState.selectedAppLanguage.locale),
             isResizable: false,
             isClosable: false
         )

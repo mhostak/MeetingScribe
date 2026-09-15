@@ -105,6 +105,11 @@ struct AudioFinalizer: AudioFinalizing {
         } else {
             warnings.append("Microphone track contained no audio buffers.")
         }
+        if microphoneDiagnostics.droppedBufferCount > 0 {
+            warnings.append(
+                "Microphone capture dropped \(microphoneDiagnostics.droppedBufferCount) audio buffers because its writer queue was saturated."
+            )
+        }
 
         return AudioFinalizationMetadata(
             completedAt: now(),
@@ -133,12 +138,18 @@ struct AudioFinalizer: AudioFinalizing {
             startedAt: microphoneStart,
             timelineOrigin: microphoneStart
         )
+        var warnings = requiredTrackWarning.map { [$0] } ?? []
+        if diagnostics.droppedBufferCount > 0 {
+            warnings.append(
+                "Microphone capture dropped \(diagnostics.droppedBufferCount) audio buffers because its writer queue was saturated."
+            )
+        }
         return AudioFinalizationMetadata(
             completedAt: now(),
             timelineOrigin: microphoneStart,
             system: nil,
             microphone: microphone,
-            warnings: requiredTrackWarning.map { [$0] } ?? []
+            warnings: warnings
         )
     }
 

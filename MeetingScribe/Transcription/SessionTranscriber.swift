@@ -7,9 +7,6 @@ struct SessionTranscriptionResult: Equatable, Sendable {
     let mergedTranscript: MergedTranscript
     let speakerTurnArtifact: SpeakerTurnArtifact?
     let utteranceTranscript: ContinuousUtteranceTranscript?
-    let diarizationMetadata: SessionDiarizationMetadata?
-    let speakerDiarizationArtifact: SpeakerDiarizationArtifact?
-    let resolvedTranscript: ResolvedTranscript?
 
     init(
         metadata: SessionTranscriptionMetadata,
@@ -17,10 +14,7 @@ struct SessionTranscriptionResult: Equatable, Sendable {
         microphoneTranscript: TrackTranscript?,
         mergedTranscript: MergedTranscript,
         speakerTurnArtifact: SpeakerTurnArtifact? = nil,
-        utteranceTranscript: ContinuousUtteranceTranscript? = nil,
-        diarizationMetadata: SessionDiarizationMetadata? = nil,
-        speakerDiarizationArtifact: SpeakerDiarizationArtifact? = nil,
-        resolvedTranscript: ResolvedTranscript? = nil
+        utteranceTranscript: ContinuousUtteranceTranscript? = nil
     ) {
         self.metadata = metadata
         self.systemTranscript = systemTranscript
@@ -28,9 +22,6 @@ struct SessionTranscriptionResult: Equatable, Sendable {
         self.mergedTranscript = mergedTranscript
         self.speakerTurnArtifact = speakerTurnArtifact
         self.utteranceTranscript = utteranceTranscript
-        self.diarizationMetadata = diarizationMetadata
-        self.speakerDiarizationArtifact = speakerDiarizationArtifact
-        self.resolvedTranscript = resolvedTranscript
     }
 }
 
@@ -41,66 +32,6 @@ protocol SessionTranscribing: Sendable {
         model: TranscriptionModelReference,
         language: TranscriptionLanguage
     ) async throws -> SessionTranscriptionResult
-
-    func transcribe(
-        session: RecordingSession,
-        finalization: AudioFinalizationMetadata,
-        model: TranscriptionModelReference,
-        language: TranscriptionLanguage,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SessionTranscriptionResult
-
-    func processSpeakers(
-        session: RecordingSession,
-        transcript: MergedTranscript,
-        finalization: AudioFinalizationMetadata,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SpeakerProcessingResult
-
-}
-
-extension SessionTranscribing {
-    func transcribe(
-        session: RecordingSession,
-        finalization: AudioFinalizationMetadata,
-        model: TranscriptionModelReference,
-        language: TranscriptionLanguage,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SessionTranscriptionResult {
-        try await transcribe(
-            session: session,
-            finalization: finalization,
-            model: model,
-            language: language
-        )
-    }
-
-    func processSpeakers(
-        session: RecordingSession,
-        transcript: MergedTranscript,
-        finalization: AudioFinalizationMetadata,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SpeakerProcessingResult {
-        SpeakerProcessingResult(
-            metadata: SessionDiarizationMetadata(
-                status: .unavailable,
-                engine: "none",
-                model: "none",
-                configurationRevision: "none",
-                startedAt: nil,
-                completedAt: Date(),
-                speakerCount: nil,
-                segmentCount: nil,
-                audioDurationSeconds: nil,
-                wallTimeSeconds: nil,
-                sourceAudioFingerprint: nil,
-                warnings: [],
-                failureReason: "Speaker processing is unavailable."
-            ),
-            artifact: nil,
-            resolvedTranscript: nil
-        )
-    }
 
 }
 
@@ -134,23 +65,6 @@ actor SessionTranscriber: SessionTranscribing {
         model: TranscriptionModelReference,
         language: TranscriptionLanguage
     ) async throws -> SessionTranscriptionResult {
-        try await transcribe(
-            session: session,
-            finalization: finalization,
-            model: model,
-            language: language,
-            diarizationModelBundleURL: nil
-        )
-    }
-
-    func transcribe(
-        session: RecordingSession,
-        finalization: AudioFinalizationMetadata,
-        model: TranscriptionModelReference,
-        language: TranscriptionLanguage,
-        diarizationModelBundleURL: URL?
-    ) async throws -> SessionTranscriptionResult {
-        _ = diarizationModelBundleURL // Retained only for protocol/source compatibility.
         do {
             let result = try await transcribeTracks(
                 session: session,
@@ -300,10 +214,7 @@ actor SessionTranscriber: SessionTranscribing {
             microphoneTranscript: microphoneTranscript,
             mergedTranscript: mergedTranscript,
             speakerTurnArtifact: speakerTurnArtifact,
-            utteranceTranscript: utteranceTranscript,
-            diarizationMetadata: nil,
-            speakerDiarizationArtifact: nil,
-            resolvedTranscript: nil
+            utteranceTranscript: utteranceTranscript
         )
     }
 

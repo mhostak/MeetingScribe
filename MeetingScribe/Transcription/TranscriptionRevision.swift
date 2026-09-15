@@ -153,7 +153,6 @@ actor FluidAudioTranscriptionRevisionService {
                 session: revisionMetadata,
                 transcript: result.mergedTranscript,
                 utteranceTranscript: result.utteranceTranscript,
-                resolvedTranscript: nil,
                 analysis: nil,
                 to: directoryURL
             )
@@ -168,7 +167,7 @@ actor FluidAudioTranscriptionRevisionService {
                 sourceAudioFingerprints: sourceAudioFingerprints,
                 transcriptFiles: transcriptFiles,
                 transcription: result.metadata,
-                diarization: result.diarizationMetadata,
+                diarization: nil,
                 markdownFileName: markdown.fileURL.lastPathComponent,
                 failureReason: nil
             )

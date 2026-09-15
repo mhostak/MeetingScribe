@@ -77,8 +77,6 @@
 		000000000000000000000178 /* CalendarEventPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000281 /* CalendarEventPickerView.swift */; };
 		000000000000000000000179 /* CalendarIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000282 /* CalendarIntegrationTests.swift */; };
 		000000000000000000000180 /* ContinuousUtterance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000283 /* ContinuousUtterance.swift */; };
-		000000000000000000000181 /* SpeakerDiarization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000284 /* SpeakerDiarization.swift */; };
-		000000000000000000000182 /* SpeakerDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000285 /* SpeakerDiarizationTests.swift */; };
 		000000000000000000000183 /* FluidAudioModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000286 /* FluidAudioModelManager.swift */; };
 		000000000000000000000184 /* FluidAudioModelManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000287 /* FluidAudioModelManagerTests.swift */; };
 		000000000000000000000185 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000001204 /* FluidAudio */; };
@@ -88,13 +86,6 @@
 		000000000000000000000189 /* AudioActivityDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000291 /* AudioActivityDetector.swift */; };
 		000000000000000000000190 /* TranscriptionSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000292 /* TranscriptionSettingsStore.swift */; };
 		000000000000000000000191 /* LegacyModelCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000293 /* LegacyModelCleaner.swift */; };
-		000000000000000000000192 /* FluidAudioDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000294 /* FluidAudioDiarizationService.swift */; };
-		000000000000000000000193 /* SpeakerArtifacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000295 /* SpeakerArtifacts.swift */; };
-		000000000000000000000194 /* SpeakerTranscriptResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000296 /* SpeakerTranscriptResolver.swift */; };
-		000000000000000000000195 /* SpeakerPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000297 /* SpeakerPipeline.swift */; };
-		000000000000000000000196 /* SpeakerEditingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000298 /* SpeakerEditingService.swift */; };
-		000000000000000000000197 /* SpeakerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000299 /* SpeakerEditorView.swift */; };
-		000000000000000000000198 /* SpeakerPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000300 /* SpeakerPipelineTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -182,8 +173,6 @@
 		000000000000000000000281 /* CalendarEventPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventPickerView.swift; sourceTree = "<group>"; };
 		000000000000000000000282 /* CalendarIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarIntegrationTests.swift; sourceTree = "<group>"; };
 		000000000000000000000283 /* ContinuousUtterance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuousUtterance.swift; sourceTree = "<group>"; };
-		000000000000000000000284 /* SpeakerDiarization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerDiarization.swift; sourceTree = "<group>"; };
-		000000000000000000000285 /* SpeakerDiarizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerDiarizationTests.swift; sourceTree = "<group>"; };
 		000000000000000000000286 /* FluidAudioModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluidAudioModelManager.swift; sourceTree = "<group>"; };
 		000000000000000000000287 /* FluidAudioModelManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluidAudioModelManagerTests.swift; sourceTree = "<group>"; };
 		000000000000000000000288 /* FluidAudioTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluidAudioTranscriptionService.swift; sourceTree = "<group>"; };
@@ -192,13 +181,7 @@
 		000000000000000000000291 /* AudioActivityDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioActivityDetector.swift; sourceTree = "<group>"; };
 		000000000000000000000292 /* TranscriptionSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionSettingsStore.swift; sourceTree = "<group>"; };
 		000000000000000000000293 /* LegacyModelCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyModelCleaner.swift; sourceTree = "<group>"; };
-		000000000000000000000294 /* FluidAudioDiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FluidAudioDiarizationService.swift; sourceTree = "<group>"; };
-		000000000000000000000295 /* SpeakerArtifacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerArtifacts.swift; sourceTree = "<group>"; };
-		000000000000000000000296 /* SpeakerTranscriptResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerTranscriptResolver.swift; sourceTree = "<group>"; };
-		000000000000000000000297 /* SpeakerPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerPipeline.swift; sourceTree = "<group>"; };
-		000000000000000000000298 /* SpeakerEditingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerEditingService.swift; sourceTree = "<group>"; };
-		000000000000000000000299 /* SpeakerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerEditorView.swift; sourceTree = "<group>"; };
-		000000000000000000000300 /* SpeakerPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerPipelineTests.swift; sourceTree = "<group>"; };
+		000000000000000000000302 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -226,6 +209,7 @@
 				000000000000000000000602 /* MeetingScribe */,
 				000000000000000000000605 /* MeetingScribeTests */,
 				000000000000000000000606 /* Products */,
+				000000000000000000000613 /* Config */,
 				000000000000000000000212 /* README.md */,
 			);
 			sourceTree = "<group>";
@@ -259,7 +243,6 @@
 				000000000000000000000276 /* RecordingsWindowModel.swift */,
 				000000000000000000000277 /* RecordingsWindow.swift */,
 				000000000000000000000281 /* CalendarEventPickerView.swift */,
-				000000000000000000000299 /* SpeakerEditorView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -281,6 +264,14 @@
 			path = Calendar;
 			sourceTree = "<group>";
 		};
+		000000000000000000000613 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000302 /* Signing.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		000000000000000000000604 /* Sessions */ = {
 			isa = PBXGroup;
 			children = (
@@ -300,8 +291,6 @@
 			children = (
 				000000000000000000000289 /* FluidAudioTranscriptionServiceTests.swift */,
 				000000000000000000000287 /* FluidAudioModelManagerTests.swift */,
-				000000000000000000000285 /* SpeakerDiarizationTests.swift */,
-				000000000000000000000300 /* SpeakerPipelineTests.swift */,
 				000000000000000000000267 /* AudioClockTests.swift */,
 				000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */,
 				000000000000000000000269 /* ProcessingFileServiceTests.swift */,
@@ -360,18 +349,12 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000293 /* LegacyModelCleaner.swift */,
-				000000000000000000000298 /* SpeakerEditingService.swift */,
-				000000000000000000000297 /* SpeakerPipeline.swift */,
-				000000000000000000000296 /* SpeakerTranscriptResolver.swift */,
-				000000000000000000000295 /* SpeakerArtifacts.swift */,
-				000000000000000000000294 /* FluidAudioDiarizationService.swift */,
 				000000000000000000000292 /* TranscriptionSettingsStore.swift */,
 				000000000000000000000291 /* AudioActivityDetector.swift */,
 				000000000000000000000290 /* TranscriptionRevision.swift */,
 				000000000000000000000288 /* FluidAudioTranscriptionService.swift */,
 				000000000000000000000286 /* FluidAudioModelManager.swift */,
 				000000000000000000000283 /* ContinuousUtterance.swift */,
-				000000000000000000000284 /* SpeakerDiarization.swift */,
 				000000000000000000000234 /* SessionTranscriber.swift */,
 				000000000000000000000237 /* TranscriptMerger.swift */,
 				000000000000000000000226 /* TranscriptModels.swift */,
@@ -512,19 +495,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				000000000000000000000191 /* LegacyModelCleaner.swift in Sources */,
-				000000000000000000000197 /* SpeakerEditorView.swift in Sources */,
-				000000000000000000000196 /* SpeakerEditingService.swift in Sources */,
-				000000000000000000000195 /* SpeakerPipeline.swift in Sources */,
-				000000000000000000000194 /* SpeakerTranscriptResolver.swift in Sources */,
-				000000000000000000000193 /* SpeakerArtifacts.swift in Sources */,
-				000000000000000000000192 /* FluidAudioDiarizationService.swift in Sources */,
 				000000000000000000000190 /* TranscriptionSettingsStore.swift in Sources */,
 				000000000000000000000189 /* AudioActivityDetector.swift in Sources */,
 				000000000000000000000188 /* TranscriptionRevision.swift in Sources */,
 				000000000000000000000186 /* FluidAudioTranscriptionService.swift in Sources */,
 				000000000000000000000183 /* FluidAudioModelManager.swift in Sources */,
 				000000000000000000000180 /* ContinuousUtterance.swift in Sources */,
-				000000000000000000000181 /* SpeakerDiarization.swift in Sources */,
 				000000000000000000000163 /* ProcessingFileService.swift in Sources */,
 				000000000000000000000156 /* SessionRecovery.swift in Sources */,
 				000000000000000000000154 /* StorageGuard.swift in Sources */,
@@ -577,8 +553,6 @@
 			files = (
 				000000000000000000000187 /* FluidAudioTranscriptionServiceTests.swift in Sources */,
 				000000000000000000000184 /* FluidAudioModelManagerTests.swift in Sources */,
-				000000000000000000000182 /* SpeakerDiarizationTests.swift in Sources */,
-				000000000000000000000198 /* SpeakerPipelineTests.swift in Sources */,
 				000000000000000000000175 /* SessionCatalogTests.swift in Sources */,
 				000000000000000000000164 /* AudioClockTests.swift in Sources */,
 				000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */,
@@ -620,6 +594,7 @@
 /* Begin XCBuildConfiguration section */
 		000000000000000000001001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -669,6 +644,7 @@
 		};
 		000000000000000000001002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -711,14 +687,12 @@
 		};
 		000000000000000000001003 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = MeetingScribe/MeetingScribe.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4L9Z76W4R5;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MeetingScribe/Info.plist;
@@ -738,14 +712,12 @@
 		};
 		000000000000000000001004 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = MeetingScribe/MeetingScribe.entitlements;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4L9Z76W4R5;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MeetingScribe/Info.plist;
@@ -765,9 +737,9 @@
 		};
 		000000000000000000001005 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribeTests;
@@ -780,9 +752,9 @@
 		};
 		000000000000000000001006 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 000000000000000000000302 /* Signing.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CODE_SIGN_STYLE = Automatic;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.martinhostak.MeetingScribeTests;

@@ -27,18 +27,18 @@ final class OutputExporterTests: XCTestCase {
         let sanitizer = FilenameSanitizer(timeZone: utc)
 
         XCTAssertEqual(
-            sanitizer.markdownFileName(title: "  SOFA: weekly / API?  ", startedAt: startedAt),
-            "2026-07-10 10-30 - SOFA weekly API.md"
+            sanitizer.markdownFileName(title: "  Project Alpha: weekly / API?  ", startedAt: startedAt),
+            "2026-07-10 10-30 - Project Alpha weekly API.md"
         )
         XCTAssertEqual(sanitizer.sanitizedTitle(" /:*? "), "Meeting")
         XCTAssertEqual(
             sanitizer.markdownFileName(
-                title: "SOFA weekly",
+                title: "Project Alpha weekly",
                 sessionID: "recording:1",
                 startedAt: startedAt,
                 template: "{title} - {id} - {date}"
             ),
-            "SOFA weekly - recording 1 - 2026-07-10.md"
+            "Project Alpha weekly - recording 1 - 2026-07-10.md"
         )
     }
 
@@ -63,6 +63,21 @@ final class OutputExporterTests: XCTestCase {
         XCTAssertLessThanOrEqual(fileName.utf8.count, 103)
         XCTAssertNotNil(fileName.data(using: .utf8))
         XCTAssertTrue(fileName.hasSuffix(".md"))
+
+        let identifier = "recording-2026-07-10-ABC123"
+        let longTitleWithIdentifier = sanitizer.markdownFileName(
+            title: String(repeating: "x", count: 300),
+            sessionID: identifier,
+            startedAt: startedAt,
+            template: "{title}-{id}"
+        )
+        XCTAssertTrue(longTitleWithIdentifier.contains(identifier))
+        XCTAssertLessThanOrEqual(longTitleWithIdentifier.utf8.count, 103)
+
+        XCTAssertEqual(
+            longTitleWithIdentifier,
+            String(repeating: "x", count: 72) + "-" + identifier + ".md"
+        )
     }
 
     func testOversizedSingleGraphemeUsesNonemptyFallback() {
@@ -102,8 +117,8 @@ final class OutputExporterTests: XCTestCase {
             to: temporaryRoot
         )
 
-        XCTAssertEqual(first.fileURL.lastPathComponent, "2026-07-10 10-30 - SOFA weekly.md")
-        XCTAssertEqual(second.fileURL.lastPathComponent, "2026-07-10 10-30 - SOFA weekly (2).md")
+        XCTAssertEqual(first.fileURL.lastPathComponent, "2026-07-10 10-30 - Project Alpha weekly.md")
+        XCTAssertEqual(second.fileURL.lastPathComponent, "2026-07-10 10-30 - Project Alpha weekly (2).md")
         XCTAssertEqual(first.exportedAt, exportedAt)
         XCTAssertTrue(try String(contentsOf: first.fileURL, encoding: .utf8).contains("Dobrý deň."))
     }
@@ -137,13 +152,43 @@ final class OutputExporterTests: XCTestCase {
             to: temporaryRoot
         )
 
-        XCTAssertEqual(result.fileURL.lastPathComponent, "SOFA weekly (recording-1).md")
+        XCTAssertEqual(result.fileURL.lastPathComponent, "Project Alpha weekly (recording-1).md")
+    }
+
+    func testConcurrentExportsNeverClaimTheSameFile() async throws {
+        let exporter = OutputExporter(
+            renderer: MarkdownRenderer(timeZone: utc),
+            filenameSanitizer: FilenameSanitizer(timeZone: utc)
+        )
+        let session = makeSession()
+        let transcript = makeTranscript()
+        let root = try XCTUnwrap(temporaryRoot)
+
+        let paths = try await withThrowingTaskGroup(of: URL.self) { group in
+            for _ in 0..<20 {
+                group.addTask {
+                    try exporter.export(
+                        session: session,
+                        transcript: transcript,
+                        to: root
+                    ).fileURL
+                }
+            }
+            var paths: [URL] = []
+            for try await path in group {
+                paths.append(path)
+            }
+            return paths
+        }
+
+        XCTAssertEqual(Set(paths).count, 20)
+        XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
     private func makeSession() -> SessionMetadata {
         SessionMetadata(
             id: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             status: .recorded,
             createdAt: startedAt,
             startedAt: startedAt,
@@ -154,14 +199,14 @@ final class OutputExporterTests: XCTestCase {
     private func makeTranscript() -> MergedTranscript {
         MergedTranscript(
             sessionID: "recording-1",
-            title: "SOFA weekly",
+            title: "Project Alpha weekly",
             completedAt: startedAt.addingTimeInterval(30 * 60),
             tracks: [],
             segments: [
                 TranscriptSegment(
                     id: "segment-000000",
                     source: .microphone,
-                    speaker: "Martin",
+                    speaker: "Speaker B",
                     start: 1,
                     end: 2,
                     language: "sk",

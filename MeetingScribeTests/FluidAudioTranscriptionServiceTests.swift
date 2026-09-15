@@ -628,7 +628,6 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
-        resolvedTranscript: ResolvedTranscript?,
         analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
