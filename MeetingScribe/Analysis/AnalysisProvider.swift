@@ -9,6 +9,7 @@ enum AnalysisError: Error, Equatable, LocalizedError {
     case executableNotRunnable(path: String)
     case processLaunchFailed(tool: AnalysisTool, message: String)
     case processFailed(tool: AnalysisTool, exitCode: Int32, message: String)
+    case authenticationRequired(tool: AnalysisTool, loginCommand: String)
     case processTimedOut(tool: AnalysisTool)
     case transcriptChunkTooLarge
     case emptyOutput
@@ -27,6 +28,8 @@ enum AnalysisError: Error, Equatable, LocalizedError {
         case let .processFailed(tool, exitCode, message):
             let detail = message.isEmpty ? "No diagnostic output." : message
             return "\(tool.displayName) failed with exit code \(exitCode): \(detail)"
+        case let .authenticationRequired(tool, loginCommand):
+            return "\(tool.displayName) sign-in has expired or is invalid. Open Terminal and run:\n\(loginCommand)\nComplete sign-in, then retry AI analysis. Your recording and transcript are saved."
         case let .processTimedOut(tool):
             return "\(tool.displayName) analysis timed out."
         case .transcriptChunkTooLarge:

@@ -1,5 +1,6 @@
 import AudioToolbox
 import AVFoundation
+import CoreAudio
 import Foundation
 import XCTest
 @testable import MeetingScribe
@@ -120,19 +121,82 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         _ = await capture.stop()
     }
 
-    func testFormatNotSupportedStartupRecreatesEngineAndSucceeds() async throws {
-        let formatError = NSError(
-            domain: NSOSStatusErrorDomain,
-            code: Int(kAudioUnitErr_FormatNotSupported)
+    func testRecoverableStartupErrorRecreatesEngineAndUsesFreshInputFormat() async throws {
+        let errors = [
+            NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioUnitErr_FormatNotSupported)),
+            NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioHardwareNotRunningError)),
+            NSError(domain: "com.apple.coreaudio.avfaudio", code: Int(kAudioHardwareNotRunningError))
+        ]
+
+        for error in errors {
+            let initialEngine = FakeMicrophoneAudioEngine(startError: error)
+            let replacementEngine = FakeMicrophoneAudioEngine(inputSampleRate: 32_000)
+            let capture = makeStartupCapture(initialEngine, replacement: replacementEngine)
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MicrophoneCaptureRetryTests-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            try await capture.start(outputURL: outputURL)
+
+            XCTAssertTrue(initialEngine.operations.contains("reset"))
+            XCTAssertEqual(replacementEngine.installedTapSampleRates, [32_000])
+            let diagnostics = await capture.diagnostics()
+            XCTAssertGreaterThan(diagnostics.bufferCount, 0)
+            XCTAssertNil(diagnostics.failureReason)
+            _ = await capture.stop()
+        }
+    }
+
+    func testStartupRetriesOnlyRecognizedAudioErrorsAndRespectsAttemptLimit() async throws {
+        let cases: [(error: NSError, expectedRetries: Int)] = [
+            (NSError(domain: "com.apple.coreaudio.avfaudio", code: Int(kAudioHardwareNotRunningError)), 1),
+            (NSError(domain: "OtherErrorDomain", code: Int(kAudioHardwareNotRunningError)), 0),
+            (NSError(domain: NSOSStatusErrorDomain, code: Int(kAudioHardwareIllegalOperationError)), 0)
+        ]
+
+        for testCase in cases {
+            let initialEngine = FakeMicrophoneAudioEngine(startError: testCase.error)
+            let replacementEngine = FakeMicrophoneAudioEngine(startError: testCase.error)
+            let factoryCalls = SynchronousCounter()
+            let capture = makeStartupCapture(initialEngine, replacement: replacementEngine, factoryCalls: factoryCalls)
+            let outputURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MicrophoneCaptureFailureTests-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+
+            do {
+                try await capture.start(outputURL: outputURL)
+                XCTFail("Startup must fail when the error persists or is not retryable.")
+            } catch {
+                XCTAssertEqual((error as NSError).domain, testCase.error.domain)
+                XCTAssertEqual((error as NSError).code, testCase.error.code)
+            }
+
+            XCTAssertEqual(factoryCalls.value, testCase.expectedRetries)
+            XCTAssertEqual(
+                replacementEngine.operations.filter { $0 == "start-enter" }.count,
+                testCase.expectedRetries
+            )
+            let diagnostics = await capture.stop()
+            XCTAssertEqual(diagnostics.bufferCount, 0)
+            XCTAssertEqual(diagnostics.failureReason, testCase.error.localizedDescription)
+        }
+    }
+
+    func testCancellationDuringStartupRetryDoesNotStartReplacementEngine() async throws {
+        let initialEngine = FakeMicrophoneAudioEngine(
+            startError: NSError(domain: "com.apple.coreaudio.avfaudio", code: Int(kAudioHardwareNotRunningError))
         )
-        let initialEngine = FakeMicrophoneAudioEngine(startError: formatError)
         let replacementEngine = FakeMicrophoneAudioEngine()
+        let factoryCalls = SynchronousCounter()
         let capture = MicrophoneCapture(
             engine: initialEngine,
-            engineFactory: { replacementEngine },
+            engineFactory: {
+                factoryCalls.increment()
+                return replacementEngine
+            },
             notificationCenter: NotificationCenter(),
             recoveryConfiguration: MicrophoneRecoveryConfiguration(
-                delay: 0,
+                delay: 0.5,
                 minimumBufferCount: 1,
                 maximumStartupAttempts: 2,
                 startupVerificationDelay: 0.05
@@ -140,15 +204,22 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
             permissionRequester: {}
         )
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MicrophoneCaptureRetryTests-\(UUID().uuidString).wav")
+            .appendingPathComponent("MicrophoneCaptureCancellationTests-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: outputURL) }
 
-        try await capture.start(outputURL: outputURL)
+        let startTask = Task { try await capture.start(outputURL: outputURL) }
+        try await waitUntil { initialEngine.operations.contains("reset") }
+        startTask.cancel()
 
-        XCTAssertTrue(initialEngine.operations.contains("reset"))
-        XCTAssertEqual(replacementEngine.installedTapSampleRates, [48_000])
-        let diagnostics = await capture.diagnostics()
-        XCTAssertGreaterThan(diagnostics.bufferCount, 0)
+        do {
+            try await startTask.value
+            XCTFail("Cancellation must interrupt the startup retry delay.")
+        } catch is CancellationError {
+            // Expected: do not create or start another engine after cancellation.
+        }
+
+        XCTAssertEqual(factoryCalls.value, 0)
+        XCTAssertFalse(replacementEngine.didEnterStart)
         _ = await capture.stop()
     }
 
@@ -184,6 +255,29 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
             diagnostics.failureReason,
             AudioCaptureServiceError.microphoneProducedNoData.localizedDescription
         )
+    }
+
+    func testHardwareNotRunningRetryMustReceiveBuffersBeforeReportingSuccess() async throws {
+        let initialEngine = FakeMicrophoneAudioEngine(
+            startError: NSError(domain: "com.apple.coreaudio.avfaudio", code: Int(kAudioHardwareNotRunningError))
+        )
+        let replacementEngine = FakeMicrophoneAudioEngine(producesBuffers: false)
+        let capture = makeStartupCapture(initialEngine, replacement: replacementEngine)
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureRetryNoDataTests-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+
+        do {
+            try await capture.start(outputURL: outputURL)
+            XCTFail("A successful engine start without audio buffers is not a recovered microphone.")
+        } catch let error as AudioCaptureServiceError {
+            XCTAssertEqual(error, .microphoneProducedNoData)
+        }
+
+        let diagnostics = await capture.stop()
+        XCTAssertEqual(diagnostics.bufferCount, 0)
+        XCTAssertEqual(diagnostics.failureReason, AudioCaptureServiceError.microphoneProducedNoData.localizedDescription)
+        XCTAssertTrue(replacementEngine.operations.contains("stop"))
     }
 
     func testDelayedRecoveryFromStoppedCaptureDoesNotAffectNextCapture() async throws {
@@ -270,6 +364,28 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
 
         XCTAssertEqual(factoryCalls.value, 1)
         _ = await capture.stop()
+    }
+
+    private func makeStartupCapture(
+        _ initialEngine: FakeMicrophoneAudioEngine,
+        replacement: FakeMicrophoneAudioEngine,
+        factoryCalls: SynchronousCounter = SynchronousCounter()
+    ) -> MicrophoneCapture {
+        MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: {
+                factoryCalls.increment()
+                return replacement
+            },
+            notificationCenter: NotificationCenter(),
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0,
+                minimumBufferCount: 1,
+                maximumStartupAttempts: 2,
+                startupVerificationDelay: 0.05
+            ),
+            permissionRequester: {}
+        )
     }
 
     private func waitUntil(

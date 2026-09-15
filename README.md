@@ -51,6 +51,10 @@ Recording sessions are stored under `~/Library/Application Support/MeetingScribe
 
 ## Recovery and resilience
 
+Microphone capture follows the macOS default **input** device. Select the microphone under **System Settings → Sound → Input**; selecting a headset for sound output alone does not select its microphone.
+
+If microphone startup reports an unsupported format or Core Audio `kAudioHardwareNotRunningError` (`1937010544`, `'stop'`), MeetingScribe waits 0.5 seconds and retries once with a new audio engine and a fresh input format. Startup succeeds only after microphone buffers arrive. Cancellation stops the retry, and a persistent failure remains visible while system-audio recording can continue.
+
 At startup, MeetingScribe scans recording manifests for interrupted capture, failed transcription, missing models, and incomplete Markdown export. The menu-bar UI requires each recoverable session to be either processed again or closed explicitly. Closing recovery marks the session as failed but does not delete any audio, transcript, analysis, or log file.
 
 Recovery reuses valid `transcript.json`, `utterance-transcript.json`, `speaker-diarization.json`, `resolved-transcript.json`, and `analysis.json` checkpoints when available. Otherwise it repairs and inspects the directly captured `system-16k.wav` and resumes from the earliest missing stage without another conversion or unnecessary ASR pass. Fingerprints invalidate stale grouping, diarization, and resolution artifacts independently. Legacy schema-7 sessions with CAF inputs remain supported and are converted through the previous working-audio path. Recovery attempts, outcomes, diarization state, and optional source-audio cleanup are recorded in the session manifest. Schema 14 snapshots the selected transcription language, output language, Markdown file-name template, AI tool/prompt configuration, any explicitly confirmed Calendar metadata, grouping and diarization results, and engine-neutral provenance so a recovered meeting is not changed by later preference edits.
