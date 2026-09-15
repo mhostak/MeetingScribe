@@ -1,5 +1,7 @@
 # Phase 10 stabilization protocol
 
+Historical stabilization record/protocol for the July 2026 builds. References to Whisper, CAF capture, test totals, and completed hardware checks apply to those builds. See [README](../README.md) for current runtime, signing, data-sharing behavior, and dated CI results.
+
 This checklist separates automated evidence from tests that require real macOS hardware, permissions, or a live meeting application. Do not mark a manual scenario as passed without preserving the session ID and the requested evidence.
 
 ## Automated baseline

@@ -1,5 +1,7 @@
 # Phase 10 stabilization results
 
+Historical stabilization record/protocol for the July 2026 builds. References to Whisper, CAF capture, test totals, and completed hardware checks apply to those builds. See [README](../README.md) for current runtime, signing, data-sharing behavior, and dated CI results.
+
 This report records the completed phase 10 stabilization evidence. It intentionally excludes transcript text, meeting content, API credentials, and other sensitive values.
 
 ## Automated regression
