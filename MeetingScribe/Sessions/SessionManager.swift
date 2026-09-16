@@ -174,8 +174,16 @@ actor SessionManager {
         guard session.metadata.status != .recording || kind == .recovery else {
             throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
         }
-        if let job = session.metadata.processing, !job.state.isTerminal {
-            return session
+        if let job = session.metadata.processing {
+            guard job.schemaVersion == ProcessingJob.currentSchemaVersion else {
+                throw ProcessingJobRepositoryError.unsupportedSchema(
+                    sessionID: sessionID,
+                    schemaVersion: job.schemaVersion
+                )
+            }
+            if !job.state.isTerminal {
+                return session
+            }
         }
 
         if kind == .recovery {
@@ -226,6 +234,9 @@ actor SessionManager {
         guard job.jobID == jobID, job.attemptID == attemptID else {
             throw ProcessingJobRepositoryError.processingIdentityMismatch(sessionID)
         }
+        guard !job.state.isTerminal else {
+            throw ProcessingJobRepositoryError.processingJobAlreadyTerminal(sessionID)
+        }
 
         if let state = patch.state {
             job.state = state
@@ -267,6 +278,9 @@ actor SessionManager {
         guard job.jobID == jobID, job.attemptID == attemptID else {
             throw ProcessingJobRepositoryError.processingIdentityMismatch(sessionID)
         }
+        guard !job.state.isTerminal else {
+            throw ProcessingJobRepositoryError.processingJobAlreadyTerminal(sessionID)
+        }
 
         let failed = failureDescription != nil || !failedSteps.isEmpty
         job.state = failed ? .failed : .completed
@@ -276,6 +290,10 @@ actor SessionManager {
         job.failureDescription = failureDescription
         session.metadata.processing = job
         apply(artifactMetadata, to: &session.metadata)
+        if artifactMetadata.analysis?.status == .completed,
+           let configuration = job.configuration.analysisConfiguration {
+            session.metadata.analysisConfiguration = configuration
+        }
         if session.metadata.recovery?.status == .inProgress {
             session.metadata.recovery?.status = failed ? .failed : .completed
             session.metadata.recovery?.completedAt = now
@@ -300,6 +318,7 @@ actor SessionManager {
                     SessionMetadata.self,
                     from: Data(contentsOf: directory.appendingPathComponent("session.json", isDirectory: false))
                   ),
+                  metadata.id == directory.lastPathComponent,
                   metadata.processing != nil else {
                 return nil
             }
@@ -465,12 +484,23 @@ actor SessionManager {
     func scanForRecovery(now: Date = Date()) throws -> SessionRecoveryScanResult {
         try prepareStorage()
         let result = recoveryScanner.scan(recordingsRoot: recordingsRoot, now: now)
-        let processingIDs = Set(try loadProcessingSessions().map(\.metadata.id))
+        let processingSessions = try loadProcessingSessions()
+        let processingIDs = Set(processingSessions.map(\.metadata.id))
         let excludedIDs = processingIDs.union(activeSession.map { [$0.metadata.id] } ?? [])
-        guard !excludedIDs.isEmpty else { return result }
+        let unsupportedIssues = processingSessions.compactMap { session -> SessionRecoveryIssue? in
+            guard let job = session.metadata.processing,
+                  job.schemaVersion != ProcessingJob.currentSchemaVersion else {
+                return nil
+            }
+            return SessionRecoveryIssue(
+                directoryName: session.metadata.id,
+                reason: "Processing job schema version \(job.schemaVersion) is unsupported. The job was not resumed."
+            )
+        }
+        guard !excludedIDs.isEmpty || !unsupportedIssues.isEmpty else { return result }
         return SessionRecoveryScanResult(
             candidates: result.candidates.filter { !excludedIDs.contains($0.id) },
-            issues: result.issues
+            issues: (result.issues + unsupportedIssues).sorted { $0.directoryName < $1.directoryName }
         )
     }
 
@@ -625,6 +655,8 @@ enum ProcessingJobRepositoryError: Error, Equatable, LocalizedError {
     case sessionStillRecording(String)
     case processingJobNotFound(String)
     case processingIdentityMismatch(String)
+    case processingJobAlreadyTerminal(String)
+    case unsupportedSchema(sessionID: String, schemaVersion: Int)
 
     var errorDescription: String? {
         switch self {
@@ -638,6 +670,10 @@ enum ProcessingJobRepositoryError: Error, Equatable, LocalizedError {
             return "The recording session \(id) has no processing job."
         case let .processingIdentityMismatch(id):
             return "The processing attempt for recording session \(id) is no longer current."
+        case let .processingJobAlreadyTerminal(id):
+            return "The processing job for recording session \(id) has already finished."
+        case let .unsupportedSchema(sessionID, schemaVersion):
+            return "Processing job schema version \(schemaVersion) for recording session \(sessionID) is unsupported."
         }
     }
 }

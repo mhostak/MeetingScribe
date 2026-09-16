@@ -413,6 +413,118 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertNil(activeSession)
     }
 
+    func testTerminalJobRejectsLateCallback() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Terminal job")
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        _ = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata()
+        )
+
+        do {
+            _ = try await manager.updateProcessing(
+                sessionID: started.metadata.id,
+                jobID: job.jobID,
+                attemptID: job.attemptID,
+                patch: ProcessingJobPatch(state: .pauseRequested)
+            )
+            XCTFail("Expected a terminal job to reject a delayed callback.")
+        } catch {
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .processingJobAlreadyTerminal(started.metadata.id)
+            )
+        }
+        XCTAssertEqual(try decodeMetadata(at: started.manifestURL).processing?.state, .completed)
+    }
+
+    func testCompletionPromotesFrozenAnalysisConfigurationOnlyOnSuccess() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Analysis snapshot")
+        let configuration = SessionAnalysisConfiguration(
+            tool: .codex,
+            executablePath: "/tmp/codex",
+            model: "test-model",
+            prompt: "Summarize the meeting."
+        )
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false,
+                analysisConfiguration: configuration
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        let analysis = SessionAnalysisMetadata(
+            status: .completed,
+            provider: "codex",
+            model: "test-model",
+            startedAt: nil,
+            completedAt: Date(),
+            transcriptChunkCount: 1,
+            requestCount: 1,
+            failureReason: nil
+        )
+        let completed = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata(analysis: analysis)
+        )
+
+        XCTAssertEqual(completed.metadata.analysisConfiguration, configuration)
+        XCTAssertEqual(try decodeMetadata(at: started.manifestURL).analysisConfiguration, configuration)
+    }
+
+    func testFutureProcessingSchemaIsVisibleAndCannotBeRequeued() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Future schema")
+        _ = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+        )
+        var document = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: started.manifestURL)) as? [String: Any]
+        )
+        var processing = try XCTUnwrap(document["processing"] as? [String: Any])
+        processing["schemaVersion"] = ProcessingJob.currentSchemaVersion + 1
+        document["processing"] = processing
+        try JSONSerialization.data(withJSONObject: document).write(to: started.manifestURL, options: .atomic)
+
+        do {
+            _ = try await manager.queueProcessing(
+                sessionID: started.metadata.id,
+                kind: .retranscribe,
+                configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+            )
+            XCTFail("Expected a future job schema to reject queue mutation.")
+        } catch {
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .unsupportedSchema(
+                    sessionID: started.metadata.id,
+                    schemaVersion: ProcessingJob.currentSchemaVersion + 1
+                )
+            )
+        }
+        let issues = try await manager.scanForRecovery().issues
+        XCTAssertTrue(issues.contains { $0.directoryName == started.metadata.id })
+    }
+
     func testQueueProcessingIsIdempotentThenCreatesFreshTerminalAttempt() async throws {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         let started = try await manager.startSession(title: "Retry queue")
@@ -626,10 +738,10 @@ final class SessionManagerTests: XCTestCase {
         CaptureSessionDiagnostics(
             systemAudio: AudioCaptureDiagnostics(
                 fileName: "system.caf",
-                sampleRate: 48_000,
-                channelCount: 2,
                 bufferCount: 4,
                 totalFrames: 192_000,
+                sampleRate: 48_000,
+                channelCount: 2,
                 firstPresentationTimestamp: 100,
                 lastPresentationTimestamp: 104,
                 lastBufferDurationSeconds: 1,
@@ -637,10 +749,10 @@ final class SessionManagerTests: XCTestCase {
             ),
             microphone: AudioCaptureDiagnostics(
                 fileName: "microphone.caf",
-                sampleRate: 48_000,
-                channelCount: 1,
                 bufferCount: 4,
                 totalFrames: 192_000,
+                sampleRate: 48_000,
+                channelCount: 1,
                 firstPresentationTimestamp: 100,
                 lastPresentationTimestamp: 104,
                 lastBufferDurationSeconds: 1,
