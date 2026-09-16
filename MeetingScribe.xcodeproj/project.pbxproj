@@ -59,6 +59,7 @@
 		000000000000000000000158 /* ProcessingLoggerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000260 /* ProcessingLoggerTests.swift */; };
 		000000000000000000000159 /* SessionRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000261 /* SessionRecoveryTests.swift */; };
 		000000000000000000000160 /* AppStateResilienceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000262 /* AppStateResilienceTests.swift */; };
+		A10000000000000000000003 /* ProcessingNotificationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000004 /* ProcessingNotificationsTests.swift */; };
 		000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000263 /* LongSessionStabilityTests.swift */; };
 		000000000000000000000163 /* ProcessingFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000266 /* ProcessingFileService.swift */; };
 		000000000000000000000164 /* AudioClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000267 /* AudioClockTests.swift */; };
@@ -66,6 +67,7 @@
 		000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000269 /* ProcessingFileServiceTests.swift */; };
 		000000000000000000000168 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000271 /* ApplicationSettings.swift */; };
 		000000000000000000000169 /* ProcessingProgress.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000272 /* ProcessingProgress.swift */; };
+		A10000000000000000000001 /* ProcessingNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* ProcessingNotifications.swift */; };
 		000000000000000000000170 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000273 /* SettingsView.swift */; };
 		000000000000000000000171 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000274 /* Localizable.xcstrings */; };
 		000000000000000000000172 /* SessionCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000275 /* SessionCatalog.swift */; };
@@ -154,6 +156,7 @@
 		000000000000000000000260 /* ProcessingLoggerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingLoggerTests.swift; sourceTree = "<group>"; };
 		000000000000000000000261 /* SessionRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecoveryTests.swift; sourceTree = "<group>"; };
 		000000000000000000000262 /* AppStateResilienceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateResilienceTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000004 /* ProcessingNotificationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingNotificationsTests.swift; sourceTree = "<group>"; };
 		000000000000000000000263 /* LongSessionStabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LongSessionStabilityTests.swift; sourceTree = "<group>"; };
 		000000000000000000000265 /* MeetingScribe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeetingScribe.entitlements; sourceTree = "<group>"; };
 		000000000000000000000266 /* ProcessingFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileService.swift; sourceTree = "<group>"; };
@@ -162,6 +165,7 @@
 		000000000000000000000269 /* ProcessingFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileServiceTests.swift; sourceTree = "<group>"; };
 		000000000000000000000271 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
 		000000000000000000000272 /* ProcessingProgress.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingProgress.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* ProcessingNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingNotifications.swift; sourceTree = "<group>"; };
 		000000000000000000000273 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		000000000000000000000274 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		000000000000000000000275 /* SessionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalog.swift; sourceTree = "<group>"; };
@@ -238,6 +242,7 @@
 				000000000000000000000203 /* AppState.swift */,
 				000000000000000000000271 /* ApplicationSettings.swift */,
 				000000000000000000000272 /* ProcessingProgress.swift */,
+				A10000000000000000000002 /* ProcessingNotifications.swift */,
 				000000000000000000000273 /* SettingsView.swift */,
 				000000000000000000000204 /* MenuBarView.swift */,
 				000000000000000000000276 /* RecordingsWindowModel.swift */,
@@ -296,6 +301,7 @@
 				000000000000000000000269 /* ProcessingFileServiceTests.swift */,
 				000000000000000000000263 /* LongSessionStabilityTests.swift */,
 				000000000000000000000262 /* AppStateResilienceTests.swift */,
+				A10000000000000000000004 /* ProcessingNotificationsTests.swift */,
 				000000000000000000000261 /* SessionRecoveryTests.swift */,
 				000000000000000000000260 /* ProcessingLoggerTests.swift */,
 				000000000000000000000259 /* StorageGuardTests.swift */,
@@ -534,6 +540,7 @@
 				000000000000000000000103 /* AppState.swift in Sources */,
 				000000000000000000000168 /* ApplicationSettings.swift in Sources */,
 				000000000000000000000169 /* ProcessingProgress.swift in Sources */,
+				A10000000000000000000001 /* ProcessingNotifications.swift in Sources */,
 				000000000000000000000170 /* SettingsView.swift in Sources */,
 				000000000000000000000104 /* MenuBarView.swift in Sources */,
 				000000000000000000000173 /* RecordingsWindowModel.swift in Sources */,
@@ -559,6 +566,7 @@
 				000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */,
 				000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */,
 				000000000000000000000160 /* AppStateResilienceTests.swift in Sources */,
+				A10000000000000000000003 /* ProcessingNotificationsTests.swift in Sources */,
 				000000000000000000000159 /* SessionRecoveryTests.swift in Sources */,
 				000000000000000000000158 /* ProcessingLoggerTests.swift in Sources */,
 				000000000000000000000157 /* StorageGuardTests.swift in Sources */,

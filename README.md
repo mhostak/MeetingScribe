@@ -6,6 +6,14 @@ Native macOS menu-bar application for recording meeting audio and producing loca
 
 The current implementation provides the menu-bar application shell, validated application state transitions, durable recording-session metadata, and two recording modes. Online/hybrid mode captures ScreenCaptureKit system audio to `system-16k.wav` plus an optional independent microphone track in `microphone-16k.wav`. Offline/microphone mode does not start ScreenCaptureKit and requires a verified microphone stream. Produced tracks use 16 kHz mono PCM and are finalized without a normal post-recording conversion; legacy sessions with CAF inputs remain recoverable. Local transcription uses FluidAudio `0.15.5` with the pinned Parakeet TDT 0.6B v3 Core ML bundle and writes timestamped per-source transcripts for the tracks that exist. Their normalized segments are merged deterministically into `transcript.json`; overlapping speech is preserved with its original source. The `community-1` diarization runtime and speaker editor are permanently removed after failing real multi-speaker validation. Old diarization files are preserved as untouched session artifacts, while new recordings use deterministic source-local grouping and never claim speaker identity. A consent-first Apple Calendar integration can add a confirmed event title, attendee display names, and optional event description to one recording. MeetingScribe can optionally analyze a valid transcript through Codex CLI or Claude Code and render the returned free-form Markdown into the completed note. Interrupted and failed sessions can recover from preserved audio, ASR, and completed output checkpoints. The original files are never deleted by recovery, including when a model is missing, transcription or AI analysis fails, Markdown export fails, or the application exits unexpectedly.
 
+## Processing notifications
+
+Enable processing notifications in **Settings → General** to request macOS permission. Each processing attempt sends one result after the output is saved or processing fails. The notification includes the meeting title; successful results open the Markdown file, while failures open the recording overview. Notifications use the selected interface language (Slovak, Czech, or English).
+
+Failure notifications identify the affected step: audio preparation, transcription, AI analysis, or saving/export. A failed AI analysis remains a partial result even if Markdown was exported. An intentionally disabled analysis is not an error. Notifications also cover recovery and explicit reprocessing; scans of existing recordings do not generate notifications. Denied system permission does not interrupt processing. macOS notification settings and Focus determine whether a banner is displayed.
+
+These notifications report completed or failed attempts. They do not impose a timeout on a transcription that is still running.
+
 ## Requirements
 
 - macOS 14 or newer

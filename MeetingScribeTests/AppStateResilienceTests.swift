@@ -61,6 +61,82 @@ final class AppStateResilienceTests: XCTestCase {
         )
     }
 
+    func testProcessingNotificationsOptInIsPersistedAndRequestsAuthorization() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let notifier = ResilienceProcessingNotifier()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: fixture.root),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            defaults: fixture.defaults,
+            processingNotifier: notifier
+        )
+
+        XCTAssertFalse(appState.notificationsEnabled)
+        await appState.setNotificationsEnabled(true)
+
+        XCTAssertTrue(appState.notificationsEnabled)
+        XCTAssertEqual(notifier.authorizationRequests, 1)
+        XCTAssertTrue(fixture.defaults.bool(forKey: "processingNotificationsEnabled"))
+    }
+
+    func testProcessingNotificationsIdentifyFailuresAndRespectOptOut() async throws {
+        let cases: [(String, [ProcessingStepID])] = [
+            ("model", [.transcribing]), ("transcriber", [.transcribing]),
+            ("audio", [.preparingAudio]), ("analysis", [.analyzing]),
+            ("export", [.exporting]), ("analysisAndExport", [.analyzing, .exporting]),
+            ("disabled", []), ("successWithoutAnalysis", [])
+        ]
+        for (scenario, expectedSteps) in cases {
+            let fixture = try makeFixture()
+            defer { fixture.cleanup() }
+            let settings = AnalysisSettingsStore(defaults: fixture.defaults)
+            settings.setEnabled(scenario == "analysis" || scenario == "analysisAndExport")
+            settings.setExecutablePath("/bin/echo", for: .codex)
+            let notifier = ResilienceProcessingNotifier()
+            let appState = makeAppState(
+                sessionManager: makeSessionManager(root: fixture.root.appendingPathComponent("Recordings")),
+                captureCoordinator: CaptureCoordinator(
+                    systemAudioCapture: ResilienceCaptureService(), microphoneCapture: ResilienceCaptureService()
+                ),
+                audioFinalizer: scenario == "audio" ? NotificationFailingFinalizer() : ResilienceAudioFinalizer(),
+                fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                    modelsRoot: fixture.root.appendingPathComponent("Models"),
+                    isTranscriptionReady: scenario != "model"
+                ),
+                sessionTranscriber: scenario == "transcriber" ? NotificationFailingTranscriber() : ResilienceSessionTranscriber(),
+                processingFileService: scenario == "export" || scenario == "analysisAndExport" ? NotificationFailingExporter() : nil,
+                monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+                defaults: fixture.defaults, processingNotifier: notifier
+            )
+            await appState.prepareStorage()
+            await appState.setNotificationsEnabled(scenario != "disabled")
+            appState.selectedAppLanguage = .slovak
+            appState.meetingTitle = scenario
+            await appState.startRecording()
+            let session = try XCTUnwrap(appState.currentSession)
+            await appState.stopRecording()
+            await appState.stopRecording() // Repeated stop must not emit another result.
+            if scenario == "disabled" {
+                XCTAssertTrue(notifier.notifications.isEmpty)
+                continue
+            }
+            XCTAssertEqual(notifier.notifications.count, 1, scenario)
+            let notification = try XCTUnwrap(notifier.notifications.first)
+            XCTAssertEqual(notification.failedSteps, expectedSteps, scenario)
+            XCTAssertEqual(notification.succeeded, expectedSteps.isEmpty, scenario)
+            XCTAssertEqual(notification.sessionID, session.metadata.id, scenario)
+            XCTAssertEqual(notification.occurredAt, session.metadata.startedAt ?? session.metadata.createdAt)
+            XCTAssertEqual(notification.language, .slovak)
+            if scenario == "analysis" {
+                XCTAssertNotNil(notification.markdownURL)
+            }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: session.systemAudioURL.path), scenario)
+        }
+    }
+
     func testAllApplicationLanguagesResolveToAConcreteLocalization() {
         XCTAssertEqual(AppLanguage.slovak.resolved, .slovak)
         XCTAssertEqual(AppLanguage.czech.resolved, .czech)
@@ -312,6 +388,7 @@ final class AppStateResilienceTests: XCTestCase {
         let runner = SuccessfulResilienceAnalysisCommandRunner(
             markdown: "## Vlastný výstup\n\nAnalýza bola vytvorená."
         )
+        let notifier = ResilienceProcessingNotifier()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
             captureCoordinator: CaptureCoordinator(
@@ -326,10 +403,12 @@ final class AppStateResilienceTests: XCTestCase {
             sessionTranscriber: ResilienceSessionTranscriber(),
             monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
             analysisCommandRunner: runner,
-            defaults: fixture.defaults
+            defaults: fixture.defaults,
+            processingNotifier: notifier
         )
 
         await appState.prepareStorage()
+        await appState.setNotificationsEnabled(true)
         appState.meetingTitle = "Prompt snapshot"
         await appState.startRecording()
         let activeSession = try XCTUnwrap(appState.currentSession)
@@ -370,6 +449,8 @@ final class AppStateResilienceTests: XCTestCase {
                 + "Slovak (slovenčina, ISO 639-1: sk)."
         ))
         XCTAssertFalse(analysisInputs[0].contains("This later edit"))
+        XCTAssertEqual(notifier.notifications.count, 1)
+        XCTAssertTrue(notifier.notifications[0].succeeded)
     }
 
     func testManualAIAnalysisUsesCurrentSettingsAndUpdatesExistingRecording() async throws {
@@ -441,15 +522,18 @@ final class AppStateResilienceTests: XCTestCase {
         let runner = SuccessfulResilienceAnalysisCommandRunner(
             markdown: "## Nová analýza\n\nAktualizovaný výsledok."
         )
+        let notifier = ResilienceProcessingNotifier()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
             fluidAudioModelManager: ResilienceFluidAudioModelManager(
                 modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
             ),
             analysisCommandRunner: runner,
-            defaults: fixture.defaults
+            defaults: fixture.defaults,
+            processingNotifier: notifier
         )
         await appState.prepareStorage()
+        await appState.setNotificationsEnabled(true)
 
         let updatedMarkdownURL = try await appState.reanalyze(session: session)
 
@@ -475,6 +559,11 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertTrue(analysisInputs[0].contains("[00:00:00]"))
         XCTAssertFalse(analysisInputs[0].contains("[segment-000000]"))
         XCTAssertFalse(analysisInputs[0].contains("[source-block-000000]"))
+        XCTAssertEqual(notifier.notifications.count, 1)
+        XCTAssertTrue(try XCTUnwrap(notifier.notifications.first).succeeded)
+        _ = try await appState.reanalyze(session: session)
+        XCTAssertEqual(notifier.notifications.count, 2)
+        XCTAssertNotEqual(notifier.notifications.first?.id, notifier.notifications.last?.id)
     }
 
     func testCompletedMeetingWithoutTranscriptSegmentsSkipsCLIAnalysis() async throws {
@@ -535,13 +624,17 @@ final class AppStateResilienceTests: XCTestCase {
         try TranscriptJSONCoder.makeEncoder().encode(transcript)
             .write(to: session.mergedTranscriptURL, options: .atomic)
 
+        let notifier = ResilienceProcessingNotifier()
         let appState = makeAppState(
             sessionManager: makeSessionManager(root: recordingsRoot),
             fluidAudioModelManager: ResilienceFluidAudioModelManager(modelsRoot: modelsRoot),
-            defaults: fixture.defaults
+            defaults: fixture.defaults,
+            processingNotifier: notifier
         )
 
         await appState.prepareStorage()
+        XCTAssertTrue(notifier.notifications.isEmpty)
+        await appState.setNotificationsEnabled(true)
         let candidate = try XCTUnwrap(appState.recoveryCandidates.first)
         await appState.recoverSession(candidate)
 
@@ -556,6 +649,8 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(persisted.recovery?.status, .completed)
         XCTAssertEqual(persisted.recovery?.attemptCount, 1)
         XCTAssertEqual(persisted.output?.status, .completed)
+        XCTAssertEqual(notifier.notifications.count, 1)
+        XCTAssertTrue(notifier.notifications[0].succeeded)
         let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
         XCTAssertTrue(log.contains(#""event":"recoveryCompleted""#))
     }
@@ -953,7 +1048,8 @@ final class AppStateResilienceTests: XCTestCase {
         monitoring: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
         storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
         analysisCommandRunner: any AnalysisCommandRunning = ResilienceAnalysisCommandRunner(),
-        defaults: UserDefaults
+        defaults: UserDefaults,
+        processingNotifier: any ProcessingNotifying = ProcessingNotificationService()
     ) -> AppState {
         let applicationSettingsStore = ApplicationSettingsStore(defaults: defaults)
         applicationSettingsStore.setMinimumStorageBytes(1)
@@ -975,7 +1071,9 @@ final class AppStateResilienceTests: XCTestCase {
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
             captureMonitoringConfiguration: monitoring,
-            storageStatusProvider: storageStatusProvider
+            storageStatusProvider: storageStatusProvider,
+            processingNotifier: processingNotifier,
+            notificationDefaults: defaults
         )
     }
 
@@ -1225,6 +1323,20 @@ private actor ResilienceAnalysisCommandRunner: AnalysisCommandRunning {
             standardOutput: Data("\(tool.displayName) test".utf8),
             standardError: Data()
         )
+    }
+}
+
+@MainActor
+private final class ResilienceProcessingNotifier: ProcessingNotifying {
+    private(set) var authorizationRequests = 0
+    private(set) var notifications: [ProcessingNotification] = []
+
+    func requestAuthorization() async {
+        authorizationRequests += 1
+    }
+
+    func send(_ notification: ProcessingNotification) async {
+        notifications.append(notification)
     }
 }
 
@@ -1503,5 +1615,25 @@ private actor EmptyResilienceSessionTranscriber: SessionTranscribing {
             microphoneTranscript: nil,
             mergedTranscript: merged
         )
+    }
+}
+
+private struct NotificationFailingFinalizer: AudioFinalizing {
+    func finalize(session: RecordingSession, diagnostics: CaptureSessionDiagnostics) async throws -> AudioFinalizationMetadata {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+}
+
+private actor NotificationFailingTranscriber: SessionTranscribing {
+    func transcribe(session: RecordingSession, finalization: AudioFinalizationMetadata, model: TranscriptionModelReference, language: TranscriptionLanguage) async throws -> SessionTranscriptionResult {
+        throw CocoaError(.fileReadCorruptFile)
+    }
+}
+
+private actor NotificationFailingExporter: ProcessingFileServicing {
+    func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts? { nil }
+    func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
+    func exportMarkdown(session: SessionMetadata, transcript: MergedTranscript, utteranceTranscript: ContinuousUtteranceTranscript?, analysis: AIAnalysisArtifact?, to directoryURL: URL) async throws -> MarkdownExportResult {
+        throw CocoaError(.fileWriteNoPermission)
     }
 }

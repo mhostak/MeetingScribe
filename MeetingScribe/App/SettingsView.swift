@@ -94,6 +94,17 @@ struct SettingsView: View {
                         Task { await appState.setLaunchAtLoginEnabled(enabled) }
                     }
                 ))
+
+                Toggle("Notify when processing finishes", isOn: Binding(
+                    get: { appState.notificationsEnabled },
+                    set: { enabled in
+                        Task { await appState.setNotificationsEnabled(enabled) }
+                    }
+                ))
+
+                Text("Shows a macOS notification when transcription finishes or stops. Notifications require permission in System Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Languages") {

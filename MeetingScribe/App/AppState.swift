@@ -96,6 +96,7 @@ final class AppState: ObservableObject {
     @Published var markdownFileNameTemplate = MarkdownFileNameTemplate.defaultValue
     @Published var minimumStorageBytes = StorageGuard.defaultMinimumBytes
     @Published var calendarIntegrationEnabled = false
+    @Published private(set) var notificationsEnabled = false
     @Published var selectedSettingsSection = "general"
     @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
 
@@ -119,6 +120,8 @@ final class AppState: ObservableObject {
     private let recordingAudioCleanupService: RecordingAudioCleanupService
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
+    private let processingNotifier: any ProcessingNotifying
+    private let notificationDefaults: UserDefaults
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
     private let storageStatusProvider: @Sendable () async throws -> StorageStatus
     private var captureMonitorTask: Task<Void, Never>?
@@ -133,6 +136,8 @@ final class AppState: ObservableObject {
     private var startRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var usesDetectedAnalysisExecutable = true
+    private var processingNotificationAttemptID: UUID?
+    private var revisionProcessingStep: ProcessingStepID = .preparingAudio
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -156,7 +161,9 @@ final class AppState: ObservableObject {
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
-        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil
+        storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
+        processingNotifier: any ProcessingNotifying = ProcessingNotificationService(),
+        notificationDefaults: UserDefaults = .standard
     ) {
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
@@ -182,6 +189,9 @@ final class AppState: ObservableObject {
             ?? RecordingAudioCleanupService(recordingsRoot: sessionManager.recordingsRoot)
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
+        self.processingNotifier = processingNotifier
+        self.notificationDefaults = notificationDefaults
+        self.notificationsEnabled = notificationDefaults.bool(forKey: "processingNotificationsEnabled")
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
         self.storageStatusProvider = storageStatusProvider ?? {
             try await sessionManager.storageStatus()
@@ -200,6 +210,8 @@ final class AppState: ObservableObject {
             setFailure(error)
             return
         }
+
+        notificationsEnabled = notificationDefaults.bool(forKey: "processingNotificationsEnabled")
 
         outputFolderURL = outputFolderStore.restoreFolder()
         selectedTranscriptionLanguage = self.transcriptionSettingsStore.selectedLanguage
@@ -234,6 +246,15 @@ final class AppState: ObservableObject {
         await runAutomaticRecordingAudioCleanup()
     }
 
+    /// Persists the opt-in and requests permission only when notifications are enabled.
+    func setNotificationsEnabled(_ enabled: Bool) async {
+        notificationsEnabled = enabled
+        notificationDefaults.set(enabled, forKey: "processingNotificationsEnabled")
+        if enabled {
+            await processingNotifier.requestAuthorization()
+        }
+    }
+
     func reprocessWithFluidAudio(
         session: RecordingSession
     ) async throws -> TranscriptionRevisionResult {
@@ -258,15 +279,34 @@ final class AppState: ObservableObject {
         }
 
         fluidAudioReprocessingSessionID = session.metadata.id
-        defer { fluidAudioReprocessingSessionID = nil }
+        beginProcessingNotificationAttempt()
+        revisionProcessingStep = .preparingAudio
+        defer {
+            fluidAudioReprocessingSessionID = nil
+            processingNotificationAttemptID = nil
+        }
         do {
-            return try await FluidAudioTranscriptionRevisionService().reprocess(
+            let result = try await FluidAudioTranscriptionRevisionService().reprocess(
                 session: session,
                 modelBundleURL: bundleURL,
-                descriptor: descriptor
+                descriptor: descriptor,
+                onStep: { [weak self] step in
+                    await self?.updateRevisionProcessingStep(step)
+                }
             )
+            let markdownURL = result.manifest.markdownFileName.map {
+                result.directoryURL.appendingPathComponent($0)
+            }
+            await sendProcessingNotification(
+                session: session, markdownURL: markdownURL,
+                failedSteps: result.manifest.status == .completed ? [] : [revisionProcessingStep]
+            )
+            return result
         } catch {
             lastError = localized(.recordingSavedTranscription(localized(error)))
+            await sendProcessingNotification(
+                session: session, markdownURL: nil, failedSteps: [revisionProcessingStep]
+            )
             throw error
         }
     }
@@ -299,7 +339,12 @@ final class AppState: ObservableObject {
         analysisSession.metadata.analysisConfiguration = configuration
 
         aiAnalysisReprocessingSessionID = session.metadata.id
-        defer { aiAnalysisReprocessingSessionID = nil }
+        beginProcessingNotificationAttempt()
+        var failedStep: ProcessingStepID = .analyzing
+        defer {
+            aiAnalysisReprocessingSessionID = nil
+            processingNotificationAttemptID = nil
+        }
         do {
             let outcome = try await runAnalysis(
                 session: analysisSession,
@@ -313,6 +358,7 @@ final class AppState: ObservableObject {
                 artifact,
                 to: session.analysisURL
             )
+            failedStep = .exporting
             try outputFolderStore.withAccess(to: markdownURL.deletingLastPathComponent()) {
                 try MarkdownAnalysisUpdater().update(artifact, at: markdownURL)
             }
@@ -331,8 +377,14 @@ final class AppState: ObservableObject {
                 for: updatedSession,
                 attributes: [.model(metadata.model)]
             )
+            await sendProcessingNotification(
+                session: updatedSession, markdownURL: markdownURL, failedSteps: []
+            )
             return markdownURL
         } catch {
+            await sendProcessingNotification(
+                session: session, markdownURL: markdownURL, failedSteps: [failedStep]
+            )
             lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
             try? await processingLogger.log(
                 .analysisFailed,
@@ -450,6 +502,7 @@ final class AppState: ObservableObject {
                 throw SessionManagerError.noActiveSession
             }
             let recordingEndedAt = max(stoppedAt, session.metadata.startedAt ?? stoppedAt)
+            beginProcessingNotificationAttempt()
             try? await processingLogger.log(
                 .captureStopped,
                 for: session,
@@ -502,6 +555,7 @@ final class AppState: ObservableObject {
             let session = try await sessionManager.beginRecovery(id: candidate.id)
             removeRecoveryCandidate(id: candidate.id)
             currentSession = session
+            beginProcessingNotificationAttempt()
             try transition(to: .recording)
             try transition(to: .stopping)
             try? await processingLogger.log(.recoveryStarted, for: session)
@@ -542,6 +596,11 @@ final class AppState: ObservableObject {
                 lastCompletedSession = failed
             }
             currentSession = nil
+            await sendProcessingNotification(
+                session: candidate.session,
+                markdownURL: nil,
+                failedSteps: notificationFailureSteps(default: .preparingAudio)
+            )
             setFailure(error)
             await refreshRecoveryCandidate(id: candidate.id)
         }
@@ -584,10 +643,15 @@ final class AppState: ObservableObject {
     }
 
     func requestRecordingsOverview(for session: RecordingSession) {
-        recordingsNavigationRequest = RecordingsNavigationRequest(
-            requestID: UUID(),
+        requestRecordingsOverview(
             sessionID: session.metadata.id,
             occurredAt: session.metadata.startedAt ?? session.metadata.createdAt
+        )
+    }
+
+    func requestRecordingsOverview(sessionID: String, occurredAt: Date) {
+        recordingsNavigationRequest = RecordingsNavigationRequest(
+            requestID: UUID(), sessionID: sessionID, occurredAt: occurredAt
         )
     }
 
@@ -1413,6 +1477,11 @@ final class AppState: ObservableObject {
                 for: failedSession ?? session,
                 attributes: processingErrorAttributes(error)
             )
+            await sendProcessingNotification(
+                session: session,
+                markdownURL: nil,
+                failedSteps: [.preparingAudio]
+            )
             setFailure(error)
             return
         }
@@ -1558,6 +1627,16 @@ final class AppState: ObservableObject {
                 try? await processingLogger.log(.recoveryCompleted, for: completedSession)
             }
             try transition(to: .completed)
+            let failedSteps = ProcessingStepID.allCases.filter { id in
+                processingSteps.first(where: { $0.id == id })?.state == .failed
+            }
+            let markdownURL = completedSession.metadata.output?.markdownPath
+                .flatMap { path in path.isEmpty ? nil : URL(fileURLWithPath: path) }
+            await sendProcessingNotification(
+                session: completedSession,
+                markdownURL: markdownURL,
+                failedSteps: failedSteps
+            )
             await runAutomaticRecordingAudioCleanup()
         } catch {
             if await sessionManager.currentSession() != nil {
@@ -1574,6 +1653,11 @@ final class AppState: ObservableObject {
                 .processingFailed,
                 for: lastCompletedSession ?? session,
                 attributes: processingErrorAttributes(error)
+            )
+            await sendProcessingNotification(
+                session: session,
+                markdownURL: nil,
+                failedSteps: notificationFailureSteps(default: .exporting)
             )
             setFailure(error)
         }
@@ -1947,6 +2031,51 @@ final class AppState: ObservableObject {
                 lastError = "\(lastError ?? localized(.unknownError)) \(localized(error))"
             }
         }
+    }
+
+    private func updateRevisionProcessingStep(_ step: ProcessingStepID) {
+        revisionProcessingStep = step
+    }
+
+    private func beginProcessingNotificationAttempt() {
+        processingNotificationAttemptID = UUID()
+    }
+
+    private func notificationFailureSteps(default fallback: ProcessingStepID) -> [ProcessingStepID] {
+        let failed = ProcessingStepID.allCases.filter { id in
+            processingSteps.first(where: { $0.id == id })?.state == .failed
+        }
+        if !failed.isEmpty {
+            return failed.contains(fallback) ? failed : failed + [fallback]
+        }
+        if let active = processingSteps.first(where: { $0.state == .active })?.id {
+            return [active]
+        }
+        return [fallback]
+    }
+
+    private func sendProcessingNotification(
+        session: RecordingSession,
+        markdownURL: URL?,
+        failedSteps: [ProcessingStepID]
+    ) async {
+        guard let attemptID = processingNotificationAttemptID else { return }
+        processingNotificationAttemptID = nil
+        guard notificationsEnabled else { return }
+        let language: ProcessingNotificationLanguage = switch selectedAppLanguage.resolved {
+        case .slovak: .slovak
+        case .czech: .czech
+        case .english, .system: .english
+        }
+        await processingNotifier.send(ProcessingNotification(
+            id: attemptID,
+            sessionID: session.metadata.id,
+            title: session.metadata.title,
+            failedSteps: failedSteps,
+            markdownURL: markdownURL,
+            language: language,
+            occurredAt: session.metadata.startedAt ?? session.metadata.createdAt
+        ))
     }
 
     func localized(_ message: AppUserMessage) -> String {

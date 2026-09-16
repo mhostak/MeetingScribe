@@ -381,6 +381,39 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
+    func testRevisionExportFailureReportsExportStepAndPreservesTranscript() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeActivityFixture(Array(repeating: 0.2, count: 16_000), to: root.appendingPathComponent("system-16k.wav"))
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "export-failure", title: "Meeting", status: .failed,
+                createdAt: Date(timeIntervalSince1970: 1),
+                startedAt: Date(timeIntervalSince1970: 1),
+                endedAt: Date(timeIntervalSince1970: 2)
+            ), directoryURL: root
+        )
+        let steps = RevisionStepRecorder()
+        let service = FluidAudioTranscriptionRevisionService(
+            transcriber: SessionTranscriber(service: RevisionSpeechService()),
+            processingFileService: RevisionProcessingFileService(failExport: true),
+            makeID: { "export-failure" }
+        )
+        do {
+            _ = try await service.reprocess(
+                session: session, modelBundleURL: root.appendingPathComponent("model"),
+                onStep: { await steps.append($0) }
+            )
+            XCTFail("Expected export failure")
+        } catch {
+            let recordedSteps = await steps.values
+            XCTAssertEqual(recordedSteps, [.preparingAudio, .transcribing, .exporting])
+            XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("revisions/export-failure/transcript.json").path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("revisions/export-failure/comparison.md").path))
+        }
+    }
+
     func testOptInRealModelFixtureMatrixProducesValidWordTimings() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let modelPath = environment["MEETINGSCRIBE_FA3_MODEL_BUNDLE"] else {
@@ -617,7 +650,15 @@ private actor RevisionSpeechService: SpeechTranscribing {
     func releaseCount() -> Int { releases }
 }
 
+private actor RevisionStepRecorder {
+    var values: [ProcessingStepID] = []
+    func append(_ value: ProcessingStepID) { values.append(value) }
+}
+
 private actor RevisionProcessingFileService: ProcessingFileServicing {
+    private let failExport: Bool
+    init(failExport: Bool = false) { self.failExport = failExport }
+
     func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts? {
         nil
     }
@@ -631,6 +672,7 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
         analysis: AIAnalysisArtifact?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
+        if failExport { throw CocoaError(.fileWriteNoPermission) }
         let url = directoryURL.appendingPathComponent("comparison.md")
         try Data("comparison".utf8).write(to: url, options: .atomic)
         return MarkdownExportResult(

@@ -80,8 +80,10 @@ actor FluidAudioTranscriptionRevisionService {
     func reprocess(
         session: RecordingSession,
         modelBundleURL: URL,
-        descriptor: FluidAudioModelDescriptor = .parakeetV3
+        descriptor: FluidAudioModelDescriptor = .parakeetV3,
+        onStep: @Sendable (ProcessingStepID) async -> Void = { _ in }
     ) async throws -> TranscriptionRevisionResult {
+        await onStep(.preparingAudio)
         let finalization = try await finalizationForReprocessing(session)
         try Task.checkCancellation()
 
@@ -139,6 +141,7 @@ actor FluidAudioTranscriptionRevisionService {
         )
 
         do {
+            await onStep(.transcribing)
             let result = try await transcriber.transcribe(
                 session: revisionSession,
                 finalization: finalization,
@@ -149,6 +152,7 @@ actor FluidAudioTranscriptionRevisionService {
                 language: session.metadata.language
             )
             try Task.checkCancellation()
+            await onStep(.exporting)
             let markdown = try await processingFileService.exportMarkdown(
                 session: revisionMetadata,
                 transcript: result.mergedTranscript,

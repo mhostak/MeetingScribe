@@ -8,7 +8,9 @@ struct MeetingScribeApp: App {
     @StateObject private var windowCoordinator: AppWindowCoordinator
 
     init() {
-        let appState = AppState()
+        let notifier = ProcessingNotificationService()
+        notifier.installDelegate()
+        let appState = AppState(processingNotifier: notifier)
         _appState = StateObject(wrappedValue: appState)
         _windowCoordinator = StateObject(
             wrappedValue: AppWindowCoordinator(appState: appState)
@@ -39,6 +41,7 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private var statusObservation: AnyCancellable?
+    private var failureNotificationObservation: AnyCancellable?
     private var recordingsWindow: NSWindow?
     private var calendarPickerWindow: NSWindow?
     private var renderedStatusIcon: (state: MenuBarIconState, colorScheme: ColorScheme)?
@@ -54,6 +57,29 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
         ).sink { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatusIcon()
+            }
+        }
+
+        // Keep the observer alive with the coordinator so clicks also work
+        // when the recordings window has not been opened yet.
+        failureNotificationObservation = NotificationCenter.default.publisher(
+            for: ProcessingNotificationService.failureSelectedNotification
+        ).sink { [weak self] event in
+            guard let self, let sessionID = event.object as? String else { return }
+            let occurredAt: Date = if let value = event.userInfo?["occurredAt"] as? TimeInterval {
+                Date(timeIntervalSince1970: value)
+            } else if let value = event.userInfo?["occurredAt"] as? Date {
+                value
+            } else {
+                Date()
+            }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.appState.requestRecordingsOverview(
+                    sessionID: sessionID,
+                    occurredAt: occurredAt
+                )
+                self.openRecordings()
             }
         }
 
