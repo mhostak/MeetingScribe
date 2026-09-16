@@ -2,13 +2,16 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-struct FluidAudioTranscriptionConfiguration: Equatable, Sendable {
+struct FluidAudioTranscriptionConfiguration: Codable, Equatable, Sendable {
     static let sdkVersion = "0.15.5"
     static let current = FluidAudioTranscriptionConfiguration(
         revision: "parakeet-v3-int8-longform-v1",
         melChunkContext: false,
         dualDecodeArbitration: true,
-        parallelChunkConcurrency: 4,
+        // The processing queue has one worker. Keeping the SDK's own long-form
+        // worker pool at one prevents a recording and a completed session from
+        // competing with four simultaneous Core ML chunk decodes.
+        parallelChunkConcurrency: 1,
         streamingThresholdSamples: 480_000,
         maximumSegmentDurationSeconds: 25,
         sentenceGapSeconds: 1.5
@@ -23,7 +26,7 @@ struct FluidAudioTranscriptionConfiguration: Equatable, Sendable {
     let sentenceGapSeconds: Double
 }
 
-struct FluidAudioASRToken: Equatable, Sendable {
+struct FluidAudioASRToken: Codable, Equatable, Sendable {
     let text: String
     let tokenID: Int
     let startTime: Double
@@ -31,7 +34,7 @@ struct FluidAudioASRToken: Equatable, Sendable {
     let confidence: Double
 }
 
-struct FluidAudioASROutput: Equatable, Sendable {
+struct FluidAudioASROutput: Codable, Equatable, Sendable {
     let text: String
     let confidence: Double
     let tokenTimings: [FluidAudioASRToken]
@@ -48,9 +51,14 @@ protocol FluidAudioASRRunning: Sendable {
     func releaseResources() async
 }
 
-actor ProductionFluidAudioASRRunner: FluidAudioASRRunning {
+/// The in-process implementation is deliberately used only by the worker
+/// executable. Core ML inference has no public pre-emption API, so putting it
+/// in the application process would leave capture exposed while a prediction
+/// is inside the SDK.
+actor InProcessFluidAudioASRRunner: FluidAudioASRRunning {
     private var manager: AsrManager?
     private var loadedModelBundleURL: URL?
+    private var loadedConfiguration: FluidAudioTranscriptionConfiguration?
 
     func transcribe(
         audioURL: URL,
@@ -103,6 +111,7 @@ actor ProductionFluidAudioASRRunner: FluidAudioASRRunning {
         }
         manager = nil
         loadedModelBundleURL = nil
+        loadedConfiguration = nil
     }
 
     private func preparedManager(
@@ -110,7 +119,9 @@ actor ProductionFluidAudioASRRunner: FluidAudioASRRunning {
         configuration: FluidAudioTranscriptionConfiguration
     ) async throws -> AsrManager {
         let standardizedURL = modelBundleURL.standardizedFileURL
-        if let manager, loadedModelBundleURL == standardizedURL {
+        if let manager,
+           loadedModelBundleURL == standardizedURL,
+           loadedConfiguration == configuration {
             return manager
         }
 
@@ -144,6 +155,7 @@ actor ProductionFluidAudioASRRunner: FluidAudioASRRunning {
         let manager = AsrManager(config: asrConfiguration, models: models)
         self.manager = manager
         loadedModelBundleURL = standardizedURL
+        loadedConfiguration = configuration
         return manager
     }
 

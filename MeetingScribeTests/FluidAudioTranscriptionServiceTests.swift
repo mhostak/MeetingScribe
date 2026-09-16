@@ -13,7 +13,7 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         XCTAssertEqual(configuration.revision, "parakeet-v3-int8-longform-v1")
         XCTAssertFalse(configuration.melChunkContext)
         XCTAssertTrue(configuration.dualDecodeArbitration)
-        XCTAssertEqual(configuration.parallelChunkConcurrency, 4)
+        XCTAssertEqual(configuration.parallelChunkConcurrency, 1)
         XCTAssertEqual(configuration.streamingThresholdSamples, 480_000)
         XCTAssertEqual(provenance.engine, "FluidAudio")
         XCTAssertEqual(provenance.engineVersion, "0.15.5")
@@ -226,6 +226,34 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         await service.releaseResources()
         let releaseCount = await runner.releaseCount()
         XCTAssertEqual(releaseCount, 1)
+    }
+
+    func testIsolatedWorkerCancelsOnlyItsOwnedProcess() async throws {
+        let fixture = try makeWorkerFixture(script: """
+        #!/bin/sh
+        exec sleep 5
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let runner = FluidAudioASRWorkerProcessRunner(
+            executableURL: { fixture.executable },
+            terminationGracePeriod: 0.05
+        )
+        let task = Task {
+            try await runner.transcribe(
+                audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
+                modelBundleURL: URL(fileURLWithPath: "/tmp/model"),
+                language: .automatic,
+                configuration: .current
+            )
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected the cancelled worker task to fail.")
+        } catch is CancellationError {}
     }
 
     func testLegacySegmentJSONWithoutWordsStillDecodes() throws {
@@ -523,6 +551,23 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         let channel = try XCTUnwrap(buffer.floatChannelData?[0])
         for (index, sample) in samples.enumerated() { channel[index] = sample }
         try file.write(from: buffer)
+    }
+
+    private func makeWorkerFixture(
+        script: String
+    ) throws -> (directory: URL, executable: URL) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MeetingScribe-ASRWorkerTest-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let executable = directory.appendingPathComponent("worker")
+        try Data(script.utf8).write(to: executable, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: executable.path
+        )
+        return (directory, executable)
     }
 
     private func token(
