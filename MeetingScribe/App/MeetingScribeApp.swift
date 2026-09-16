@@ -5,8 +5,13 @@ import SwiftUI
 @main
 enum MeetingScribeEntryPoint {
     @MainActor
-    static func main() async {
-        if let code = await FluidAudioASRWorker.runIfRequested() { exit(code) }
+    static func main() {
+        if CommandLine.arguments.contains(FluidAudioASRWorker.argument) {
+            Task.detached(priority: .utility) {
+                exit(await FluidAudioASRWorker.runIfRequested() ?? 64)
+            }
+            dispatchMain()
+        }
         MeetingScribeApp.main()
     }
 }

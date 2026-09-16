@@ -33,18 +33,19 @@ only an atomic JSON request containing audio/model paths and fixed ASR config,
 and atomically writes a whole-track result. On cancellation the supervisor
 sends `terminate` to that exact `Process`; after a two-second grace interval it
 sends `SIGKILL` only while the same owned `Process` is still running. The
-processing queue must await task termination before it calls a job paused and
+processing queue awaits task termination before it calls a job paused and
 releases its worker slot. This makes the checkpoint a complete track, not a
-partially persisted ASR chunk.
+partially persisted ASR chunk. `MeetingScribeEntryPoint` dispatches worker mode
+before constructing the SwiftUI application.
 
 `ProcessingResourceGovernor` is pure and injectable. Healthy capture is
 allowed to coexist with the single ASR worker. Memory pressure, serious/critical
 thermal state, insufficient background disk reserve, or unhealthy active
 capture produces `cancelRunning`; an idle queue receives `hold`. Disk resume
-uses a larger threshold to avoid oscillation. The production observer and queue
-must map platform diagnostics into `ProcessingResourceSnapshot` and perform the
-cancel/await/release sequence; the policy itself does not pretend to throttle
-CPU, GPU, or I/O.
+uses a larger threshold to avoid oscillation. The production observer maps
+platform diagnostics into `ProcessingResourceSnapshot`, and the queue performs
+the cancel/await/release sequence. The policy itself does not pretend to
+throttle CPU, GPU, or I/O.
 
 ## Automated evidence
 
@@ -61,5 +62,4 @@ processing is enabled for users: capture baseline versus ASR during capture,
 stop/handoff latency, worker cancellation latency, peak RSS, CPU/GPU/disk use,
 capture frame continuity, memory pressure, thermal state, storage exhaustion,
 and resume transcript integrity. The two-second hard-kill grace is a safety
-bound, not an accepted performance target. The runtime dispatcher must invoke
-`FluidAudioASRWorker.runIfRequested()` before SwiftUI constructs `AppState`.
+bound, not an accepted performance target.
