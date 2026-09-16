@@ -3,6 +3,14 @@ import Combine
 import SwiftUI
 
 @main
+enum MeetingScribeEntryPoint {
+    @MainActor
+    static func main() async {
+        if let code = await FluidAudioASRWorker.runIfRequested() { exit(code) }
+        MeetingScribeApp.main()
+    }
+}
+
 struct MeetingScribeApp: App {
     @StateObject private var appState: AppState
     @StateObject private var windowCoordinator: AppWindowCoordinator
@@ -36,10 +44,12 @@ struct MeetingScribeApp: App {
 }
 
 @MainActor
-final class AppWindowCoordinator: NSObject, ObservableObject {
+final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDelegate {
+    private var terminationPending = false
     private let appState: AppState
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private var processingObservation: AnyCancellable?
     private var statusObservation: AnyCancellable?
     private var failureNotificationObservation: AnyCancellable?
     private var recordingsWindow: NSWindow?
@@ -58,6 +68,10 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
             Task { @MainActor in
                 self?.refreshStatusIcon()
             }
+        }
+
+        processingObservation = appState.$processingJobs.sink { [weak self] _ in
+            Task { @MainActor in self?.refreshStatusIcon() }
         }
 
         // Keep the observer alive with the coordinator so clicks also work
@@ -88,8 +102,20 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !terminationPending else { return .terminateCancel }
+        terminationPending = true
+        Task { @MainActor in
+            let ready = await appState.prepareForTermination()
+            sender.reply(toApplicationShouldTerminate: ready)
+            if !ready { terminationPending = false }
+        }
+        return .terminateLater
+    }
+
     private func installStatusItem() {
         guard statusItem == nil else { return }
+        NSApplication.shared.delegate = self
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         guard let button = item.button else { return }
@@ -136,8 +162,13 @@ final class AppWindowCoordinator: NSObject, ObservableObject {
         let colorScheme: ColorScheme = appearance == .darkAqua ? .dark : .light
         let state = MenuBarIconState(
             status: appState.status,
-            hasRecovery: !appState.recoveryCandidates.isEmpty || !appState.recoveryIssues.isEmpty
+            hasRecovery: !appState.recoveryCandidates.isEmpty || !appState.recoveryIssues.isEmpty,
+            hasProcessing: appState.isProcessingInBackground,
+            hasProcessingFailures: appState.hasProcessingFailures
         )
+        button.toolTip = state.accessibilityLabel + " · " + String(appState.processingJobs.filter {
+            $0.metadata.processing?.state != .completed && $0.metadata.processing?.state != .failed
+        }.count)
         guard renderedStatusIcon?.state != state
                 || renderedStatusIcon?.colorScheme != colorScheme else {
             return

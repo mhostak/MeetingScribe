@@ -54,7 +54,8 @@ struct OutputExporter: Sendable {
         let outputURL = try writeWithoutOverwriting(
             data,
             preferredName: preferredName,
-            directoryURL: directoryURL
+            directoryURL: directoryURL,
+            reuseMatchingOutput: session.processing != nil
         )
         return MarkdownExportResult(fileURL: outputURL, exportedAt: now())
     }
@@ -62,7 +63,8 @@ struct OutputExporter: Sendable {
     private func writeWithoutOverwriting(
         _ data: Data,
         preferredName: String,
-        directoryURL: URL
+        directoryURL: URL,
+        reuseMatchingOutput: Bool
     ) throws -> URL {
         let preferredURL = directoryURL.appendingPathComponent(preferredName)
         let baseName = preferredURL.deletingPathExtension().lastPathComponent
@@ -83,6 +85,14 @@ struct OutputExporter: Sendable {
                 try data.write(to: candidate, options: .withoutOverwriting)
                 return candidate
             } catch let error as CocoaError where error.code == .fileWriteFileExists {
+                // A process can exit after the exclusive create but before the
+                // manifest checkpoint. Reuse only an unchanged, byte-identical
+                // output from this session. The rendered frontmatter includes
+                // recording_id, so another session cannot match this payload.
+                if reuseMatchingOutput,
+                   let existing = try? Data(contentsOf: candidate), existing == data {
+                    return candidate
+                }
                 continue
             }
         }

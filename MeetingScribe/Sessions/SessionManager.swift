@@ -542,18 +542,24 @@ actor SessionManager {
     /// Reloads one visible recovery candidate after an attempted recovery,
     /// without scanning every historical session directory.
     func recoveryCandidate(id: String, now: Date = Date()) throws -> SessionRecoveryCandidate? {
-        guard activeSession == nil else {
+        guard activeSession?.metadata.id != id else {
             throw SessionManagerError.sessionAlreadyActive
         }
         try prepareStorage()
+        if try loadProcessingSessions().contains(where: { $0.metadata.id == id }) {
+            return nil
+        }
         return recoveryScanner.candidate(recordingsRoot: recordingsRoot, id: id, now: now)
     }
 
     func closeRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
-        guard activeSession == nil else {
+        guard activeSession?.metadata.id != id else {
             throw SessionManagerError.sessionAlreadyActive
         }
         try prepareStorage()
+        guard try !loadProcessingSessions().contains(where: { $0.metadata.id == id }) else {
+            throw SessionRecoveryError.candidateNotFound
+        }
         guard let candidate = recoveryScanner.candidate(
             recordingsRoot: recordingsRoot,
             id: id,
@@ -582,10 +588,13 @@ actor SessionManager {
     }
 
     func closeRecoveryIssue(directoryName: String) throws {
-        guard activeSession == nil else {
+        guard activeSession?.metadata.id != directoryName else {
             throw SessionManagerError.sessionAlreadyActive
         }
         try prepareStorage()
+        guard try !loadProcessingSessions().contains(where: { $0.metadata.id == directoryName }) else {
+            throw SessionRecoveryError.issueNotFound
+        }
         guard recoveryScanner.issue(
             recordingsRoot: recordingsRoot,
             directoryName: directoryName

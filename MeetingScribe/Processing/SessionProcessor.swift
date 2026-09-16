@@ -336,8 +336,7 @@ actor SessionProcessor: SessionProcessing {
         let recoveredArtifacts = await processingFiles.loadRecoveredArtifacts(
             from: context.session
         )
-        let canReuseTranscript = recoveredArtifacts.map { !$0.transcript.segments.isEmpty }
-            ?? false
+        let canReuseTranscript = recoveredArtifacts != nil
         let shouldReuseTranscript = canReuseTranscript && (
             context.kind == .recovery
                 || context.session.metadata.transcription?.status == .completed
@@ -362,7 +361,8 @@ actor SessionProcessor: SessionProcessing {
             )
         } else {
             let finalization: AudioFinalizationMetadata
-            if let existing = context.session.metadata.audioFinalization {
+            if let existing = context.session.metadata.audioFinalization,
+               validFinalizedAudio(existing, in: context.session) {
                 finalization = existing
                 artifacts.audioFinalization = existing
                 try await checkpoint(
@@ -422,19 +422,45 @@ actor SessionProcessor: SessionProcessing {
         }
         artifacts.transcription = transcription.metadata
         if transcription.failureDescription != nil { failedSteps.append(.transcribing) }
-        let analysis = try await analyze(
-            context.session, transcript: transcription.transcript,
-            configuration: context.session.metadata.analysisConfiguration,
-            identity: identity, artifacts: artifacts, onEvent: onEvent
-        )
+        let analysis: AnalysisStepResult
+        var generatedNewAnalysis = false
+        if let previous = recoveredArtifacts?.analysis,
+           let metadata = context.session.metadata.analysis,
+           metadata.status == .completed,
+           metadata.promptHash == previous.promptHash,
+           shouldReuseTranscript {
+            artifacts.analysis = metadata
+            try await checkpoint(.analyzing, identity: identity, artifacts: artifacts,
+                                 revision: nil, onEvent: onEvent)
+            analysis = AnalysisStepResult(metadata: metadata, artifact: previous, failureDescription: nil)
+        } else {
+            analysis = try await analyze(
+                context.session, transcript: transcription.transcript,
+                configuration: context.session.metadata.analysisConfiguration,
+                identity: identity, artifacts: artifacts, onEvent: onEvent
+            )
+            generatedNewAnalysis = analysis.artifact != nil
+        }
         artifacts.analysis = analysis.metadata
         if analysis.failureDescription != nil { failedSteps.append(.analyzing) }
-        let export = try await export(
-            context.session, transcript: transcription.transcript,
-            utterances: transcription.utterances, analysis: analysis.artifact,
-            outputDirectory: context.configuration.outputDirectoryURL,
-            identity: identity, artifacts: artifacts, onEvent: onEvent
-        )
+        let export: ExportStepResult
+        if let priorOutput = context.session.metadata.output,
+           priorOutput.status == .completed,
+           shouldReuseTranscript,
+           !generatedNewAnalysis,
+           validExistingOutput(priorOutput, for: context.session) {
+            artifacts.output = priorOutput
+            try await checkpoint(.exporting, identity: identity, artifacts: artifacts,
+                                 revision: nil, onEvent: onEvent)
+            export = ExportStepResult(metadata: priorOutput, failureDescription: nil)
+        } else {
+            export = try await self.export(
+                context.session, transcript: transcription.transcript,
+                utterances: transcription.utterances, analysis: analysis.artifact,
+                outputDirectory: resolvedOutputDirectory(for: context),
+                identity: identity, artifacts: artifacts, onEvent: onEvent
+            )
+        }
         artifacts.output = export.metadata
         if export.failureDescription != nil { failedSteps.append(.exporting) }
         artifacts.audioSourceCleanup = try await cleanSourceAudioIfNeeded(
@@ -537,7 +563,10 @@ actor SessionProcessor: SessionProcessing {
         let markdownURL = URL(fileURLWithPath: outputPath)
         try await started(.exporting, identity: identity, onEvent: onEvent)
         do {
-            try await withSecurityScopedAccess(to: markdownURL.deletingLastPathComponent()) {
+            let outputDirectory = resolvedOutputDirectory(for: context)
+            let scopedDirectory = outputDirectory?.standardizedFileURL == markdownURL.deletingLastPathComponent().standardizedFileURL
+                ? outputDirectory! : markdownURL.deletingLastPathComponent()
+            try await withSecurityScopedAccess(to: scopedDirectory) {
                 try MarkdownAnalysisUpdater().update(analysis, at: markdownURL)
             }
             try Task.checkCancellation()
@@ -865,6 +894,41 @@ actor SessionProcessor: SessionProcessing {
             session.metadata.output = output
         }
         return session
+    }
+
+    private func resolvedOutputDirectory(for context: SessionProcessingContext) -> URL? {
+        guard let path = context.configuration.outputDirectoryURL else { return nil }
+        guard let bookmark = context.configuration.outputDirectoryBookmark else { return path }
+        var stale = false
+        guard let resolved = try? URL(resolvingBookmarkData: bookmark,
+                                      options: [.withSecurityScope], relativeTo: nil,
+                                      bookmarkDataIsStale: &stale),
+              resolved.standardizedFileURL == path.standardizedFileURL else { return path }
+        return resolved
+    }
+
+    private func validExistingOutput(_ output: SessionOutputMetadata, for session: RecordingSession) -> Bool {
+        guard let path = output.markdownPath, !path.isEmpty,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let text = String(data: data, encoding: .utf8) else { return false }
+        let frontmatter = text.components(separatedBy: "---").dropFirst().first ?? ""
+        return frontmatter.split(separator: "\n").contains {
+            $0 == Substring("recording_id: \"\(session.metadata.id)\"")
+        }
+    }
+
+    private func validFinalizedAudio(
+        _ finalization: AudioFinalizationMetadata, in session: RecordingSession
+    ) -> Bool {
+        let tracks = [finalization.system, finalization.microphone].compactMap { $0 }
+        guard !tracks.isEmpty else { return false }
+        return tracks.allSatisfy { track in
+            let url = session.directoryURL.appendingPathComponent(track.fileName)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]) else {
+                return false
+            }
+            return values.isRegularFile == true && (values.fileSize ?? 0) > 0
+        }
     }
 
     private func withSecurityScopedAccess<T: Sendable>(

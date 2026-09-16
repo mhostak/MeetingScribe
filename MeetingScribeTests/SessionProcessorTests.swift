@@ -48,6 +48,38 @@ final class SessionProcessorTests: XCTestCase {
         XCTAssertTrue(hadCheckpoint)
     }
 
+    func testRetryExportsAgainWhenAnalysisWasNewlyGenerated() async throws {
+        var session = makeSession()
+        session.metadata.transcription = SessionTranscriptionMetadata(
+            status: .completed, model: "fake", systemSegmentCount: 1,
+            microphoneSegmentCount: 0, warnings: [], failureReason: nil
+        )
+        session.metadata.analysisConfiguration = SessionAnalysisConfiguration(
+            tool: .codex, executablePath: "/unused", model: nil, prompt: "Prompt"
+        )
+        let outputURL = root.appendingPathComponent("meeting.md")
+        try "---\nrecording_id: \"session\"\n---\nOld content\n".write(
+            to: outputURL, atomically: true, encoding: .utf8
+        )
+        session.metadata.output = SessionOutputMetadata(
+            status: .completed, markdownFileName: "meeting.md", markdownPath: outputURL.path,
+            exportedAt: Date(), failureReason: nil
+        )
+        let files = FakeFiles(recovered: recoveredArtifacts())
+        let processor = SessionProcessor(
+            audioFinalizer: FakeFinalizer(error: TestError.unexpectedCall),
+            transcriber: FakeTranscriber(),
+            modelResolver: FakeResolver(error: TestError.unexpectedCall),
+            analyzer: FakeAnalyzer(), processingFiles: files,
+            audioSourceCleaner: FakeCleaner(), revisionService: FakeRevisionService()
+        )
+
+        _ = try await processor.process(context(session, kind: .recovery), onEvent: { _ in })
+
+        let exports = await files.exportCount()
+        XCTAssertEqual(exports, 1)
+    }
+
     func testPartialFailuresKeepAttemptIdentityAndContinueToExport() async throws {
         var session = makeSession()
         session.metadata.analysisConfiguration = SessionAnalysisConfiguration(
@@ -107,7 +139,9 @@ final class SessionProcessorTests: XCTestCase {
             processingFiles: FakeFiles(), audioSourceCleaner: cleaner,
             revisionService: FakeRevisionService()
         )
-        let result = try await processor.process(context(makeSession()), onEvent: { _ in })
+        let result = try await processor.process(context(makeSession(), configuration: .init(
+            outputDirectoryURL: nil, automaticallyDeleteSourceCAF: true
+        )), onEvent: { _ in })
         let cleaned = try XCTUnwrap(cleaner.receivedSession())
 
         XCTAssertEqual(cleaned.metadata.transcription?.status, .completed)

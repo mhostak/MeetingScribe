@@ -118,6 +118,7 @@ final class AppStateResilienceTests: XCTestCase {
             await appState.startRecording()
             let session = try XCTUnwrap(appState.currentSession)
             await appState.stopRecording()
+        await appState.waitForProcessing()
             await appState.stopRecording() // Repeated stop must not emit another result.
             if scenario == "disabled" {
                 XCTAssertTrue(notifier.notifications.isEmpty)
@@ -128,7 +129,8 @@ final class AppStateResilienceTests: XCTestCase {
             XCTAssertEqual(notification.failedSteps, expectedSteps, scenario)
             XCTAssertEqual(notification.succeeded, expectedSteps.isEmpty, scenario)
             XCTAssertEqual(notification.sessionID, session.metadata.id, scenario)
-            XCTAssertEqual(notification.occurredAt, session.metadata.startedAt ?? session.metadata.createdAt)
+            XCTAssertEqual(notification.occurredAt.timeIntervalSince1970,
+                           (session.metadata.startedAt ?? session.metadata.createdAt).timeIntervalSince1970, accuracy: 1)
             XCTAssertEqual(notification.language, .slovak)
             if scenario == "analysis" {
                 XCTAssertNotNil(notification.markdownURL)
@@ -271,6 +273,7 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(persisted.resolvedOutputLanguage, .english)
 
         await appState.stopRecording()
+        await appState.waitForProcessing()
         XCTAssertNotEqual(appState.status, .recording)
         XCTAssertTrue(appState.canEditSessionConfiguration)
     }
@@ -419,8 +422,9 @@ final class AppStateResilienceTests: XCTestCase {
         appState.analysisPrompt = "This later edit must not affect the active meeting."
         appState.persistAnalysisSettings()
         await appState.stopRecording()
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         let completed = try XCTUnwrap(appState.lastCompletedSession)
         XCTAssertEqual(completed.metadata.analysis?.status, .completed)
         XCTAssertEqual(completed.metadata.analysis?.provider, "codex")
@@ -596,8 +600,9 @@ final class AppStateResilienceTests: XCTestCase {
         let runsAfterAvailabilityCheck = await runner.runCount()
         await appState.startRecording()
         await appState.stopRecording()
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertNil(appState.lastCompletedSession?.metadata.analysis)
         let finalRunCount = await runner.runCount()
         XCTAssertEqual(finalRunCount, runsAfterAvailabilityCheck)
@@ -637,8 +642,9 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.setNotificationsEnabled(true)
         let candidate = try XCTUnwrap(appState.recoveryCandidates.first)
         await appState.recoverSession(candidate)
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertTrue(appState.recoveryCandidates.isEmpty)
         let markdownURL = try XCTUnwrap(appState.lastMarkdownURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: markdownURL.path))
@@ -692,10 +698,12 @@ final class AppStateResilienceTests: XCTestCase {
         let didReachBackgroundExport = await gate.waitUntilBlocked()
 
         XCTAssertTrue(didReachBackgroundExport)
-        XCTAssertEqual(appState.status, .exporting)
+        XCTAssertEqual(appState.status, .idle)
+        XCTAssertEqual(appState.processingJobs.first?.metadata.processing?.stage, .exporting)
         gate.release()
         await recoveryTask.value
-        XCTAssertEqual(appState.status, .completed)
+        await appState.waitForProcessing()
+        XCTAssertEqual(appState.status, .idle)
     }
 
     func testConcurrentStartCallsShareOneRecordingOperation() async throws {
@@ -733,6 +741,7 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(appState.status, .recording)
         XCTAssertNil(appState.lastError)
         await appState.stopRecording()
+        await appState.waitForProcessing()
     }
 
     func testConcurrentStopCallsShareOneProcessingOperation() async throws {
@@ -772,10 +781,11 @@ final class AppStateResilienceTests: XCTestCase {
         gate.release()
         await firstStop.value
         await secondStop.value
+        await appState.waitForProcessing()
 
         let stopCount = await systemCapture.stopCount()
         XCTAssertEqual(stopCount, 1)
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
     }
 
@@ -812,9 +822,10 @@ final class AppStateResilienceTests: XCTestCase {
 
         await systemCapture.fail(reason: "Simulated required capture failure")
         try await waitUntil { appState.status != .recording }
-        try await waitUntil { appState.status == .completed || appState.status == .failed }
+        try await waitUntil { appState.currentSession == nil }
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertEqual(
             appState.lastError,
             AppLocalization.message(
@@ -862,9 +873,10 @@ final class AppStateResilienceTests: XCTestCase {
         try await waitUntil { appState.status != .recording }
         await storageCheck.resume()
         await stopTask.value
-        try await waitUntil { appState.status == .completed || appState.status == .failed }
+        try await waitUntil { appState.currentSession == nil }
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
     }
 
@@ -901,9 +913,10 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.prepareStorage()
         await appState.startRecording()
         try await waitUntil { appState.status != .recording }
-        try await waitUntil { appState.status == .completed || appState.status == .failed }
+        try await waitUntil { appState.currentSession == nil }
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         let failureCount = await failureCounter.value
         XCTAssertGreaterThanOrEqual(failureCount, 2)
         XCTAssertEqual(
@@ -951,7 +964,8 @@ final class AppStateResilienceTests: XCTestCase {
 
         XCTAssertEqual(appState.status, .recording)
         await appState.stopRecording()
-        XCTAssertEqual(appState.status, .completed)
+        await appState.waitForProcessing()
+        XCTAssertEqual(appState.status, .idle)
     }
 
     func testPersistentSystemAudioStallTriggersSafeAutomaticStop() async throws {
@@ -985,9 +999,10 @@ final class AppStateResilienceTests: XCTestCase {
         let session = try XCTUnwrap(appState.currentSession)
         await systemCapture.stall()
         try await waitUntil { appState.status != .recording }
-        try await waitUntil { appState.status == .completed || appState.status == .failed }
+        try await waitUntil { appState.currentSession == nil }
+        await appState.waitForProcessing()
 
-        XCTAssertEqual(appState.status, .completed)
+        XCTAssertEqual(appState.status, .idle)
         XCTAssertEqual(
             appState.lastError,
             AppLocalization.message(
@@ -1073,7 +1088,8 @@ final class AppStateResilienceTests: XCTestCase {
             captureMonitoringConfiguration: monitoring,
             storageStatusProvider: storageStatusProvider,
             processingNotifier: processingNotifier,
-            notificationDefaults: defaults
+            notificationDefaults: defaults,
+            resourceMonitoringEnabled: false
         )
     }
 

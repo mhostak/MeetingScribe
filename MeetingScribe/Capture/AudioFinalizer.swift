@@ -35,6 +35,7 @@ struct AudioFinalizer: AudioFinalizing {
         session: RecordingSession,
         diagnostics: CaptureSessionDiagnostics
     ) async throws -> AudioFinalizationMetadata {
+        try Task.checkCancellation()
         if session.metadata.resolvedCaptureMode == .microphoneOnly {
             return try finalizeMicrophoneOnly(
                 session: session,
@@ -87,6 +88,8 @@ struct AudioFinalizer: AudioFinalizing {
                 if let failureReason = microphoneDiagnostics.failureReason {
                     warnings.append("Microphone capture ended early: \(failureReason)")
                 }
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 warnings.append("Microphone working audio was not created: \(error.localizedDescription)")
             }
@@ -178,6 +181,7 @@ struct AudioFinalizer: AudioFinalizing {
         timelineOrigin: Double
     ) throws -> FinalizedAudioTrackMetadata {
         try repairer.repairIfNeeded(at: inputURL)
+        try Task.checkCancellation()
         let converted: ConvertedAudioFile
         let finalizedURL: URL
         if let captured = try inspectTranscriptionReadyAudio(at: inputURL) {
@@ -677,7 +681,8 @@ actor RecordingAudioCleanupService {
     }
 
     private func isEligible(_ session: RecordingSession, olderThan cutoff: Date?) -> Bool {
-        guard session.metadata.status == .recorded,
+        guard session.metadata.processing?.state.isTerminal != false,
+              session.metadata.status == .recorded,
               session.metadata.transcription?.status == .completed,
               session.metadata.output?.status == .completed,
               session.metadata.recovery?.status != .inProgress,

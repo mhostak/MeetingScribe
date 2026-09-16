@@ -237,7 +237,7 @@ final class SessionRecoveryTests: XCTestCase {
         XCTAssertNil(activeSession)
     }
 
-    func testRecoveryCommandsAreRejectedWhileAnotherSessionIsActive() async throws {
+    func testRecoveryCandidateCanBeClosedWhileAnotherSessionIsActive() async throws {
         let candidate = try makeSession(id: "waiting-recovery", status: .recording)
         try Data("recoverable audio".utf8).write(to: candidate.systemAudioURL)
         let manager = SessionManager(
@@ -252,12 +252,12 @@ final class SessionRecoveryTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? SessionManagerError, .sessionAlreadyActive)
         }
-        do {
-            _ = try await manager.closeRecovery(id: candidate.metadata.id)
-            XCTFail("Expected active recording to block closeRecovery.")
-        } catch {
-            XCTAssertEqual(error as? SessionManagerError, .sessionAlreadyActive)
-        }
+        let visible = try await manager.recoveryCandidate(id: candidate.metadata.id)
+        XCTAssertNotNil(visible)
+        let closed = try await manager.closeRecovery(id: candidate.metadata.id)
+        XCTAssertEqual(closed.metadata.recovery?.status, .closed)
+        let active = await manager.currentSession()
+        XCTAssertEqual(active?.metadata.status, .recording)
         _ = try await manager.failSession(reason: "Test cleanup")
     }
 

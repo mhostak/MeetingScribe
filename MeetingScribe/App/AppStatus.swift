@@ -46,13 +46,14 @@ enum MenuBarIconState: String, Equatable, Sendable {
     case recording
     case processing
     case attention
+    case recordingAndProcessing
 
-    init(status: AppStatus, hasRecovery: Bool) {
+    init(status: AppStatus, hasRecovery: Bool, hasProcessing: Bool = false, hasProcessingFailures: Bool = false) {
         if status == .recording {
-            self = .recording
-        } else if status.isProcessing {
+            self = hasProcessing ? .recordingAndProcessing : .recording
+        } else if status.isProcessing || hasProcessing {
             self = .processing
-        } else if status == .failed || hasRecovery {
+        } else if status == .failed || hasRecovery || hasProcessingFailures {
             self = .attention
         } else {
             self = .idle
@@ -65,6 +66,7 @@ enum MenuBarIconState: String, Equatable, Sendable {
         case .recording: return "MeetingScribe recording"
         case .processing: return "MeetingScribe processing"
         case .attention: return "MeetingScribe needs attention"
+        case .recordingAndProcessing: return "MeetingScribe recording and processing"
         }
     }
 }
@@ -102,6 +104,13 @@ enum MenuBarIconRenderer {
             drawDot(center: center, color: .systemRed)
         case .attention:
             drawDot(center: center, color: .systemOrange)
+        case .recordingAndProcessing:
+            drawDot(center: center, color: .systemRed)
+            let ring = NSBezierPath()
+            ring.appendArc(withCenter: center, radius: 4.4, startAngle: 20, endAngle: 320)
+            ring.lineWidth = 1.3
+            NSColor.systemBlue.setStroke()
+            ring.stroke()
         case .processing:
             let ringRect = NSRect(x: center.x - 3.2, y: center.y - 3.2, width: 6.4, height: 6.4)
             let ring = NSBezierPath()

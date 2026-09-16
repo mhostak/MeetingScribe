@@ -88,6 +88,16 @@
 		000000000000000000000189 /* AudioActivityDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000291 /* AudioActivityDetector.swift */; };
 		000000000000000000000190 /* TranscriptionSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000292 /* TranscriptionSettingsStore.swift */; };
 		000000000000000000000191 /* LegacyModelCleaner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000293 /* LegacyModelCleaner.swift */; };
+		AAEB04267A2A0559A5EC5BFC /* ProcessingJob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A9EF407D3FAB439B2923D05 /* ProcessingJob.swift */; };
+		B25CD2BF4E41D2C2C7E0A4B5 /* ProcessingPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 871AF0F7A103B0C52F514639 /* ProcessingPresentation.swift */; };
+		A922E6E6C217F66CFA6C6862 /* ProcessingQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9C1852E12E529ADEF16159B /* ProcessingQueue.swift */; };
+		57147AC37E3ECF0D7AC25D59 /* ProcessingResourceGovernor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C891254FB559A70E89DB77C /* ProcessingResourceGovernor.swift */; };
+		90BFC9896803BEF16998C9CD /* SessionProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D782BA0E4BEE8FBCB79CF172 /* SessionProcessor.swift */; };
+		7A1C30F06993F7F321AF4134 /* FluidAudioASRWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A99B5C7B60E211B2339E07B8 /* FluidAudioASRWorker.swift */; };
+		389B72C8F8BF090484003FB9 /* ConcurrentRecordingProcessingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A0955035B1DC980E53CEB3E /* ConcurrentRecordingProcessingTests.swift */; };
+		720C1A6468CDC51E518C6381 /* ProcessingResourceGovernorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BC1756C7A931759B5F1445C /* ProcessingResourceGovernorTests.swift */; };
+		09B1139E3D68218F2F416829 /* ProcessingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF28F1C0DF3891909289CCA6 /* ProcessingQueueTests.swift */; };
+		199EDEC802B9E55C6D1E684E /* SessionProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8273DC655E6051F1B975BD /* SessionProcessorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -186,6 +196,16 @@
 		000000000000000000000292 /* TranscriptionSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionSettingsStore.swift; sourceTree = "<group>"; };
 		000000000000000000000293 /* LegacyModelCleaner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyModelCleaner.swift; sourceTree = "<group>"; };
 		000000000000000000000302 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		5A9EF407D3FAB439B2923D05 /* ProcessingJob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Processing/ProcessingJob.swift"; sourceTree = "<group>"; };
+		871AF0F7A103B0C52F514639 /* ProcessingPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Processing/ProcessingPresentation.swift"; sourceTree = "<group>"; };
+		F9C1852E12E529ADEF16159B /* ProcessingQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Processing/ProcessingQueue.swift"; sourceTree = "<group>"; };
+		4C891254FB559A70E89DB77C /* ProcessingResourceGovernor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Processing/ProcessingResourceGovernor.swift"; sourceTree = "<group>"; };
+		D782BA0E4BEE8FBCB79CF172 /* SessionProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Processing/SessionProcessor.swift"; sourceTree = "<group>"; };
+		A99B5C7B60E211B2339E07B8 /* FluidAudioASRWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Transcription/FluidAudioASRWorker.swift"; sourceTree = "<group>"; };
+		7A0955035B1DC980E53CEB3E /* ConcurrentRecordingProcessingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConcurrentRecordingProcessingTests.swift"; sourceTree = "<group>"; };
+		3BC1756C7A931759B5F1445C /* ProcessingResourceGovernorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProcessingResourceGovernorTests.swift"; sourceTree = "<group>"; };
+		DF28F1C0DF3891909289CCA6 /* ProcessingQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProcessingQueueTests.swift"; sourceTree = "<group>"; };
+		DF8273DC655E6051F1B975BD /* SessionProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SessionProcessorTests.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -221,6 +241,12 @@
 		000000000000000000000602 /* MeetingScribe */ = {
 			isa = PBXGroup;
 			children = (
+				A99B5C7B60E211B2339E07B8 /* FluidAudioASRWorker.swift */,
+				D782BA0E4BEE8FBCB79CF172 /* SessionProcessor.swift */,
+				4C891254FB559A70E89DB77C /* ProcessingResourceGovernor.swift */,
+				F9C1852E12E529ADEF16159B /* ProcessingQueue.swift */,
+				871AF0F7A103B0C52F514639 /* ProcessingPresentation.swift */,
+				5A9EF407D3FAB439B2923D05 /* ProcessingJob.swift */,
 				000000000000000000000265 /* MeetingScribe.entitlements */,
 				000000000000000000000603 /* App */,
 				000000000000000000000611 /* Resources */,
@@ -294,6 +320,10 @@
 		000000000000000000000605 /* MeetingScribeTests */ = {
 			isa = PBXGroup;
 			children = (
+				DF8273DC655E6051F1B975BD /* SessionProcessorTests.swift */,
+				DF28F1C0DF3891909289CCA6 /* ProcessingQueueTests.swift */,
+				3BC1756C7A931759B5F1445C /* ProcessingResourceGovernorTests.swift */,
+				7A0955035B1DC980E53CEB3E /* ConcurrentRecordingProcessingTests.swift */,
 				000000000000000000000289 /* FluidAudioTranscriptionServiceTests.swift */,
 				000000000000000000000287 /* FluidAudioModelManagerTests.swift */,
 				000000000000000000000267 /* AudioClockTests.swift */,
@@ -500,6 +530,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7A1C30F06993F7F321AF4134 /* FluidAudioASRWorker.swift in Sources */,
+				90BFC9896803BEF16998C9CD /* SessionProcessor.swift in Sources */,
+				57147AC37E3ECF0D7AC25D59 /* ProcessingResourceGovernor.swift in Sources */,
+				A922E6E6C217F66CFA6C6862 /* ProcessingQueue.swift in Sources */,
+				B25CD2BF4E41D2C2C7E0A4B5 /* ProcessingPresentation.swift in Sources */,
+				AAEB04267A2A0559A5EC5BFC /* ProcessingJob.swift in Sources */,
 				000000000000000000000191 /* LegacyModelCleaner.swift in Sources */,
 				000000000000000000000190 /* TranscriptionSettingsStore.swift in Sources */,
 				000000000000000000000189 /* AudioActivityDetector.swift in Sources */,
@@ -558,6 +594,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				199EDEC802B9E55C6D1E684E /* SessionProcessorTests.swift in Sources */,
+				09B1139E3D68218F2F416829 /* ProcessingQueueTests.swift in Sources */,
+				720C1A6468CDC51E518C6381 /* ProcessingResourceGovernorTests.swift in Sources */,
+				389B72C8F8BF090484003FB9 /* ConcurrentRecordingProcessingTests.swift in Sources */,
 				000000000000000000000187 /* FluidAudioTranscriptionServiceTests.swift in Sources */,
 				000000000000000000000184 /* FluidAudioModelManagerTests.swift in Sources */,
 				000000000000000000000175 /* SessionCatalogTests.swift in Sources */,

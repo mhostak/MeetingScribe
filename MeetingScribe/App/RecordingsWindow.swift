@@ -75,6 +75,9 @@ struct RecordingsWindow: View {
                 await model.reload()
             }
         }
+        .onChange(of: appState.processingJobs) { _, _ in
+            Task { await model.reload() }
+        }
         .onChange(of: appState.status) { _, _ in
             Task { await model.reload() }
         }
@@ -311,6 +314,10 @@ private struct RecordingSessionRow: View {
                 Spacer(minLength: 12)
 
                 statusBadge
+                if processingJob?.state == .failed {
+                    Button("Retry") { Task { await appState.retryProcessing(entry.session) } }
+                        .disabled(!appState.canEnqueueProcessing(sessionID: entry.id))
+                }
             }
 
             HStack(spacing: 16) {
@@ -415,10 +422,7 @@ private struct RecordingSessionRow: View {
                     }
                 }
                 .disabled(
-                    appState.status == .recording
-                        || appState.status.isProcessing
-                        || appState.fluidAudioReprocessingSessionID != nil
-                        || appState.aiAnalysisReprocessingSessionID != nil
+                    !appState.canEnqueueProcessing(sessionID: entry.id)
                         || !entry.audio.isAvailable
                 )
 
@@ -434,8 +438,7 @@ private struct RecordingSessionRow: View {
                     : "Keep audio")
                 .disabled(
                     !entry.audio.isAvailable
-                        || appState.status == .recording
-                        || appState.status.isProcessing
+                        || !appState.canEnqueueProcessing(sessionID: entry.id)
                         || appState.isCleaningRecordingAudio
                         || appState.fluidAudioReprocessingSessionID != nil
                         || appState.aiAnalysisReprocessingSessionID != nil
@@ -463,10 +466,7 @@ private struct RecordingSessionRow: View {
                     }
                 }
                 .disabled(
-                    appState.status == .recording
-                        || appState.status.isProcessing
-                        || appState.fluidAudioReprocessingSessionID != nil
-                        || appState.aiAnalysisReprocessingSessionID != nil
+                    !appState.canEnqueueProcessing(sessionID: entry.id)
                         || !entry.transcript.isAvailable
                         || !entry.markdown.isAvailable
                 )
@@ -582,7 +582,13 @@ private struct RecordingSessionRow: View {
         }
     }
 
+    private var processingJob: ProcessingJob? {
+        appState.processingJobs.first { $0.metadata.id == entry.id }?.metadata.processing
+            ?? entry.session.metadata.processing
+    }
+
     private var statusTitle: String {
+        if let job = processingJob { return job.displayName }
         if let liveStatus {
             return liveStatus.displayName
         }
@@ -597,6 +603,7 @@ private struct RecordingSessionRow: View {
     }
 
     private var message: String? {
+        if let job = processingJob, job.state != .completed { return job.failureDescription }
         if let liveStatus, liveStatus == .recording || liveStatus.isProcessing {
             return nil
         }
@@ -604,6 +611,14 @@ private struct RecordingSessionRow: View {
     }
 
     private var statusColor: Color {
+        if let job = processingJob {
+            switch job.state {
+            case .completed: return .green
+            case .failed: return .red
+            case .paused, .pauseRequested: return .orange
+            case .queued, .running: return .blue
+            }
+        }
         if let liveStatus {
             if liveStatus == .recording { return .red }
             if liveStatus.isProcessing { return .blue }

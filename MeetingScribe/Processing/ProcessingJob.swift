@@ -32,15 +32,18 @@ enum ProcessingJobState: String, Codable, CaseIterable, Sendable {
 /// and provider credentials deliberately do not belong in this value.
 struct ProcessingJobConfiguration: Codable, Equatable, Sendable {
     var outputDirectoryURL: URL?
+    var outputDirectoryBookmark: Data?
     var automaticallyDeleteSourceCAF: Bool
     var analysisConfiguration: SessionAnalysisConfiguration?
 
     init(
         outputDirectoryURL: URL?,
+        outputDirectoryBookmark: Data? = nil,
         automaticallyDeleteSourceCAF: Bool,
         analysisConfiguration: SessionAnalysisConfiguration? = nil
     ) {
         self.outputDirectoryURL = outputDirectoryURL
+        self.outputDirectoryBookmark = outputDirectoryBookmark
         self.automaticallyDeleteSourceCAF = automaticallyDeleteSourceCAF
         self.analysisConfiguration = analysisConfiguration
     }
@@ -120,9 +123,9 @@ struct ProcessingJobPatch: Equatable, Sendable {
         self.stage = stage
         self.checkpoint = checkpoint
         self.failureDescription = failureDescription
-        self.updatesStage = updatesStage
-        self.updatesCheckpoint = updatesCheckpoint
-        self.updatesFailureDescription = updatesFailureDescription
+        self.updatesStage = updatesStage || stage != nil
+        self.updatesCheckpoint = updatesCheckpoint || checkpoint != nil
+        self.updatesFailureDescription = updatesFailureDescription || failureDescription != nil
     }
 }
 

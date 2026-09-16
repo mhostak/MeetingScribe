@@ -68,6 +68,7 @@ struct WorkingAudioConverter: Sendable {
     static let maximumConsecutiveEmptyDrainCycles = 2
 
     func convert(inputURL: URL, outputURL: URL) throws -> ConvertedAudioFile {
+        try Task.checkCancellation()
         let inputFile: AVAudioFile
         do {
             inputFile = try AVAudioFile(forReading: inputURL)
@@ -124,6 +125,7 @@ struct WorkingAudioConverter: Sendable {
         var drainPolicy = AudioConverterDrainPolicy()
 
         conversionLoop: while true {
+            try Task.checkCancellation()
             guard let outputBuffer = AVAudioPCMBuffer(
                 pcmFormat: outputFormat,
                 frameCapacity: outputCapacity

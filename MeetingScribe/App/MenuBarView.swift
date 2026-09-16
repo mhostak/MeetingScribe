@@ -26,14 +26,17 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
 
-            Group {
-                if let candidate = activeRecoveryCandidate {
-                    recoveryContent(candidate)
-                } else if let issue = activeRecoveryIssue {
-                    recoveryIssueContent(issue)
-                } else {
-                    statusContent
-                }
+            statusContent
+
+            if let candidate = activeRecoveryCandidate {
+                recoveryContent(candidate)
+            } else if let issue = activeRecoveryIssue {
+                recoveryIssueContent(issue)
+            }
+
+            if !visibleProcessingJobs.isEmpty {
+                Divider()
+                processingQueueContent
             }
 
             if let lastError = appState.lastError, appState.status != .failed {
@@ -61,8 +64,41 @@ struct MenuBarView: View {
             completedContent
         case .failed:
             failedContent
+            if appState.currentSession != nil {
+                Button("Retry saving recording") { Task { await appState.stopRecording() } }
+            }
         case .preparing, .stopping, .transcribing, .analyzing, .exporting:
             processingContent
+        }
+    }
+
+    private var visibleProcessingJobs: [RecordingSession] {
+        appState.processingJobs.filter { $0.metadata.processing?.state != .completed }
+    }
+
+    private var processingQueueContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Processing queue").font(.headline)
+                Spacer()
+                Text("\(visibleProcessingJobs.count)").monospacedDigit().foregroundStyle(.secondary)
+            }
+            ForEach(Array(visibleProcessingJobs.prefix(3)), id: \.metadata.id) { session in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.metadata.title).lineLimit(1)
+                        Text(LocalizedStringKey(session.metadata.processing?.displayName ?? "Queued"))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if session.metadata.processing?.state == .failed {
+                        Button("Retry") { Task { await appState.retryProcessing(session) } }
+                    } else if session.metadata.processing?.state == .running {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            Button("Show recordings", action: openRecordingsAction)
         }
     }
 
@@ -132,9 +168,7 @@ struct MenuBarView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(
-                appState.isRecoveringSession
-                    || appState.aiAnalysisReprocessingSessionID != nil
-                    || appState.fluidAudioReprocessingSessionID != nil
+                !appState.canStartRecording
             )
 
             Text("Make sure you have the required permission or participant consent.")
