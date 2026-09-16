@@ -365,7 +365,10 @@ final class SessionManagerTests: XCTestCase {
             )
             XCTFail("Expected a delayed processing callback to be rejected.")
         } catch {
-            XCTAssertEqual(error as? SessionManagerError, .processingIdentityMismatch(started.metadata.id))
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .processingIdentityMismatch(started.metadata.id)
+            )
         }
 
         let persisted = try decodeMetadata(at: started.manifestURL)

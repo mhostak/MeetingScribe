@@ -137,7 +137,7 @@ actor SessionManager {
             return persisted
         }
         guard session.metadata.id == expectedSessionID else {
-            throw SessionManagerError.unexpectedActiveSession(
+            throw ProcessingJobRepositoryError.unexpectedActiveSession(
                 expected: expectedSessionID,
                 actual: session.metadata.id
             )
@@ -169,10 +169,10 @@ actor SessionManager {
     ) throws -> RecordingSession {
         var session = try loadSession(id: sessionID)
         guard activeSession?.metadata.id != sessionID else {
-            throw SessionManagerError.sessionStillRecording(sessionID)
+            throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
         }
         guard session.metadata.status != .recording || kind == .recovery else {
-            throw SessionManagerError.sessionStillRecording(sessionID)
+            throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
         }
         if let job = session.metadata.processing, !job.state.isTerminal {
             return session
@@ -221,10 +221,10 @@ actor SessionManager {
     ) throws -> RecordingSession {
         var session = try loadSession(id: sessionID)
         guard var job = session.metadata.processing else {
-            throw SessionManagerError.processingJobNotFound(sessionID)
+            throw ProcessingJobRepositoryError.processingJobNotFound(sessionID)
         }
         guard job.jobID == jobID, job.attemptID == attemptID else {
-            throw SessionManagerError.processingIdentityMismatch(sessionID)
+            throw ProcessingJobRepositoryError.processingIdentityMismatch(sessionID)
         }
 
         if let state = patch.state {
@@ -262,10 +262,10 @@ actor SessionManager {
     ) throws -> RecordingSession {
         var session = try loadSession(id: sessionID)
         guard var job = session.metadata.processing else {
-            throw SessionManagerError.processingJobNotFound(sessionID)
+            throw ProcessingJobRepositoryError.processingJobNotFound(sessionID)
         }
         guard job.jobID == jobID, job.attemptID == attemptID else {
-            throw SessionManagerError.processingIdentityMismatch(sessionID)
+            throw ProcessingJobRepositoryError.processingIdentityMismatch(sessionID)
         }
 
         let failed = failureDescription != nil || !failedSteps.isEmpty
@@ -326,10 +326,10 @@ actor SessionManager {
     ) throws -> RecordingSession {
         var session = try loadSession(id: sessionID)
         guard var job = session.metadata.processing else {
-            throw SessionManagerError.processingJobNotFound(sessionID)
+            throw ProcessingJobRepositoryError.processingJobNotFound(sessionID)
         }
         guard job.jobID == jobID, job.attemptID == attemptID else {
-            throw SessionManagerError.processingIdentityMismatch(sessionID)
+            throw ProcessingJobRepositoryError.processingIdentityMismatch(sessionID)
         }
         guard job.state == .running || job.state == .pauseRequested || job.state == .paused else {
             return session
@@ -353,14 +353,14 @@ actor SessionManager {
         let directoryURL = try sessionDirectoryURL(for: id)
         let manifestURL = directoryURL.appendingPathComponent("session.json", isDirectory: false)
         guard fileManager.fileExists(atPath: manifestURL.path) else {
-            throw SessionManagerError.sessionNotFound(id)
+            throw ProcessingJobRepositoryError.sessionNotFound(id)
         }
         let metadata = try SessionJSONCoder.makeDecoder().decode(
             SessionMetadata.self,
             from: Data(contentsOf: manifestURL)
         )
         guard metadata.id == id else {
-            throw SessionManagerError.sessionNotFound(id)
+            throw ProcessingJobRepositoryError.sessionNotFound(id)
         }
         return RecordingSession(metadata: metadata, directoryURL: directoryURL)
     }
@@ -611,15 +611,15 @@ actor SessionManager {
             .standardizedFileURL
         guard directoryURL.deletingLastPathComponent() == root,
               directoryURL.lastPathComponent == id else {
-            throw SessionManagerError.sessionNotFound(id)
+            throw ProcessingJobRepositoryError.sessionNotFound(id)
         }
         return directoryURL
     }
 }
-enum SessionManagerError: Error, Equatable, LocalizedError {
-    case sessionAlreadyActive
-    case noActiveSession
-    case emptyTitle
+/// Repository failures scoped to a persisted processing job. This is separate
+/// from the legacy capture-only `SessionManagerError` so existing capture UI
+/// error handling remains source-compatible.
+enum ProcessingJobRepositoryError: Error, Equatable, LocalizedError {
     case unexpectedActiveSession(expected: String, actual: String)
     case sessionNotFound(String)
     case sessionStillRecording(String)
@@ -628,12 +628,6 @@ enum SessionManagerError: Error, Equatable, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .sessionAlreadyActive:
-            return "A recording session is already active."
-        case .noActiveSession:
-            return "There is no active recording session to stop."
-        case .emptyTitle:
-            return "The meeting title cannot be empty."
         case let .unexpectedActiveSession(expected, actual):
             return "The active recording is \(actual), not \(expected)."
         case let .sessionNotFound(id):
@@ -644,6 +638,23 @@ enum SessionManagerError: Error, Equatable, LocalizedError {
             return "The recording session \(id) has no processing job."
         case let .processingIdentityMismatch(id):
             return "The processing attempt for recording session \(id) is no longer current."
+        }
+    }
+}
+
+enum SessionManagerError: Error, Equatable, LocalizedError {
+    case sessionAlreadyActive
+    case noActiveSession
+    case emptyTitle
+
+    var errorDescription: String? {
+        switch self {
+        case .sessionAlreadyActive:
+            return "A recording session is already active."
+        case .noActiveSession:
+            return "There is no active recording session to stop."
+        case .emptyTitle:
+            return "The meeting title cannot be empty."
         }
     }
 }
