@@ -323,6 +323,8 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
     var recovery: SessionRecoveryMetadata?
+    /// The current durable processing attempt. Omitted from legacy manifests.
+    var processing: ProcessingJob?
     var failureReason: String?
 
     init(
@@ -351,6 +353,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
         recovery: SessionRecoveryMetadata? = nil,
+        processing: ProcessingJob? = nil,
         failureReason: String? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -378,6 +381,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.analysis = analysis
         self.output = output
         self.recovery = recovery
+        self.processing = processing
         self.failureReason = failureReason
     }
 
