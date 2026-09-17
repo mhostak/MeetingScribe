@@ -200,19 +200,6 @@ struct MenuBarView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
 
-            if appState.shouldShowOnboardingInvitation {
-                HStack {
-                    Label("Setup is available", systemImage: "checkmark.seal")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Prepare MeetingScribe") {
-                        appState.resumeOnboarding()
-                    }
-                    .controlSize(.small)
-                }
-            }
-
             HStack(spacing: 7) {
                 settingsChip(
                     appState.fluidAudioASRDescriptor.displayName,
