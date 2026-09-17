@@ -159,8 +159,13 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
 
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 360, height: 520)
-        popover.contentViewController = NSHostingController(
+        // MenuBarView declares its own width and derives its height from the
+        // current state. Letting the hosting controller publish that size as
+        // the popover's preferred content size keeps the popover anchored to
+        // the status item; a hard-coded `contentSize` is applied before SwiftUI
+        // lays out, so the window would be placed for the wrong height and then
+        // shrink away from the menu bar.
+        let menuBarController = NSHostingController(
             rootView: MenuBarView(
                 appState: appState,
                 openSettingsAction: { [weak self] in self?.openSettings() },
@@ -169,6 +174,8 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
                 openOnboardingAction: { [weak self] in self?.openOnboarding() }
             )
         )
+        menuBarController.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = menuBarController
         refreshStatusIcon()
     }
 
