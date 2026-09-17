@@ -203,32 +203,48 @@ enum FluidAudioASRWorker {
     }
 }
 
-private final class FluidAudioASRWorkerProcessController: @unchecked Sendable {
+/// Owns the worker process for one transcription at a time.
+///
+/// Cancellation is scoped to a single run. A latched flag used to outlive its
+/// run: a cancellation that arrived while no process was attached stayed set and
+/// terminated the *next* worker within a second of starting it. Because the new
+/// run's task was no longer cancelled, that SIGTERM surfaced as
+/// `workerFailed(exitCode: 15)` and the queue recorded a permanent failure
+/// instead of a pause.
+final class FluidAudioASRWorkerProcessController: @unchecked Sendable {
     private let lock = NSLock()
     private let terminationGracePeriod: TimeInterval
     private var process: Process?
-    private var cancellationRequested = false
+    private var generation = 0
+    private var cancelledGeneration: Int?
 
     init(terminationGracePeriod: TimeInterval) {
         self.terminationGracePeriod = max(0, terminationGracePeriod)
     }
 
     func run(executableURL: URL, arguments: [String]) async throws -> Int32 {
-        try await Task.detached(priority: .utility) { [self] in
+        let generation = beginRun()
+        return try await Task.detached(priority: .utility) { [self] in
             let process = Process()
             process.executableURL = executableURL
             process.arguments = arguments
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
-            attach(process)
+            guard attach(process, generation: generation) else {
+                // Cancelled before the worker existed: never spawn it.
+                throw CancellationError()
+            }
             do {
                 try process.run()
-                terminateIfRequested(process)
+                terminateIfRequested(process, generation: generation)
                 process.waitUntilExit()
-                detach(process)
-                return process.terminationStatus
+                let status = process.terminationStatus
+                // A termination this controller asked for is a cancellation, not
+                // a worker failure, and must not be reported as an exit code.
+                if detach(process, generation: generation) { throw CancellationError() }
+                return status
             } catch {
-                detach(process)
+                _ = detach(process, generation: generation)
                 throw error
             }
         }.value
@@ -236,30 +252,43 @@ private final class FluidAudioASRWorkerProcessController: @unchecked Sendable {
 
     func cancel() {
         lock.lock()
-        cancellationRequested = true
+        cancelledGeneration = generation
         let process = process
         lock.unlock()
         terminate(process)
     }
 
-    private func attach(_ process: Process) {
+    /// Starts a new cancellation scope, discarding any cancellation that
+    /// belonged to a finished run.
+    private func beginRun() -> Int {
         lock.lock()
-        self.process = process
-        let shouldCancel = cancellationRequested
+        generation += 1
+        cancelledGeneration = nil
+        let generation = generation
         lock.unlock()
-        if shouldCancel { terminate(process) }
+        return generation
     }
 
-    private func detach(_ process: Process) {
+    private func attach(_ process: Process, generation: Int) -> Bool {
+        lock.lock()
+        let isCancelled = cancelledGeneration == generation
+        if !isCancelled { self.process = process }
+        lock.unlock()
+        return !isCancelled
+    }
+
+    /// Detaches and reports whether this run was cancelled.
+    private func detach(_ process: Process, generation: Int) -> Bool {
         lock.lock()
         if self.process === process { self.process = nil }
-        cancellationRequested = false
+        let wasCancelled = cancelledGeneration == generation
         lock.unlock()
+        return wasCancelled
     }
 
-    private func terminateIfRequested(_ process: Process) {
+    private func terminateIfRequested(_ process: Process, generation: Int) {
         lock.lock()
-        let shouldCancel = cancellationRequested && self.process === process
+        let shouldCancel = cancelledGeneration == generation && self.process === process
         lock.unlock()
         if shouldCancel { terminate(process) }
     }
