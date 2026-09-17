@@ -1,89 +1,118 @@
-# Fronta spracovania zostala trvalo pozastavená
+# The processing queue stayed paused indefinitely
 
-Základ: `codex/concurrent-integration` @ `715caf0`. Vetva opravy:
+Base: `codex/concurrent-integration` @ `715caf0`. Fix branch:
 `codex/concurrent-queue-pause-visibility`.
 
-## Reprodukcia
+## Reproduction
 
-Relácia „Test session - souběžná transkriopce a nahrávání“ (17. 9. 2026, 13:15)
-zostala v stave `Zvuk ✅ / Transcript ⊖ / Markdown ⊖` s badgeom „Vo fronte“.
-Panel ukazoval „Front spracovania 1“, hlavička „Pripravené“. Nahrávanie predtým
-ukončil bezpečný stop pre zlyhanie zachytávania systémového zvuku.
+The session "Test session - souběžná transkriopce a nahrávání" (17 Sep 2026,
+13:15) stayed at `audio ✅ / transcript ⊖ / markdown ⊖` with a "Queued" badge.
+The popover reported "Processing queue 1" and a header of "Ready". The recording
+before it had ended in the safe stop that follows a system-audio capture
+failure.
 
-## Príčina
+## Cause
 
-1. `AppState.updateResourcePolicy()` pri `captureIsHealthy == false` zavolá
+1. On `captureIsHealthy == false`, `AppState.updateResourcePolicy()` calls
    `processingQueue.pause(reason:)`.
-2. `ProcessingQueue.pause` patchuje na `pauseRequested` iba **bežiaci** job.
-   Zaradený job zostane `queued`, takže v manifeste ani v UI nie je stopa po
-   pozastavení frontu. `pauseReason` bol iba in-memory.
-3. Odpauzovanie záviselo od `canResume`, ktorý vracal `.hold([])` — bez dôvodu.
-   Pri nesplnenej podmienke front stál bez akéhokoľvek prejavu v UI.
-4. Kandidáti na trvalé nesplnenie: `resourceMemoryPressure` sa aktualizoval len
-   v handleri `DispatchSourceMemoryPressure` (chýbajúci prechod späť na
-   `.normal` ho nechal na `.warning`), `resumeAboveStorageBytes` bol hardcoded
-   3 GiB bez väzby na `minimumStorageBytes`.
-5. `resourcePauseActive` v `AppState` duplikoval stav frontu. Ak `resume()`
-   hodil chybu, flag už bol `false` a resume sa nikdy nezopakoval.
-6. `shutdown()` nastavil `shuttingDown = true` natrvalo. Zrušené ukončenie
-   aplikácie nechalo scheduler mŕtvy do konca procesu.
+2. `ProcessingQueue.pause` only patches the **running** job to `pauseRequested`.
+   A queued job stays `queued`, so neither the manifest nor the UI carried any
+   trace of the pause, and `pauseReason` lived only in memory.
+3. Resuming depended on `canResume`, which returned `.hold([])` — an empty
+   reason list. When a condition stayed unmet the queue simply stood still with
+   nothing to show for it.
+4. The conditions that could stay unmet indefinitely: `resourceMemoryPressure`
+   was only updated inside the `DispatchSourceMemoryPressure` handler, so a
+   missed transition back to `.normal` left it on `.warning` forever, and
+   `resumeAboveStorageBytes` was hardcoded to 3 GiB with no relation to the
+   configured `minimumStorageBytes`.
+5. `resourcePauseActive` in `AppState` mirrored the queue's own state. When
+   `resume()` threw, the flag was already `false` and the resume was never
+   retried.
+6. `shutdown()` set `shuttingDown = true` permanently, so a cancelled
+   application termination left the scheduler dead for the rest of the process.
 
-V UI neexistoval žiadny prvok, ktorý by `queued` job rozhýbal. „Opakovať prepis“
-padol na `canEnqueueProcessing` a vrátil sa ticho.
+No control anywhere in the UI could start a queued job. "Retry transcription"
+hit the `canEnqueueProcessing` guard and returned silently.
 
-## Zmeny
+## The policy that actually triggered it
 
-| Súbor | Zmena |
+`warning` memory pressure and a `serious` thermal state are the ordinary steady
+state of a passively cooled Mac, not an exception. On the affected machine:
+
+```
+$ for i in 1 2 3 4 5; do sysctl -n kern.memorystatus_vm_pressure_level; sleep 2; done
+2
+2
+2
+2
+2
+$ sysctl -n kern.memorystatus_level
+37
+```
+
+Pressure level 2 with 37% of memory free, held steady. Withholding background
+work at that level meant the queue essentially never ran, and the missed return
+to `normal` in point 4 above made it permanent.
+
+Both levels now withhold work only while a capture is in flight, which is what
+the invariant protects. The critical levels, where the system is about to
+intervene itself, still stop work unconditionally.
+
+## Changes
+
+| File | Change |
 |---|---|
-| `Processing/ProcessingQueue.swift` | `ProcessingPauseKind`, `ProcessingQueuePause`, `ProcessingQueueStatus`; pause sa publikuje cez `ChangeHandler`; `status()`; zlyhaný `resume()` pause zachová; `cancelShutdown()`; shutdown pause sa neprepíše resource pauzou |
-| `Processing/ProcessingResourceGovernor.swift` | `hold` nesie nesplnené resume podmienky namiesto `[]`; `ProcessingResourceLimits.backgroundReserve(captureMinimumBytes:)` |
-| `Processing/ProcessingPresentation.swift` | `statusLabel(queueStatus:)` a `statusDetail(queueStatus:)` — zaradený job pri pozastavenom fronte už nehlási „Queued“ |
-| `App/AppState.swift` | `processingQueueStatus` ako jediný zdroj pravdy (`resourcePauseActive` odstránený); lokalizované dôvody pauzy; `resumeProcessing()`; `abortTermination()`; memory pressure sa pollie cez `kern.memorystatus_vm_pressure_level`; `memoryPressureSource` sa priradí pred `resume()`; limity sa odvodia z `minimumStorageBytes` |
-| `App/MenuBarView.swift` | Banner s dôvodom pauzy a tlačidlo „Resume processing“ |
-| `App/RecordingsWindow.swift` | Per-row stav a dôvod z queue statusu, „Resume processing“ pre držaný job |
-| `App/MeetingScribeApp.swift` | Zrušené ukončenie volá `abortTermination()` |
+| `Processing/ProcessingQueue.swift` | `ProcessingPauseKind`, `ProcessingQueuePause`, `ProcessingQueueStatus`; the pause is published through `ChangeHandler`; `status()`; a failed `resume()` keeps the pause in place and retryable; `cancelShutdown()`; a resource pause cannot overwrite a shutdown pause |
+| `Processing/ProcessingResourceGovernor.swift` | `warning` memory and `serious` thermal withhold work only during capture; critical levels always do; `hold` carries the unmet resume conditions instead of `[]`; `ProcessingResourceLimits.backgroundReserve(captureMinimumBytes:)` |
+| `Processing/ProcessingPresentation.swift` | `statusLabel(queueStatus:)` and `statusDetail(queueStatus:)`, so a queued job on a paused scheduler no longer reports "Queued" |
+| `App/AppState.swift` | `processingQueueStatus` is the single source of truth (`resourcePauseActive` removed); localized pause reasons; `resumeProcessing()`; `abortTermination()`; memory pressure is polled via `kern.memorystatus_vm_pressure_level`; `memoryPressureSource` is assigned before `resume()`; the background reserve is derived from `minimumStorageBytes` |
+| `App/MenuBarView.swift` | A banner with the pause reason and a "Resume processing" button |
+| `App/RecordingsWindow.swift` | Per-row status and reason from the queue status, plus "Resume processing" for a held job |
+| `App/MeetingScribeApp.swift` | A cancelled termination calls `abortTermination()` |
 | `Resources/Localizable.xcstrings` | `Processing paused`, `Resume processing` (cs, sk) |
 
-Nezmenené zámerne: `ProcessingResourceLimits` zostáva samostatná rezerva pre
-background prácu, `minimumStorageBytes` ju len zdvihne na podlahu capture
-rezervy. Prahy pre thermal, memory a capture health boli už komplementárne,
-menila sa len ich reportovateľnosť.
+Deliberately unchanged: `ProcessingResourceLimits` remains a background-work
+reserve distinct from the capture reserve, and `minimumStorageBytes` only raises
+it to that floor. The thermal, memory and capture-health thresholds were already
+complementary; only their reportability changed.
 
-## Testy
+## Tests
 
-Pridané / upravené:
+Added or amended:
 
 - `ProcessingQueueTests.testPauseIsPublishedWhileQueuedJobStaysQueued`
 - `ProcessingQueueTests.testFailedResumeKeepsPauseVisibleAndRetryable`
-  (fault injection presunom `session.json`)
+  (fault injection by moving `session.json` aside)
 - `ProcessingQueueTests.testCancelledShutdownRestartsTheScheduler`
 - `ProcessingQueueTests.testResourcePauseDoesNotOverwriteShutdownPause`
 - `ProcessingResourceGovernorTests.testBackgroundReserveRespectsCaptureMinimumAndKeepsHysteresis`
 - `ProcessingResourceGovernorTests.testHoldInsideResumeBandStillReportsTheBlockingReason`
-- `ProcessingResourceGovernorTests.testStoragePauseUsesHysteresisBeforeResuming`
-  — očakávanie `.hold([])` zmenené na `.hold([.storageReserve])`
+- `ProcessingResourceGovernorTests.testOrdinaryPressureDoesNotWithholdWorkWhileCaptureIsIdle`
+- `ProcessingResourceGovernorTests.testCriticalLevelsWithholdWorkEvenWithoutCapture`
+- `ProcessingResourceGovernorTests.testStoragePauseUsesHysteresisBeforeResuming` —
+  the `.hold([])` expectation became `.hold([.storageReserve])`
 
-## Stav overenia
+## Verification status
 
-**Neoverené.** Kód nebol skompilovaný ani testovaný. Zmeny vznikli v prostredí
-bez Xcode a bez Swift toolchainu (viď `AGENTS.md`, *Sandbox a prístup
-k nástrojom*), takže build a testy musia prebehnúť mimo sandboxu:
+`xcodebuild … CODE_SIGNING_ALLOWED=NO test` on macOS with Xcode 27.0:
+**285 passed, 0 failed, 6 skipped**. The six skipped are the opt-in tests that
+need real ASR model bundles or an hour of capture.
 
-```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
-  xcodebuild -project MeetingScribe.xcodeproj -scheme MeetingScribe \
-  -destination 'platform=macOS' -derivedDataPath .derivedData \
-  CODE_SIGNING_ALLOWED=NO test
-```
+A manually signed build passed every check `AGENTS.md` requires before launch:
+`codesign --verify --deep --strict`, the expected Authority and TeamIdentifier,
+and the SHA-1 of the extracted certificate against the locally configured
+identity. The paused-queue UI was confirmed on that build: the reason and the
+resume control appear where the old build showed a silent "Queued".
 
-Otvorené body, ktoré test suite nepokrýva:
+Still open:
 
-- Skutočná dostupnosť `kern.memorystatus_vm_pressure_level` pre podpísaný
-  proces bez root práv. Pri zlyhaní sysctl kód spadne na hodnotu z eventu, teda
-  na pôvodné správanie.
-- Ktorý z dôvodov (memory / thermal / storage) držal front v reprodukovanom
-  prípade. Pause reason nebol persistovaný, takže to z manifestu spätne zistiť
-  nemožno. Po tejto zmene bude dôvod viditeľný v UI aj v `failureDescription`
-  pozastaveného jobu.
-- Manuálne overenie súbehu podľa `docs/concurrent-recording-processing-plan.md`,
-  kapitola 9, vrátane podpísaného buildu.
+- The manual stress verification from chapter 9 of
+  `docs/concurrent-recording-processing-plan.md` (60+ minutes of capture, a large
+  backlog, induced memory pressure, an audio device change) has not been run.
+- Nothing prevents two MeetingScribe instances from writing to the same
+  `Recordings` directory, although the invariants assume a single owner. This
+  surfaced while verifying the fix and belongs in a separate task: a lock on the
+  recordings root at startup.
+- `restore()` does not distinguish a manually paused job from a resource pause
+  after a restart, which chapter 6 of the plan requires.
