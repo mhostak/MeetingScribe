@@ -49,7 +49,7 @@ struct MeetingScribeApp: App {
 }
 
 @MainActor
-final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDelegate {
+final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDelegate, NSWindowDelegate {
     private var terminationPending = false
     private let appState: AppState
     private var statusItem: NSStatusItem?
@@ -57,8 +57,11 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
     private var processingObservation: AnyCancellable?
     private var statusObservation: AnyCancellable?
     private var failureNotificationObservation: AnyCancellable?
+    private var onboardingLaunchObservation: AnyCancellable?
+    private var onboardingWindowRequestObservation: AnyCancellable?
     private var recordingsWindow: NSWindow?
     private var calendarPickerWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
     private var renderedStatusIcon: (state: MenuBarIconState, colorScheme: ColorScheme)?
 
     init(appState: AppState) {
@@ -77,6 +80,27 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
 
         processingObservation = appState.$processingJobs.sink { [weak self] _ in
             Task { @MainActor in self?.refreshStatusIcon() }
+        }
+
+        onboardingLaunchObservation = Publishers.CombineLatest4(
+            appState.$isApplicationPrepared,
+            appState.$status,
+            appState.$recoveryCandidates,
+            appState.$recoveryIssues
+        ).sink { [weak self] _ in
+            Task { @MainActor in
+                self?.presentOnboardingIfNeeded()
+            }
+        }
+
+        onboardingWindowRequestObservation = appState.$onboardingWindowRequest
+            .sink { [weak self] request in
+                guard request != nil else { return }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.appState.clearOnboardingWindowRequest()
+                    self.openOnboarding()
+            }
         }
 
         // Keep the observer alive with the coordinator so clicks also work
@@ -141,7 +165,8 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
                 appState: appState,
                 openSettingsAction: { [weak self] in self?.openSettings() },
                 openRecordingsAction: { [weak self] in self?.openRecordings() },
-                openCalendarPickerAction: { [weak self] in self?.openCalendarPicker() }
+                openCalendarPickerAction: { [weak self] in self?.openCalendarPicker() },
+                openOnboardingAction: { [weak self] in self?.openOnboarding() }
             )
         )
         refreshStatusIcon()
@@ -186,7 +211,7 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
         renderedStatusIcon = (state, colorScheme)
     }
 
-    private func openSettings() {
+    private func openSettings(keepingOnboardingVisible: Bool = false) {
         popover.performClose(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
 
@@ -206,7 +231,9 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
             }
         }
 
-        bringNativeSettingsToFront()
+        if !keepingOnboardingVisible {
+            bringNativeSettingsToFront()
+        }
     }
 
     private func performNativeSettingsCommand() -> Bool {
@@ -257,6 +284,54 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
         )
         recordingsWindow = window
         present(window)
+    }
+
+    private func presentOnboardingIfNeeded() {
+        guard appState.isApplicationPrepared,
+              appState.shouldOpenOnboardingOnLaunch,
+              appState.status == .idle,
+              !appState.hasPendingProcessing,
+              appState.recoveryCandidates.isEmpty,
+              appState.recoveryIssues.isEmpty else {
+            return
+        }
+        openOnboarding()
+    }
+
+    private func openOnboarding() {
+        popover.performClose(nil)
+        guard appState.status == .idle,
+              appState.recoveryCandidates.isEmpty,
+              appState.recoveryIssues.isEmpty else {
+            return
+        }
+
+        appState.markOnboardingPresentedOnLaunch()
+        let window = onboardingWindow ?? makeWindow(
+            title: appState.localized(.onboardingWindowTitle),
+            size: NSSize(width: 780, height: 580),
+            rootView: OnboardingView(
+                appState: appState,
+                openSettingsAction: { [weak self] in
+                    self?.openSettings(keepingOnboardingVisible: true)
+                },
+                closeAction: { [weak self] in
+                    self?.closeOnboarding()
+                }
+            ),
+            isResizable: true
+        )
+        window.title = appState.localized(.onboardingWindowTitle)
+        window.delegate = self
+        onboardingWindow = window
+        present(window)
+    }
+
+    private func closeOnboarding() {
+        Task { @MainActor [weak self] in
+            await self?.appState.stopOnboardingTest()
+        }
+        onboardingWindow?.orderOut(nil)
     }
 
     private func openCalendarPicker() {
@@ -329,5 +404,11 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
         window.setContentSize(size)
         window.center()
         return window
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === onboardingWindow else { return true }
+        closeOnboarding()
+        return false
     }
 }

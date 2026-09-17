@@ -57,6 +57,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   test --scratch-path .derivedData/swiftpm
 ```
 
+## First-run readiness test
+
+The setup guide's final step can run a real 10-second capture through the normal recording, finalization, recovery, transcription, and Markdown path. The test uses a clearly named `MeetingScribe Setup Test` session, does not consume a draft meeting title or selected Calendar event, and disables AI for that session. It shows the artifact destination before it starts, a countdown and manual stop button while recording, and separate buffer/activity results for system audio and microphone.
+
+Timeout, a second stop click, and closing the setup window all stop capture once. Processing remains visible in the normal application status and Recordings overview. A missing transcription model still produces an audio result marked `Transcription not verified`; a ready model also produces a local transcript and Markdown export. Artifacts are retained under the normal session rules and are never automatically deleted by the test.
+
 ### Signed local installation
 
 For a runnable local build, use a clean checkout of the intended commit and the manual-signing command in [AGENTS.md](AGENTS.md). The shared [`Config/Signing.xcconfig`](Config/Signing.xcconfig) requires manual signing for both Xcode targets. Copy [`Config/Signing.local.xcconfig.example`](Config/Signing.local.xcconfig.example) to the ignored `Config/Signing.local.xcconfig` and enter a valid local Apple Development certificate fingerprint and Team ID. Verify that identity through the login Keychain before building; Codex must run signing and trust checks outside its workspace sandbox. A contributor uses their own local override without changing the shared configuration.

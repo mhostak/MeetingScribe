@@ -20,6 +20,10 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag("general")
 
+            readinessSettings
+                .tabItem { Label("Readiness", systemImage: "checkmark.seal") }
+                .tag("readiness")
+
             transcriptionSettings
                 .tabItem { Label("Transcription", systemImage: "waveform") }
                 .tag("transcription")
@@ -185,6 +189,13 @@ struct SettingsView: View {
             await appState.refreshFluidAudioModelStatuses()
             appState.refreshLegacyModelCleanupReport()
         }
+    }
+
+    private var readinessSettings: some View {
+        ReadinessView(
+            appState: appState,
+            openOnboardingAction: { appState.resumeOnboarding() }
+        )
     }
 
     private var aiSettings: some View {

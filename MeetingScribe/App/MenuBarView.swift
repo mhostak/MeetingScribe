@@ -6,6 +6,7 @@ struct MenuBarView: View {
     let openSettingsAction: () -> Void
     let openRecordingsAction: () -> Void
     let openCalendarPickerAction: () -> Void
+    let openOnboardingAction: () -> Void
     @State private var isEditingMeetingTitle = false
     @State private var meetingTitleDraft = ""
     @FocusState private var isMeetingTitleFocused: Bool
@@ -14,12 +15,14 @@ struct MenuBarView: View {
         appState: AppState,
         openSettingsAction: @escaping () -> Void = {},
         openRecordingsAction: @escaping () -> Void = {},
-        openCalendarPickerAction: @escaping () -> Void = {}
+        openCalendarPickerAction: @escaping () -> Void = {},
+        openOnboardingAction: @escaping () -> Void = {}
     ) {
         self.appState = appState
         self.openSettingsAction = openSettingsAction
         self.openRecordingsAction = openRecordingsAction
         self.openCalendarPickerAction = openCalendarPickerAction
+        self.openOnboardingAction = openOnboardingAction
     }
 
     var body: some View {
@@ -196,6 +199,19 @@ struct MenuBarView: View {
             Text("Make sure you have the required permission or participant consent.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+
+            if appState.shouldShowOnboardingInvitation {
+                HStack {
+                    Label("Setup is available", systemImage: "checkmark.seal")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Prepare MeetingScribe") {
+                        appState.resumeOnboarding()
+                    }
+                    .controlSize(.small)
+                }
+            }
 
             HStack(spacing: 7) {
                 settingsChip(
@@ -431,6 +447,13 @@ struct MenuBarView: View {
                 .buttonStyle(.plain)
 
                 Spacer()
+
+                Button {
+                    openOnboardingAction()
+                } label: {
+                    Label("Readiness", systemImage: "checkmark.seal")
+                }
+                .buttonStyle(.plain)
             }
             .font(.caption)
         }

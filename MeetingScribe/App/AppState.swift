@@ -1,5 +1,7 @@
 import AppKit
 import Darwin
+import AVFoundation
+import CoreGraphics
 import Foundation
 import ServiceManagement
 import UniformTypeIdentifiers
@@ -45,6 +47,7 @@ final class FluidAudioModelState: ObservableObject {
 
 @MainActor
 final class AppState: ObservableObject {
+    static let onboardingTestSessionTitle = "MeetingScribe Setup Test"
     @Published private(set) var status: AppStatus = .idle
     @Published private(set) var currentSession: RecordingSession?
     @Published private(set) var lastCompletedSession: RecordingSession?
@@ -66,6 +69,15 @@ final class AppState: ObservableObject {
     @Published private(set) var lastMarkdownURL: URL?
     @Published private(set) var analysisToolStatus: AnalysisToolStatus = .unknown
     @Published private(set) var isCheckingAnalysisTool = false
+    @Published private(set) var readinessSnapshot: ReadinessSnapshot?
+    @Published private(set) var readinessError: String?
+    @Published private(set) var isRefreshingReadiness = false
+    @Published private(set) var onboardingTestPhase: OnboardingTestPhase = .idle
+    @Published private(set) var onboardingTestResult: OnboardingTestResult?
+    @Published private(set) var onboardingTestError: String?
+    @Published private(set) var onboardingState: OnboardingState
+    @Published private(set) var onboardingWindowRequest: UUID?
+    @Published private(set) var isApplicationPrepared = false
     @Published private(set) var recoveryCandidates: [SessionRecoveryCandidate] = []
     @Published private(set) var recoveryIssues: [SessionRecoveryIssue] = []
     @Published private(set) var recordingsNavigationRequest: RecordingsNavigationRequest?
@@ -123,6 +135,9 @@ final class AppState: ObservableObject {
     private let processingLogger: ProcessingLogger
     private let processingNotifier: any ProcessingNotifying
     private let notificationDefaults: UserDefaults
+    private let readinessService: ReadinessService
+    private let onboardingStore: OnboardingStore
+    private let readinessAnalysisStatusStore: ReadinessAnalysisStatusStore
     private let captureMonitoringConfiguration: CaptureMonitoringConfiguration
     private let storageStatusProvider: @Sendable () async throws -> StorageStatus
     private var captureMonitorTask: Task<Void, Never>?
@@ -136,6 +151,11 @@ final class AppState: ObservableObject {
     private var fluidAudioInstallTasks: [FluidAudioModelKind: Task<Void, Never>] = [:]
     private var startRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
+    private let onboardingTestDelay: any OnboardingTestDelaying
+    private var onboardingTestSessionID: String?
+    private var onboardingTestStartedAt: Date?
+    private var onboardingTestTimer: Task<Void, Never>?
+    private var isOnboardingTestStopRequested = false
     private var usesDetectedAnalysisExecutable = true
     @Published private(set) var processingJobs: [RecordingSession] = []
     @Published private(set) var processingQueueStatus = ProcessingQueueStatus.idle
@@ -361,6 +381,9 @@ final class AppState: ObservableObject {
             revision.manifest.markdownFileName.map { revision.directoryURL.appendingPathComponent($0) }
         } ?? session.metadata.output?.markdownPath.map { URL(fileURLWithPath: $0) }
         lastMarkdownURL = markdownURL
+        if onboardingTestPhase == .processing, isOnboardingTestSession(session) {
+            await finalizeOnboardingTestAfterProcessing(session: session, result: result)
+        }
         guard notificationsEnabled else { return }
         let language: ProcessingNotificationLanguage = switch selectedAppLanguage.resolved {
         case .slovak: .slovak
@@ -443,14 +466,18 @@ final class AppState: ObservableObject {
         processingNotifier: any ProcessingNotifying = ProcessingNotificationService(),
         notificationDefaults: UserDefaults = .standard,
         sessionProcessor: (any SessionProcessing)? = nil,
-        resourceMonitoringEnabled: Bool = true
+        resourceMonitoringEnabled: Bool = true,
+        readinessService: ReadinessService? = nil,
+        onboardingStore: OnboardingStore? = nil,
+        onboardingTestDelay: any OnboardingTestDelaying = DefaultOnboardingTestDelay()
     ) {
         self.resourceMonitoringEnabled = resourceMonitoringEnabled
         self.injectedProcessor = sessionProcessor
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
         self.audioFinalizer = audioFinalizer
-        self.fluidAudioModelManager = fluidAudioModelManager ?? FluidAudioModelManager()
+        let resolvedFluidAudioModelManager = fluidAudioModelManager ?? FluidAudioModelManager()
+        self.fluidAudioModelManager = resolvedFluidAudioModelManager
         self.legacyModelCleaner = legacyModelCleaner
         self.sessionTranscriber = sessionTranscriber ?? SessionTranscriber()
         self.processingFileService = processingFileService
@@ -473,6 +500,18 @@ final class AppState: ObservableObject {
         self.processingLogger = processingLogger
         self.processingNotifier = processingNotifier
         self.notificationDefaults = notificationDefaults
+        let analysisStatusStore = ReadinessAnalysisStatusStore()
+        let resolvedReadinessService = readinessService ?? ReadinessService(
+            storageProbe: SessionStorageProbe(recordingsRoot: sessionManager.recordingsRoot),
+            modelProbe: FluidAudioReadinessProbe(manager: resolvedFluidAudioModelManager),
+            analysisStatusProvider: analysisStatusStore
+        )
+        let resolvedOnboardingStore = onboardingStore ?? OnboardingStore(defaults: notificationDefaults)
+        self.readinessAnalysisStatusStore = analysisStatusStore
+        self.readinessService = resolvedReadinessService
+        self.onboardingStore = resolvedOnboardingStore
+        self.onboardingTestDelay = onboardingTestDelay
+        self.onboardingState = resolvedOnboardingStore.state
         self.notificationsEnabled = notificationDefaults.bool(forKey: "processingNotificationsEnabled")
         self.captureMonitoringConfiguration = captureMonitoringConfiguration
         self.storageStatusProvider = storageStatusProvider ?? {
@@ -483,6 +522,9 @@ final class AppState: ObservableObject {
     func prepareStorage() async {
         guard !hasPreparedStorage, !isPreparingStorage else { return }
         isPreparingStorage = true
+        let hadRecordingRootBeforePreparation = FileManager.default.fileExists(
+            atPath: sessionManager.recordingsRoot.path
+        )
         defer { isPreparingStorage = false }
 
         do {
@@ -518,7 +560,7 @@ final class AppState: ObservableObject {
         if aiAnalysisEnabled {
             await refreshAnalysisToolStatus()
         } else {
-            analysisToolStatus = .unknown
+            setAnalysisToolStatus(.unknown)
         }
 
         await refreshFluidAudioModelStatuses()
@@ -529,6 +571,13 @@ final class AppState: ObservableObject {
         await refreshRecoveryCandidates()
         hasPreparedStorage = true
         await runAutomaticRecordingAudioCleanup()
+        if OnboardingStore.detectsExistingInstallation(defaults: notificationDefaults)
+            || hadRecordingRootBeforePreparation
+            || hasExistingRecordingSessions() {
+            onboardingStore.markExistingInstallation()
+            onboardingState = onboardingStore.state
+        }
+        isApplicationPrepared = true
     }
 
     /// Persists the opt-in and requests permission only when notifications are enabled.
@@ -574,6 +623,10 @@ final class AppState: ObservableObject {
     }
 
     func startRecording() async {
+        await startRecording(isOnboardingTest: false)
+    }
+
+    private func startRecording(isOnboardingTest: Bool) async {
         if let operation = startRecordingOperation {
             await operation.task.value
             return
@@ -581,7 +634,7 @@ final class AppState: ObservableObject {
         let operationID = UUID()
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.performStartRecording()
+            await self.performStartRecording(isOnboardingTest: isOnboardingTest)
         }
         startRecordingOperation = (operationID, task)
         await task.value
@@ -590,7 +643,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func performStartRecording() async {
+    private func performStartRecording(isOnboardingTest: Bool) async {
         do {
             if let markdownFileNameTemplateError {
                 lastError = markdownFileNameTemplateError
@@ -608,19 +661,27 @@ final class AppState: ObservableObject {
             stalledSystemAudioCheckTick = 0
 
             let session = try await sessionManager.startSession(
-                title: meetingTitle,
+                title: isOnboardingTest ? Self.onboardingTestSessionTitle : meetingTitle,
                 language: selectedTranscriptionLanguage,
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
-                calendarEvent: pendingCalendarEvent,
-                analysisConfiguration: currentAnalysisConfiguration()
+                calendarEvent: isOnboardingTest ? nil : pendingCalendarEvent,
+                analysisConfiguration: isOnboardingTest ? nil : currentAnalysisConfiguration()
             )
             currentSession = session
-            pendingCalendarEvent = nil
+            if isOnboardingTest {
+                onboardingTestSessionID = session.metadata.id
+            } else {
+                pendingCalendarEvent = nil
+            }
             try? await processingLogger.log(.sessionCreated, for: session)
 
             do {
-                updateCaptureDiagnostics(try await captureCoordinator.start(for: session))
+                let diagnostics = try await captureCoordinator.start(for: session)
+                updateCaptureDiagnostics(diagnostics)
+                if isOnboardingTest {
+                    onboardingTestStartedAt = diagnostics.systemAudio.startedAt ?? Date()
+                }
                 try transition(to: .recording)
             } catch {
                 let diagnostics = await captureCoordinator.stop()
@@ -632,6 +693,11 @@ final class AppState: ObservableObject {
                 currentSession = nil
                 lastCompletedSession = failedSession
                 updateCaptureDiagnostics(diagnostics)
+                if isOnboardingTest {
+                    onboardingTestPhase = .failed
+                    onboardingTestError = error.localizedDescription
+                    onboardingTestSessionID = nil
+                }
                 try? await processingLogger.log(
                     .captureFailed,
                     for: session,
@@ -642,6 +708,9 @@ final class AppState: ObservableObject {
 
             try? await processingLogger.log(.captureStarted, for: session)
             startCaptureMonitoring()
+            if isOnboardingTest {
+                onboardingTestPhase = .recording
+            }
         } catch {
             setFailure(error)
         }
@@ -667,7 +736,16 @@ final class AppState: ObservableObject {
     private func performStopRecording() async {
         guard let session = currentSession,
               status == .recording || pendingCaptureHandoff?.sessionID == session.metadata.id else { return }
+        let stoppedOnboardingTestSessionID = (currentSession?.metadata.id ?? pendingCaptureHandoff?.sessionID)
+            .flatMap { sessionID in
+                onboardingTestSessionID == sessionID ? sessionID : nil
+            }
         do {
+            if let stoppedOnboardingTestSessionID {
+                onboardingTestTimer?.cancel()
+                onboardingTestTimer = nil
+                onboardingTestPhase = .processing
+            }
             if pendingCaptureHandoff == nil {
                 try transition(to: .stopping)
                 let stoppedAt = Date()
@@ -686,9 +764,11 @@ final class AppState: ObservableObject {
             )
             pendingCaptureHandoff = nil
             currentSession = nil
-            meetingTitle = ""
-            pendingCalendarEvent = nil
-            calendarEventCandidates = []
+            if stoppedOnboardingTestSessionID == nil {
+                meetingTitle = ""
+                pendingCalendarEvent = nil
+                calendarEventCandidates = []
+            }
             // Capture is now independent of all subsequent processing.
             stateMachine = AppStateMachine()
             status = .idle
@@ -699,11 +779,227 @@ final class AppState: ObservableObject {
             lastError = localized(error)
             status = .failed
             stateMachine = AppStateMachine(status: .failed)
+            if let stoppedOnboardingTestSessionID,
+               onboardingTestSessionID == stoppedOnboardingTestSessionID {
+                onboardingTestPhase = .failed
+                onboardingTestError = localized(error)
+                clearOnboardingTestSessionState()
+            }
         }
+    }
+
+    var canStartOnboardingTest: Bool {
+        status == .idle || status == .completed || status == .failed
+    }
+
+    var onboardingTestArtifactDestinationURL: URL {
+        outputFolderURL ?? sessionManager.recordingsRoot
+    }
+
+    var onboardingTestAudioDestinationURL: URL {
+        sessionManager.recordingsRoot
+    }
+
+    func onboardingTestRemainingSeconds(at date: Date = Date()) -> Int? {
+        guard onboardingTestPhase == .recording,
+              let startedAt = onboardingTestStartedAt else { return nil }
+        return max(0, Int((startedAt.addingTimeInterval(10).timeIntervalSince(date)).rounded(.up)))
+    }
+
+    func startOnboardingTest() async {
+        guard onboardingTestPhase == .idle
+            || onboardingTestPhase == .completed
+            || onboardingTestPhase == .failed else {
+            onboardingTestError = localized(.onboardingTestAlreadyRunning)
+            return
+        }
+
+        guard canStartOnboardingTest,
+              !status.isProcessing,
+              status != .recording,
+              !hasPendingProcessing,
+              !isRecoveringSession,
+              !isScanningRecordingAudio,
+              !isCleaningRecordingAudio,
+              recoveryCandidates.isEmpty,
+              recoveryIssues.isEmpty else {
+            onboardingTestError = localized(.onboardingTestUnavailableWhileBusy)
+            return
+        }
+
+        onboardingTestResult = nil
+        onboardingTestError = nil
+        onboardingTestPhase = .starting
+        onboardingTestStartedAt = nil
+        isOnboardingTestStopRequested = false
+        await startRecording(isOnboardingTest: true)
+
+        if isOnboardingTestStopRequested {
+            isOnboardingTestStopRequested = false
+            guard status == .recording,
+                  let session = currentSession,
+                  session.metadata.id == onboardingTestSessionID else {
+                onboardingTestPhase = .failed
+                onboardingTestError = lastError ?? localized(.onboardingTestCouldNotStart)
+                clearOnboardingTestSessionState()
+                return
+            }
+            await finishOnboardingTest()
+            return
+        }
+
+        guard status == .recording,
+              let session = currentSession,
+              session.metadata.title == Self.onboardingTestSessionTitle else {
+            onboardingTestPhase = .failed
+            onboardingTestError = lastError ?? localized(.onboardingTestCouldNotStart)
+            return
+        }
+
+        onboardingTestSessionID = session.metadata.id
+        onboardingTestPhase = .recording
+        scheduleOnboardingTestTimeout()
+    }
+
+    func stopOnboardingTest() async {
+        if onboardingTestPhase == .starting {
+            isOnboardingTestStopRequested = true
+            return
+        }
+        await finishOnboardingTest()
+    }
+
+    private func scheduleOnboardingTestTimeout() {
+        onboardingTestTimer?.cancel()
+        let delay = onboardingTestDelay
+        let remainingSeconds = onboardingTestStartedAt.map {
+            max(0, $0.addingTimeInterval(10).timeIntervalSinceNow)
+        } ?? 10
+        onboardingTestTimer = Task { [weak self] in
+            do {
+                try await delay.sleep(for: remainingSeconds)
+                await self?.finishOnboardingTest()
+            } catch is CancellationError {
+            } catch {
+                self?.failOnboardingTestTimer(error: error)
+            }
+        }
+    }
+
+    private func failOnboardingTestTimer(error: Error) {
+        guard onboardingTestPhase == .recording else { return }
+        onboardingTestError = error.localizedDescription
+    }
+
+    private func finishOnboardingTest() async {
+        guard onboardingTestPhase == .recording,
+              status == .recording,
+              let session = currentSession,
+              session.metadata.id == onboardingTestSessionID else {
+            return
+        }
+
+        onboardingTestTimer?.cancel()
+        onboardingTestTimer = nil
+        onboardingTestPhase = .processing
+        await stopRecording()
+    }
+
+    private func finalizeOnboardingTestAfterProcessing(
+        session: RecordingSession,
+        result: SessionProcessingResult?
+    ) async {
+        guard let sessionID = onboardingTestSessionID,
+              session.metadata.id == sessionID,
+              isOnboardingTestSession(session) else {
+            return
+        }
+
+        let testResult = await makeOnboardingTestResult(
+            session: session,
+            processingResult: result
+        )
+        onboardingTestResult = testResult
+        let missingModelIsOnlyFailure = testResult?.transcriptionStatus == .modelMissing
+            && result?.failedSteps == [.transcribing]
+        let processingFailed = session.metadata.processing?.state == .failed
+        onboardingTestPhase = processingFailed && !missingModelIsOnlyFailure ? .failed : .completed
+        if onboardingTestPhase == .failed, onboardingTestError == nil {
+            onboardingTestError = result?.failureDescription ?? lastError
+        }
+        clearOnboardingTestSessionState()
+    }
+
+    private func makeOnboardingTestResult(
+        session: RecordingSession,
+        processingResult: SessionProcessingResult?
+    ) async -> OnboardingTestResult? {
+        guard let sessionID = onboardingTestSessionID,
+              session.metadata.id == sessionID,
+              isOnboardingTestSession(session) else {
+            return nil
+        }
+
+        let diagnostics = captureDiagnostics
+        var transcriptionStatus = session.metadata.transcription?.status
+        var transcriptionFailureReason = session.metadata.transcription?.failureReason
+        if transcriptionStatus == .failed,
+           processingResult?.failedSteps.contains(.transcribing) == true,
+           await isTranscriptionModelUnavailable() {
+            transcriptionStatus = .modelMissing
+            transcriptionFailureReason = nil
+        }
+
+        let markdownURL = processingResult?.revision.flatMap { revision in
+            revision.manifest.markdownFileName.map {
+                revision.directoryURL.appendingPathComponent($0)
+            }
+        } ?? session.metadata.output?.markdownPath.map { URL(fileURLWithPath: $0) }
+
+        return OnboardingTestResult(
+            sessionID: sessionID,
+            title: session.metadata.title,
+            systemAudio: OnboardingTestTrackResult(
+                id: "system",
+                diagnostics: diagnostics.systemAudio
+            ),
+            microphone: OnboardingTestTrackResult(
+                id: "microphone",
+                diagnostics: diagnostics.microphone
+            ),
+            transcriptionStatus: transcriptionStatus,
+            transcriptionFailureReason: transcriptionFailureReason,
+            markdownURL: markdownURL,
+            sessionDirectoryURL: session.directoryURL,
+            error: onboardingTestError
+        )
+    }
+
+    private func isTranscriptionModelUnavailable() async -> Bool {
+        switch await fluidAudioModelManager.status(for: .parakeetV3) {
+        case .missing, .invalid:
+            return true
+        case .ready:
+            return false
+        }
+    }
+
+    private func clearOnboardingTestSessionState() {
+        onboardingTestSessionID = nil
+        onboardingTestStartedAt = nil
+        isOnboardingTestStopRequested = false
+    }
+
+    private func isOnboardingTestSession(_ session: RecordingSession) -> Bool {
+        session.metadata.id == onboardingTestSessionID
+            && session.metadata.title == Self.onboardingTestSessionTitle
     }
 
     func renameCurrentSession(to title: String) async {
         let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let currentSession, isOnboardingTestSession(currentSession) {
+            return
+        }
         guard !normalizedTitle.isEmpty,
               normalizedTitle != currentSession?.metadata.title else {
             return
@@ -823,7 +1119,221 @@ final class AppState: ObservableObject {
     }
 
     var outputFolderDescription: String {
-        outputFolderURL?.path ?? "Recording session folder (default)"
+        outputFolderURL?.path ?? localized(.recordingSessionFolderDescription)
+    }
+
+    var readinessConfiguration: ReadinessConfiguration {
+        ReadinessConfiguration(
+            captureMode: .systemAndMicrophone,
+            outputFolderURL: outputFolderURL,
+            outputFileNameTemplate: markdownFileNameTemplate,
+            aiAnalysis: ReadinessOptionalFeature(isEnabled: aiAnalysisEnabled),
+            calendar: ReadinessOptionalFeature(
+                isEnabled: calendarIntegrationEnabled,
+                authorization: readinessPermissionStatus(for: calendarAuthorizationStatus)
+            ),
+            notifications: ReadinessOptionalFeature(isEnabled: notificationsEnabled)
+        )
+    }
+
+    var onboardingStep: OnboardingStep {
+        onboardingState.step
+    }
+
+    var shouldShowOnboardingInvitation: Bool {
+        onboardingStore.shouldShowInvitation
+    }
+
+    var shouldOpenOnboardingOnLaunch: Bool {
+        onboardingStore.shouldOpenOnLaunch
+    }
+
+    func refreshReadiness() async {
+        guard !isRefreshingReadiness else { return }
+        isRefreshingReadiness = true
+        defer { isRefreshingReadiness = false }
+
+        do {
+            readinessSnapshot = try await readinessService.refresh(readinessConfiguration)
+            readinessError = nil
+        } catch {
+            readinessError = localized(.readinessRefreshFailed(localized(error)))
+        }
+    }
+
+    func performReadinessAction(
+        _ action: ReadinessAction,
+        openSettings: () -> Void
+    ) async {
+        switch action {
+        case .requestSystemAudioPermission:
+            requestSystemAudioPermission()
+        case .openSystemAudioSettings:
+            openSystemAudioPrivacySettings()
+        case .requestMicrophonePermission:
+            switch AVCaptureDevice.authorizationStatus(for: .audio) {
+            case .denied, .restricted:
+                openMicrophonePrivacySettings()
+            default:
+                await requestMicrophonePermission()
+            }
+        case .connectMicrophoneInput:
+            openSystemAudioPrivacySettings()
+        case .freeStorageSpace, .fixStorageAccess:
+            openRecordingsFolder()
+        case .downloadTranscriptionModel:
+            installFluidAudioModel(.transcription)
+        case .importTranscriptionModel:
+            await importFluidAudioModel(.transcription)
+        case .repairTranscriptionModel:
+            installFluidAudioModel(.transcription, repair: true)
+        case .chooseOutputFolder:
+            chooseOutputFolder()
+        case .useSessionFolder:
+            useDefaultOutputFolder()
+        case .fixOutputFileNameTemplate:
+            selectedSettingsSection = "output"
+            openSettings()
+        case .openAISettings:
+            selectedSettingsSection = "ai"
+            openSettings()
+        case .disableAI:
+            aiAnalysisEnabled = false
+            analysisEnabledDidChange()
+        case .openCalendarSettings:
+            openCalendarPrivacySettings()
+        case .openNotificationSettings:
+            openNotificationPrivacySettings()
+        case .none:
+            break
+        }
+
+        if refreshesAfterAction(action) {
+            await refreshReadiness()
+        }
+    }
+
+    func requestSystemAudioPermission() {
+        CGRequestScreenCaptureAccess()
+    }
+
+    func requestMicrophonePermission() async {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
+        _ = await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    func openSystemAudioPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openMicrophonePrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    func deferOnboarding() {
+        onboardingStore.deferOnboarding()
+        onboardingState = onboardingStore.state
+    }
+
+    func resumeOnboarding() {
+        onboardingStore.resume()
+        onboardingState = onboardingStore.state
+        requestOnboardingWindow()
+    }
+
+    func setOnboardingStep(_ step: OnboardingStep) {
+        onboardingStore.setStep(step)
+        onboardingState = onboardingStore.state
+    }
+
+    func advanceOnboarding() {
+        onboardingStore.advance()
+        onboardingState = onboardingStore.state
+    }
+
+    func moveToPreviousOnboardingStep() {
+        let steps = OnboardingStep.allCases
+        guard let index = steps.firstIndex(of: onboardingState.step), index > 0 else { return }
+        setOnboardingStep(steps[index - 1])
+    }
+
+    func completeOnboarding() {
+        onboardingStore.complete()
+        onboardingState = onboardingStore.state
+    }
+
+    func markOnboardingPresentedOnLaunch() {
+        onboardingStore.markPresentedOnLaunch()
+        onboardingState = onboardingStore.state
+    }
+
+    func requestOnboardingWindow() {
+        onboardingWindowRequest = UUID()
+    }
+
+    func clearOnboardingWindowRequest() {
+        onboardingWindowRequest = nil
+    }
+
+    private func refreshesAfterAction(_ action: ReadinessAction) -> Bool {
+        switch action {
+        case
+            .requestSystemAudioPermission,
+            .openSystemAudioSettings,
+            .requestMicrophonePermission,
+            .connectMicrophoneInput,
+            .chooseOutputFolder,
+            .useSessionFolder,
+            .disableAI:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func readinessPermissionStatus(
+        for status: CalendarAuthorizationStatus
+    ) -> ReadinessPermissionStatus {
+        switch status {
+        case .notDetermined: return .notDetermined
+        case .restricted: return .restricted
+        case .denied, .writeOnly: return .denied
+        case .fullAccess: return .granted
+        }
+    }
+
+    private func hasExistingRecordingSessions() -> Bool {
+        let fileManager = FileManager.default
+        guard
+            let children = try? fileManager.contentsOfDirectory(
+                at: sessionManager.recordingsRoot,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            )
+        else {
+            return false
+        }
+        return children.contains { child in
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: child.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                return false
+            }
+            return fileManager.fileExists(
+                atPath: child.appendingPathComponent("session.json", isDirectory: false).path
+            )
+        }
+    }
+
+    private func openNotificationPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     var canOpenLastMarkdownInObsidian: Bool {
@@ -897,7 +1407,7 @@ final class AppState: ObservableObject {
         if aiAnalysisEnabled {
             Task { await refreshAnalysisToolStatus() }
         } else {
-            analysisToolStatus = .unknown
+            setAnalysisToolStatus(.unknown)
         }
     }
 
@@ -909,7 +1419,7 @@ final class AppState: ObservableObject {
             .executablePath(for: selectedAnalysisTool).isEmpty
         analysisExecutablePath = resolvedAnalysisExecutablePath(for: selectedAnalysisTool)
         persistAnalysisSettings()
-        analysisToolStatus = .unknown
+        setAnalysisToolStatus(.unknown)
         Task { await refreshAnalysisToolStatus() }
     }
 
@@ -963,7 +1473,7 @@ final class AppState: ObservableObject {
             tool: selectedAnalysisTool,
             configuredPath: analysisExecutablePath
         ) else {
-            analysisToolStatus = .unavailable
+            setAnalysisToolStatus(.unavailable)
             return
         }
         analysisExecutablePath = executableURL.path
@@ -977,23 +1487,28 @@ final class AppState: ObservableObject {
             let version = try await provider.toolVersion()
             switch try await provider.authenticationStatus() {
             case .authenticated:
-                analysisToolStatus = .available(path: executableURL.path, version: version)
+                setAnalysisToolStatus(.available(path: executableURL.path, version: version))
             case .authenticationRequired:
-                analysisToolStatus = .authenticationRequired(
+                setAnalysisToolStatus(.authenticationRequired(
                     path: executableURL.path,
                     version: version,
                     loginCommand: selectedAnalysisTool.loginCommand(
                         executableURL: executableURL
                     )
-                )
+                ))
             }
             lastError = nil
         } catch {
-            analysisToolStatus = .failed(
+            setAnalysisToolStatus(.failed(
                 path: executableURL.path,
                 reason: localized(error)
-            )
+            ))
         }
+    }
+
+    private func setAnalysisToolStatus(_ status: AnalysisToolStatus) {
+        analysisToolStatus = status
+        readinessAnalysisStatusStore.update(status)
     }
 
     func copyAnalysisLoginCommandAndOpenTerminal() {
@@ -1438,6 +1953,7 @@ final class AppState: ObservableObject {
             ))
         }
         await refreshFluidAudioModelStatus(kind)
+        await refreshReadiness()
     }
 
     func deleteFluidAudioModel(_ kind: FluidAudioModelKind) async {
@@ -1484,6 +2000,7 @@ final class AppState: ObservableObject {
             ))
         }
         await refreshFluidAudioModelStatus(kind)
+        await refreshReadiness()
     }
 
     private func refreshFluidAudioModelStatus(_ kind: FluidAudioModelKind) async {

@@ -70,6 +70,12 @@ enum AppUserMessage: Equatable, Sendable {
     case processingPausedForMemory
     case processingPausedForThermal
     case processingPausedForStorage
+    case recordingSessionFolderDescription
+    case readinessRefreshFailed(String)
+    case onboardingWindowTitle
+    case onboardingTestAlreadyRunning
+    case onboardingTestUnavailableWhileBusy
+    case onboardingTestCouldNotStart
 }
 
 enum AppLocalization {
@@ -292,6 +298,48 @@ enum AppLocalization {
                 "Processing is paused because free disk space is below the reserve.",
                 "Spracovanie je pozastavené, pretože voľné miesto na disku je pod rezervou.",
                 "Zpracování je pozastaveno, protože volné místo na disku je pod rezervou.",
+                language
+            )
+        case .recordingSessionFolderDescription:
+            return pick(
+                "Recording session folder (default)",
+                "Priečinok nahrávky stretnutia (predvolený)",
+                "Složka nahrávky setkání (výchozí)",
+                language
+            )
+        case let .readinessRefreshFailed(detail):
+            return pick(
+                "Readiness could not be refreshed: \(detail)",
+                "Pripravenosť sa nepodarilo obnoviť: \(detail)",
+                "Připravenost se nepodařilo obnovit: \(detail)",
+                language
+            )
+        case .onboardingWindowTitle:
+            return pick(
+                "Prepare MeetingScribe",
+                "Pripraviť MeetingScribe",
+                "Připravit MeetingScribe",
+                language
+            )
+        case .onboardingTestAlreadyRunning:
+            return pick(
+                "A setup test is already running.",
+                "Test prípravy už prebieha.",
+                "Test přípravy již probíhá.",
+                language
+            )
+        case .onboardingTestUnavailableWhileBusy:
+            return pick(
+                "The setup test is unavailable during recording, processing, or recovery.",
+                "Test prípravy nie je dostupný počas nahrávania, spracovania alebo obnovy.",
+                "Test přípravy není dostupný během nahrávání, zpracování nebo obnovy.",
+                language
+            )
+        case .onboardingTestCouldNotStart:
+            return pick(
+                "The setup test could not start.",
+                "Test prípravy sa nepodarilo spustiť.",
+                "Test přípravy se nepodařilo spustit.",
                 language
             )
         }

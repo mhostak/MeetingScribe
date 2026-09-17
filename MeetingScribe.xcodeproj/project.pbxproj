@@ -98,6 +98,13 @@
 		720C1A6468CDC51E518C6381 /* ProcessingResourceGovernorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BC1756C7A931759B5F1445C /* ProcessingResourceGovernorTests.swift */; };
 		09B1139E3D68218F2F416829 /* ProcessingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF28F1C0DF3891909289CCA6 /* ProcessingQueueTests.swift */; };
 		199EDEC802B9E55C6D1E684E /* SessionProcessorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF8273DC655E6051F1B975BD /* SessionProcessorTests.swift */; };
+		000000000000000000000331 /* ReadinessService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000321 /* ReadinessService.swift */; };
+		000000000000000000000332 /* OnboardingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000322 /* OnboardingStore.swift */; };
+		000000000000000000000333 /* ReadinessView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000323 /* ReadinessView.swift */; };
+		000000000000000000000334 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000324 /* OnboardingView.swift */; };
+		000000000000000000000335 /* ReadinessAnalysisStatusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000325 /* ReadinessAnalysisStatusStore.swift */; };
+		000000000000000000000336 /* OnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000326 /* OnboardingTests.swift */; };
+		000000000000000000000337 /* OnboardingTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000327 /* OnboardingTest.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -206,6 +213,13 @@
 		3BC1756C7A931759B5F1445C /* ProcessingResourceGovernorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProcessingResourceGovernorTests.swift"; sourceTree = "<group>"; };
 		DF28F1C0DF3891909289CCA6 /* ProcessingQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProcessingQueueTests.swift"; sourceTree = "<group>"; };
 		DF8273DC655E6051F1B975BD /* SessionProcessorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SessionProcessorTests.swift"; sourceTree = "<group>"; };
+		000000000000000000000321 /* ReadinessService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessService.swift; sourceTree = "<group>"; };
+		000000000000000000000322 /* OnboardingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingStore.swift; sourceTree = "<group>"; };
+		000000000000000000000323 /* ReadinessView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessView.swift; sourceTree = "<group>"; };
+		000000000000000000000324 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		000000000000000000000325 /* ReadinessAnalysisStatusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessAnalysisStatusStore.swift; sourceTree = "<group>"; };
+		000000000000000000000326 /* OnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTests.swift; sourceTree = "<group>"; };
+		000000000000000000000327 /* OnboardingTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTest.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -253,6 +267,7 @@
 				000000000000000000000612 /* Calendar */,
 				000000000000000000000607 /* Capture */,
 				000000000000000000000604 /* Sessions */,
+				000000000000000000000320 /* Readiness */,
 				000000000000000000000608 /* Transcription */,
 				000000000000000000000610 /* Analysis */,
 				000000000000000000000609 /* Output */,
@@ -352,8 +367,22 @@
 				000000000000000000000209 /* SessionManagerTests.swift */,
 				000000000000000000000278 /* SessionCatalogTests.swift */,
 				000000000000000000000282 /* CalendarIntegrationTests.swift */,
+				000000000000000000000326 /* OnboardingTests.swift */,
 			);
 			path = MeetingScribeTests;
+			sourceTree = "<group>";
+		};
+		000000000000000000000320 /* Readiness */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000321 /* ReadinessService.swift */,
+				000000000000000000000322 /* OnboardingStore.swift */,
+				000000000000000000000323 /* ReadinessView.swift */,
+				000000000000000000000324 /* OnboardingView.swift */,
+				000000000000000000000325 /* ReadinessAnalysisStatusStore.swift */,
+				000000000000000000000327 /* OnboardingTest.swift */,
+			);
+			path = Readiness;
 			sourceTree = "<group>";
 		};
 		000000000000000000000606 /* Products */ = {
@@ -538,6 +567,12 @@
 				AAEB04267A2A0559A5EC5BFC /* ProcessingJob.swift in Sources */,
 				000000000000000000000191 /* LegacyModelCleaner.swift in Sources */,
 				000000000000000000000190 /* TranscriptionSettingsStore.swift in Sources */,
+				000000000000000000000331 /* ReadinessService.swift in Sources */,
+				000000000000000000000332 /* OnboardingStore.swift in Sources */,
+				000000000000000000000333 /* ReadinessView.swift in Sources */,
+				000000000000000000000334 /* OnboardingView.swift in Sources */,
+				000000000000000000000335 /* ReadinessAnalysisStatusStore.swift in Sources */,
+				000000000000000000000337 /* OnboardingTest.swift in Sources */,
 				000000000000000000000189 /* AudioActivityDetector.swift in Sources */,
 				000000000000000000000188 /* TranscriptionRevision.swift in Sources */,
 				000000000000000000000186 /* FluidAudioTranscriptionService.swift in Sources */,
@@ -626,6 +661,7 @@
 				000000000000000000000108 /* AppStateMachineTests.swift in Sources */,
 				000000000000000000000109 /* SessionManagerTests.swift in Sources */,
 				000000000000000000000179 /* CalendarIntegrationTests.swift in Sources */,
+				000000000000000000000336 /* OnboardingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
