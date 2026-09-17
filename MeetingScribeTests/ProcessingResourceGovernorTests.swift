@@ -91,22 +91,22 @@ final class ProcessingResourceGovernorTests: XCTestCase {
         XCTAssertGreaterThan(raised.resumeAboveStorageBytes, raised.pauseBelowStorageBytes)
     }
 
-    /// Memory pressure that never reports a return to `.normal` used to hold the
-    /// queue with an unexplained empty reason list.
+    /// A repeated hold has to keep naming its reason; an empty reason list used
+    /// to make an indefinite pause unexplainable in the UI.
     func testHoldInsideResumeBandStillReportsTheBlockingReason() {
         var governor = ProcessingResourceGovernor()
         let pressured = ProcessingResourceSnapshot(
             captureLifecycle: .idle,
-            memoryPressure: .warning
+            memoryPressure: .critical
         )
 
         XCTAssertEqual(
             governor.decision(for: pressured, workerIsRunning: false),
-            .hold([.memoryPressure(.warning)])
+            .hold([.memoryPressure(.critical)])
         )
         XCTAssertEqual(
             governor.decision(for: pressured, workerIsRunning: false),
-            .hold([.memoryPressure(.warning)])
+            .hold([.memoryPressure(.critical)])
         )
         XCTAssertEqual(
             governor.decision(
@@ -114,6 +114,57 @@ final class ProcessingResourceGovernorTests: XCTestCase {
                 workerIsRunning: false
             ),
             .allow
+        )
+    }
+
+    /// `warning` pressure and `serious` thermals are the steady state of a
+    /// passively cooled Mac. Stopping background work there left the queue
+    /// permanently paused with nothing recording.
+    func testOrdinaryPressureDoesNotWithholdWorkWhileCaptureIsIdle() {
+        var governor = ProcessingResourceGovernor()
+
+        XCTAssertEqual(
+            governor.decision(
+                for: .init(captureLifecycle: .idle, memoryPressure: .warning,
+                           thermalState: .serious),
+                workerIsRunning: false
+            ),
+            .allow
+        )
+        XCTAssertEqual(
+            governor.decision(
+                for: .init(captureLifecycle: .recording, captureIsHealthy: true,
+                           memoryPressure: .warning),
+                workerIsRunning: false
+            ),
+            .hold([.memoryPressure(.warning)])
+        )
+        // Stopping the capture removes the only thing that pause protected.
+        XCTAssertEqual(
+            governor.decision(
+                for: .init(captureLifecycle: .idle, memoryPressure: .warning),
+                workerIsRunning: false
+            ),
+            .allow
+        )
+    }
+
+    func testCriticalLevelsWithholdWorkEvenWithoutCapture() {
+        var governor = ProcessingResourceGovernor()
+
+        XCTAssertEqual(
+            governor.decision(
+                for: .init(captureLifecycle: .idle, thermalState: .critical),
+                workerIsRunning: true
+            ),
+            .cancelRunning([.thermal(.critical)])
+        )
+        XCTAssertEqual(
+            governor.decision(
+                for: .init(captureLifecycle: .idle, memoryPressure: .critical),
+                workerIsRunning: false
+            ),
+            .hold([.memoryPressure(.critical)])
         )
     }
 

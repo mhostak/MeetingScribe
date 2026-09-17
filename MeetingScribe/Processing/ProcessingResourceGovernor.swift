@@ -151,11 +151,28 @@ struct ProcessingResourceGovernor: Sendable {
         if snapshot.captureLifecycle != .idle, snapshot.captureIsHealthy == false {
             reasons.append(.captureUnhealthy)
         }
-        if snapshot.memoryPressure != .normal {
-            reasons.append(.memoryPressure(snapshot.memoryPressure))
+        // `warning` memory pressure and `serious` thermal state are ordinary
+        // steady states on a passively cooled Mac with unified memory — a
+        // MacBook Air sits at pressure level 2 with a third of its memory free.
+        // Treating them as a reason to stop meant background work never ran at
+        // all. They withhold work only while a capture is in flight, which is
+        // what the invariant actually protects. Only the critical levels, where
+        // the system itself is about to intervene, stop work unconditionally.
+        switch snapshot.memoryPressure {
+        case .critical:
+            reasons.append(.memoryPressure(.critical))
+        case .warning where snapshot.captureLifecycle != .idle:
+            reasons.append(.memoryPressure(.warning))
+        case .warning, .normal:
+            break
         }
-        if snapshot.thermalState == .serious || snapshot.thermalState == .critical {
-            reasons.append(.thermal(snapshot.thermalState))
+        switch snapshot.thermalState {
+        case .critical:
+            reasons.append(.thermal(.critical))
+        case .serious where snapshot.captureLifecycle != .idle:
+            reasons.append(.thermal(.serious))
+        case .serious, .fair, .nominal:
+            break
         }
         if let availableStorageBytes = snapshot.availableStorageBytes,
            availableStorageBytes < storageThreshold {
