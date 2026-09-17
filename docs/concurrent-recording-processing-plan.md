@@ -4,7 +4,7 @@ Implementačný plán pre agentov Tera · 2026-09-16 · stav: pripravené na imp
 
 ## 1. Východiská a cieľ
 
-Zdroj požiadavky: `/Users/martin_hostak/Documents/md-wiki/MeetingScribe/napady-na-vylepseni.md`, sekcia „Souběžné nahrávání a transkripce dokončeného záznamu“.
+Zdroj požiadavky: interná poznámka k nápadom na vylepšenia (mimo tohto repozitára), sekcia „Souběžné nahrávání a transkripce dokončeného záznamu“.
 
 Plán bol overený proti lokálnemu commitu `7109bd92132ed0d917fdaed48fb75b6133e4cba4` („Notify users when processing completes“). Lokálny ref `origin/main` ukazuje na rovnaký commit; pri príprave plánu nebol vykonaný fetch. Pred implementáciou aktualizovať remote a skontrolovať rozdiely. Vault opisuje aj implementovanú diarizáciu, ale tento checkout jej runtime výslovne označuje za vyradený a zachováva kompatibilné artefakty. Obnova diarizácie nie je súčasťou tejto úlohy; ak nový základ obsahuje aktívnu diarizáciu, zaradiť ju do toho istého spracovacieho slotu a ochrany zdrojov.
 
