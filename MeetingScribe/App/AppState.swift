@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ServiceManagement
 import UniformTypeIdentifiers
@@ -137,34 +138,66 @@ final class AppState: ObservableObject {
     private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var usesDetectedAnalysisExecutable = true
     @Published private(set) var processingJobs: [RecordingSession] = []
+    @Published private(set) var processingQueueStatus = ProcessingQueueStatus.idle
     private var queueIsObserved = false
     private let resourceMonitoringEnabled: Bool
     private var resourceMonitorTask: Task<Void, Never>?
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var resourceMemoryPressure: ProcessingResourceSnapshot.MemoryPressure = .normal
     private var resourceGovernor = ProcessingResourceGovernor()
-    private var resourcePauseActive = false
     private var observedDroppedBuffers = 0
 
     private func startResourceMonitoring() {
         guard resourceMonitoringEnabled, resourceMonitorTask == nil else { return }
+        resourceGovernor = ProcessingResourceGovernor(
+            limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
+        )
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+        // The handler reads the source through this property, so assigning it
+        // after `resume()` made the first event fall back to `.normal`.
+        memoryPressureSource = source
         source.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                let event = self.memoryPressureSource?.data ?? .normal
-                self.resourceMemoryPressure = event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal
+                if let event = self.memoryPressureSource?.data {
+                    self.resourceMemoryPressure = event.contains(.critical) ? .critical
+                        : event.contains(.warning) ? .warning : .normal
+                }
                 await self.updateResourcePolicy()
             }
         }
         source.resume()
-        memoryPressureSource = source
         resourceMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.updateResourcePolicy()
                 do { try await Task.sleep(for: .seconds(1)) } catch { break }
             }
         }
+    }
+
+    /// Memory-pressure notifications only fire on transitions. A missed return to
+    /// `.normal` would otherwise hold the queue for the rest of the process, so
+    /// the level is polled and the last event value is only a fallback.
+    private static func pollMemoryPressure() -> ProcessingResourceSnapshot.MemoryPressure? {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else {
+            return nil
+        }
+        switch level {
+        case 1: return .normal
+        case 2: return .warning
+        case 4: return .critical
+        default: return nil
+        }
+    }
+
+    /// Applies the user's capture reserve to background work when the setting changes.
+    func refreshProcessingResourceLimits() {
+        guard resourceMonitoringEnabled else { return }
+        resourceGovernor = ProcessingResourceGovernor(
+            limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
+        )
     }
 
     private func updateResourcePolicy() async {
@@ -188,20 +221,52 @@ final class AppState: ObservableObject {
             && dropped <= observedDroppedBuffers
         observedDroppedBuffers = dropped
         let available = try? await sessionManager.storageStatus().availableBytes
+        if let polled = Self.pollMemoryPressure() { resourceMemoryPressure = polled }
         let snapshot = ProcessingResourceSnapshot(captureLifecycle: lifecycle,
             captureIsHealthy: lifecycle == .recording ? healthy : nil,
             memoryPressure: resourceMemoryPressure, thermalState: thermal, availableStorageBytes: available)
+        // The queue's published pause is the single source of truth. Mirroring it
+        // in a local flag used to strand the queue whenever the two disagreed,
+        // for example after a resume that threw.
+        let pause = processingQueueStatus.pause
         switch resourceGovernor.decision(for: snapshot, workerIsRunning: isProcessingInBackground) {
         case .allow:
-            if resourcePauseActive {
-                resourcePauseActive = false
-                do { try await processingQueue.resume() } catch { lastError = localized(error) }
-            }
-        case .hold, .cancelRunning:
-            if !resourcePauseActive {
-                resourcePauseActive = true
-                await processingQueue.pause(reason: "Waiting for available resources")
-            }
+            guard pause?.kind == .resource else { return }
+            do { try await processingQueue.resume() } catch { lastError = localized(error) }
+        case let .hold(reasons), let .cancelRunning(reasons):
+            let reason = localizedResourcePauseReason(reasons)
+            guard pause?.kind != .resource || pause?.reason != reason else { return }
+            await processingQueue.pause(reason: reason, kind: .resource)
+        }
+    }
+
+    private func localizedResourcePauseReason(
+        _ reasons: [ProcessingResourceReason]
+    ) -> String {
+        guard let reason = reasons.first else {
+            return localized(.processingPausedForResources)
+        }
+        switch reason {
+        case .captureUnhealthy:
+            return localized(.processingPausedForCapture)
+        case .memoryPressure:
+            return localized(.processingPausedForMemory)
+        case .thermal:
+            return localized(.processingPausedForThermal)
+        case .storageReserve:
+            return localized(.processingPausedForStorage)
+        }
+    }
+
+    /// Clears a resource pause on the user's explicit request. The governor
+    /// re-evaluates on the next tick, so a still-blocked queue pauses again with
+    /// a visible reason rather than silently doing nothing.
+    func resumeProcessing() async {
+        do {
+            try await processingQueue.resume()
+            lastError = nil
+        } catch {
+            lastError = localized(error)
         }
     }
 
@@ -233,6 +298,21 @@ final class AppState: ObservableObject {
 
     var hasProcessingFailures: Bool { processingJobs.contains { $0.metadata.processing?.state == .failed } }
 
+    /// True only when a pause actually withholds work the queue would run.
+    var isProcessingPaused: Bool {
+        processingQueueStatus.isPaused && hasPendingProcessing
+    }
+
+    var processingPauseReason: String? {
+        isProcessingPaused ? processingQueueStatus.pause?.reason : nil
+    }
+
+    /// A shutdown pause belongs to a terminating app and must not offer a button.
+    var canResumeProcessing: Bool {
+        guard let pause = processingQueueStatus.pause, hasPendingProcessing else { return false }
+        return pause.kind != .shutdown
+    }
+
     var canStartRecording: Bool {
         currentSession == nil && ![.preparing, .recording, .stopping].contains(status)
             && !isCleaningRecordingAudio && !isScanningRecordingAudio
@@ -259,15 +339,19 @@ final class AppState: ObservableObject {
         queueIsObserved = true
         startResourceMonitoring()
         await updateResourcePolicy()
-        await processingQueue.observe(onChange: { [weak self] sessions in
-            await self?.receiveProcessingSessions(sessions)
+        await processingQueue.observe(onChange: { [weak self] sessions, status in
+            await self?.receiveProcessingSessions(sessions, status: status)
         }, onCompletion: { [weak self] session, result in
             await self?.processingDidFinish(session, result: result)
         })
     }
 
-    private func receiveProcessingSessions(_ sessions: [RecordingSession]) {
+    private func receiveProcessingSessions(
+        _ sessions: [RecordingSession],
+        status: ProcessingQueueStatus
+    ) {
         processingJobs = sessions
+        processingQueueStatus = status
     }
 
     private func processingDidFinish(_ session: RecordingSession, result: SessionProcessingResult?) async {
@@ -297,7 +381,12 @@ final class AppState: ObservableObject {
 
     func retryProcessing(_ session: RecordingSession) async {
         do {
-            guard canEnqueueProcessing(sessionID: session.metadata.id) else { return }
+            guard canEnqueueProcessing(sessionID: session.metadata.id) else {
+                // A pending job cannot be re-enqueued. Say so instead of
+                // returning silently, which looks like a dead button.
+                if canResumeProcessing { lastError = processingQueueStatus.pause?.reason }
+                return
+            }
             let job = session.metadata.processing
             let queued = try await sessionManager.queueProcessing(
                 sessionID: session.metadata.id, kind: job?.kind ?? .recovery,
@@ -315,6 +404,17 @@ final class AppState: ObservableObject {
         memoryPressureSource?.cancel()
         await processingQueue.shutdown()
         return true
+    }
+
+    /// The system can withdraw a termination the app already prepared for. The
+    /// monitor task and the scheduler must come back, or the queue stays dead for
+    /// the rest of the process with no way to restart it.
+    func abortTermination() async {
+        resourceMonitorTask = nil
+        memoryPressureSource = nil
+        do { try await processingQueue.cancelShutdown() } catch { lastError = localized(error) }
+        startResourceMonitoring()
+        await updateResourcePolicy()
     }
 
     init(
@@ -1045,6 +1145,8 @@ final class AppState: ObservableObject {
         applicationSettingsStore.setMarkdownFileNameTemplate(markdownFileNameTemplate)
         applicationSettingsStore.setMinimumStorageBytes(minimumStorageBytes)
         await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
+        refreshProcessingResourceLimits()
+        await updateResourcePolicy()
     }
 
     var approvedCalendarEvent: CalendarEventSnapshot? {

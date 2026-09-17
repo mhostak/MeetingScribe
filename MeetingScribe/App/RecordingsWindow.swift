@@ -317,6 +317,11 @@ private struct RecordingSessionRow: View {
                 if processingJob?.state == .failed {
                     Button("Retry") { Task { await appState.retryProcessing(entry.session) } }
                         .disabled(!appState.canEnqueueProcessing(sessionID: entry.id))
+                } else if isHeldByPausedQueue {
+                    // A held job has no Retry, so this is the only control that
+                    // can get it moving from the recordings overview.
+                    Button("Resume processing") { Task { await appState.resumeProcessing() } }
+                        .disabled(!appState.canResumeProcessing)
                 }
             }
 
@@ -587,8 +592,17 @@ private struct RecordingSessionRow: View {
             ?? entry.session.metadata.processing
     }
 
+    private var isHeldByPausedQueue: Bool {
+        guard appState.processingQueueStatus.isPaused, let state = processingJob?.state else {
+            return false
+        }
+        return state == .queued || state == .paused
+    }
+
     private var statusTitle: String {
-        if let job = processingJob { return job.displayName }
+        if let job = processingJob {
+            return job.statusLabel(queueStatus: appState.processingQueueStatus)
+        }
         if let liveStatus {
             return liveStatus.displayName
         }
@@ -603,7 +617,9 @@ private struct RecordingSessionRow: View {
     }
 
     private var message: String? {
-        if let job = processingJob, job.state != .completed { return job.failureDescription }
+        if let job = processingJob, job.state != .completed {
+            return job.statusDetail(queueStatus: appState.processingQueueStatus)
+        }
         if let liveStatus, liveStatus == .recording || liveStatus.isProcessing {
             return nil
         }
@@ -612,6 +628,9 @@ private struct RecordingSessionRow: View {
 
     private var statusColor: Color {
         if let job = processingJob {
+            let isHeld = appState.processingQueueStatus.isPaused
+                && (job.state == .queued || job.state == .paused)
+            if isHeld { return .orange }
             switch job.state {
             case .completed: return .green
             case .failed: return .red

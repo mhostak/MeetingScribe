@@ -93,6 +93,108 @@ final class ProcessingQueueTests: XCTestCase {
         XCTAssertEqual(maximumConcurrency, 1)
     }
 
+    /// A job enqueued while the scheduler is paused keeps its own `.queued`
+    /// state, which is exactly why the pause has to be published by the queue.
+    func testPauseIsPublishedWhileQueuedJobStaysQueued() async throws {
+        let recorder = QueueStatusRecorder()
+        await queue.observe(
+            onChange: { sessions, status in await recorder.record(sessions, status) },
+            onCompletion: { _, _ in }
+        )
+
+        await queue.pause(reason: "Waiting for available resources")
+        let session = try await enqueue(title: "Held", at: 100)
+        await queue.accept(session)
+
+        let started = await processor.startedSessionIDs()
+        XCTAssertEqual(started, [])
+        let persisted = try await repository.loadSession(id: session.metadata.id)
+        XCTAssertEqual(persisted.metadata.processing?.state, .queued)
+
+        let status = await queue.status()
+        XCTAssertEqual(status.pause?.kind, .resource)
+        XCTAssertEqual(status.pause?.reason, "Waiting for available resources")
+        XCTAssertEqual(status.queuedCount, 1)
+        XCTAssertFalse(status.isWorking)
+
+        let published = await recorder.lastStatus()
+        XCTAssertEqual(published?.pause?.reason, "Waiting for available resources")
+        XCTAssertEqual(published?.queuedCount, 1)
+
+        try await queue.resume()
+        await processor.waitForStarts(1)
+        await processor.releaseNext()
+        await queue.waitUntilSettled()
+
+        let completed = try await repository.loadSession(id: session.metadata.id)
+        XCTAssertEqual(completed.metadata.processing?.state, .completed)
+        let settled = await queue.status()
+        XCTAssertNil(settled.pause)
+    }
+
+    /// A resume that cannot persist must leave the pause in place. Clearing it
+    /// optimistically is what stranded the queue with no way back.
+    func testFailedResumeKeepsPauseVisibleAndRetryable() async throws {
+        let session = try await enqueue(title: "Failing resume", at: 100)
+        await queue.accept(session)
+        await processor.waitForStarts(1)
+
+        await queue.pause(reason: "Waiting for available resources")
+        await processor.waitForCleanups(1)
+        await queue.waitUntilSettled()
+
+        // Fault injection through the manifest the repository has to rewrite.
+        let manifestURL = session.manifestURL
+        let withheld = manifestURL.appendingPathExtension("withheld")
+        try FileManager.default.moveItem(at: manifestURL, to: withheld)
+
+        do {
+            try await queue.resume()
+            XCTFail("Resume was expected to fail")
+        } catch {
+            let status = await queue.status()
+            XCTAssertEqual(status.pause?.kind, .resource)
+            XCTAssertEqual(status.pause?.reason, "Waiting for available resources")
+        }
+
+        try FileManager.default.moveItem(at: withheld, to: manifestURL)
+        try await queue.resume()
+        await processor.waitForStarts(2)
+        await processor.releaseNext()
+        await queue.waitUntilSettled()
+
+        let completed = try await repository.loadSession(id: session.metadata.id)
+        XCTAssertEqual(completed.metadata.processing?.state, .completed)
+    }
+
+    /// A cancelled termination used to leave `shuttingDown` set for the rest of
+    /// the process, so nothing could start again.
+    func testCancelledShutdownRestartsTheScheduler() async throws {
+        let session = try await enqueue(title: "Cancelled quit", at: 100)
+        await queue.pause(reason: "Waiting for available resources")
+        await queue.accept(session)
+        await queue.shutdown()
+
+        let shuttingDown = await queue.status()
+        XCTAssertEqual(shuttingDown.pause?.kind, .shutdown)
+
+        try await queue.cancelShutdown()
+        await processor.waitForStarts(1)
+        await processor.releaseNext()
+        await queue.waitUntilSettled()
+
+        let completed = try await repository.loadSession(id: session.metadata.id)
+        XCTAssertEqual(completed.metadata.processing?.state, .completed)
+    }
+
+    func testResourcePauseDoesNotOverwriteShutdownPause() async throws {
+        await queue.shutdown()
+        await queue.pause(reason: "Waiting for available resources")
+
+        let status = await queue.status()
+        XCTAssertEqual(status.pause?.kind, .shutdown)
+    }
+
     func testRestoreDoesNotRunFutureSchemaJobAndSurfacesRecoveryIssue() async throws {
         let session = try await enqueue(title: "Future schema", at: 100)
         var document = try XCTUnwrap(
@@ -110,7 +212,12 @@ final class ProcessingQueueTests: XCTestCase {
         XCTAssertTrue(issues.contains { $0.directoryName == session.metadata.id })
     }
 
-    private func enqueue(title: String, at timestamp: TimeInterval) async throws -> RecordingSession {
+    private func enqueue(
+        title: String,
+        at timestamp: TimeInterval,
+        repository: SessionManager? = nil
+    ) async throws -> RecordingSession {
+        let repository = repository ?? self.repository!
         let now = Date(timeIntervalSince1970: timestamp)
         let session = try await repository.startSession(title: title, now: now)
         return try await repository.finishCaptureAndQueue(
@@ -128,6 +235,16 @@ final class ProcessingQueueTests: XCTestCase {
 
 private struct QueueTestCapacity: StorageCapacityProviding {
     func availableCapacity(at url: URL) throws -> Int64 { 100_000_000_000 }
+}
+
+private actor QueueStatusRecorder {
+    private var statuses: [ProcessingQueueStatus] = []
+
+    func record(_ sessions: [RecordingSession], _ status: ProcessingQueueStatus) {
+        statuses.append(status)
+    }
+
+    func lastStatus() -> ProcessingQueueStatus? { statuses.last }
 }
 
 private actor QueueBarrierProcessor: SessionProcessing {

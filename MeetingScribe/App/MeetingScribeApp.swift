@@ -113,7 +113,10 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
         Task { @MainActor in
             let ready = await appState.prepareForTermination()
             sender.reply(toApplicationShouldTerminate: ready)
-            if !ready { terminationPending = false }
+            if !ready {
+                terminationPending = false
+                await appState.abortTermination()
+            }
         }
         return .terminateLater
     }

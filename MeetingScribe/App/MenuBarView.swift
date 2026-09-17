@@ -83,12 +83,18 @@ struct MenuBarView: View {
                 Spacer()
                 Text("\(visibleProcessingJobs.count)").monospacedDigit().foregroundStyle(.secondary)
             }
+            if let reason = appState.processingPauseReason {
+                pausedBanner(reason)
+            }
             ForEach(Array(visibleProcessingJobs.prefix(3)), id: \.metadata.id) { session in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(session.metadata.title).lineLimit(1)
-                        Text(LocalizedStringKey(session.metadata.processing?.displayName ?? "Queued"))
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text(LocalizedStringKey(
+                            session.metadata.processing?
+                                .statusLabel(queueStatus: appState.processingQueueStatus) ?? "Queued"
+                        ))
+                        .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if session.metadata.processing?.state == .failed {
@@ -100,6 +106,22 @@ struct MenuBarView: View {
             }
             Button("Show recordings", action: openRecordingsAction)
         }
+    }
+
+    /// A paused scheduler leaves every job on `.queued`, so the reason and the
+    /// way out both have to be stated here.
+    private func pausedBanner(_ reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(reason, systemImage: "pause.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if appState.canResumeProcessing {
+                Button("Resume processing") { Task { await appState.resumeProcessing() } }
+                    .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var activeRecoveryCandidate: SessionRecoveryCandidate? {

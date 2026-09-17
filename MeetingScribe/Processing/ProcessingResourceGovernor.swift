@@ -61,6 +61,24 @@ struct ProcessingResourceLimits: Equatable, Sendable {
             resumeAboveStorageBytes
         )
     }
+
+    /// Background work must never keep writing below the reserve that capture
+    /// itself refuses to start on. The background reserve stays a distinct value
+    /// and keeps its hysteresis gap, it is only raised to respect that floor.
+    static func backgroundReserve(
+        captureMinimumBytes: Int64,
+        defaults: ProcessingResourceLimits = ProcessingResourceLimits()
+    ) -> ProcessingResourceLimits {
+        let pauseBelow = max(defaults.pauseBelowStorageBytes, captureMinimumBytes)
+        let gap = max(
+            defaults.resumeAboveStorageBytes - defaults.pauseBelowStorageBytes,
+            1_073_741_824
+        )
+        return ProcessingResourceLimits(
+            pauseBelowStorageBytes: pauseBelow,
+            resumeAboveStorageBytes: pauseBelow + gap
+        )
+    }
 }
 
 enum ProcessingResourceReason: Equatable, Sendable {
@@ -102,9 +120,10 @@ struct ProcessingResourceGovernor: Sendable {
         }
 
         guard isPausedForResources else { return .allow }
-        guard canResume(after: snapshot) else {
-            return .hold([])
-        }
+        // Reporting the unmet resume conditions instead of an empty list is what
+        // makes an indefinite hold explainable to the user.
+        let blockers = resumeBlockers(for: snapshot)
+        guard blockers.isEmpty else { return .hold(blockers) }
 
         isPausedForResources = false
         return .allow
@@ -112,6 +131,21 @@ struct ProcessingResourceGovernor: Sendable {
 
     private func pauseReasons(
         for snapshot: ProcessingResourceSnapshot
+    ) -> [ProcessingResourceReason] {
+        reasons(for: snapshot, storageThreshold: limits.pauseBelowStorageBytes)
+    }
+
+    /// Storage uses the higher resume threshold so free space cannot oscillate
+    /// around a single boundary. The other inputs are already complementary.
+    private func resumeBlockers(
+        for snapshot: ProcessingResourceSnapshot
+    ) -> [ProcessingResourceReason] {
+        reasons(for: snapshot, storageThreshold: limits.resumeAboveStorageBytes)
+    }
+
+    private func reasons(
+        for snapshot: ProcessingResourceSnapshot,
+        storageThreshold: Int64
     ) -> [ProcessingResourceReason] {
         var reasons: [ProcessingResourceReason] = []
         if snapshot.captureLifecycle != .idle, snapshot.captureIsHealthy == false {
@@ -124,23 +158,9 @@ struct ProcessingResourceGovernor: Sendable {
             reasons.append(.thermal(snapshot.thermalState))
         }
         if let availableStorageBytes = snapshot.availableStorageBytes,
-           availableStorageBytes < limits.pauseBelowStorageBytes {
+           availableStorageBytes < storageThreshold {
             reasons.append(.storageReserve)
         }
         return reasons
-    }
-
-    private func canResume(after snapshot: ProcessingResourceSnapshot) -> Bool {
-        guard snapshot.captureLifecycle == .idle || snapshot.captureIsHealthy != false else {
-            return false
-        }
-        guard snapshot.memoryPressure == .normal else { return false }
-        guard snapshot.thermalState == .nominal || snapshot.thermalState == .fair else {
-            return false
-        }
-        guard let availableStorageBytes = snapshot.availableStorageBytes else {
-            return true
-        }
-        return availableStorageBytes >= limits.resumeAboveStorageBytes
     }
 }

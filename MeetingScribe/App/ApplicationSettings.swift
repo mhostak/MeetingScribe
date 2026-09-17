@@ -65,6 +65,11 @@ enum AppUserMessage: Equatable, Sendable {
     case analysisAuthenticationRequired
     case importFluidAudioModelTitle(String)
     case importAction
+    case processingPausedForResources
+    case processingPausedForCapture
+    case processingPausedForMemory
+    case processingPausedForThermal
+    case processingPausedForStorage
 }
 
 enum AppLocalization {
@@ -254,6 +259,41 @@ enum AppLocalization {
             )
         case .importAction:
             return pick("Import", "Importovať", "Importovat", language)
+        case .processingPausedForResources:
+            return pick(
+                "Processing is paused until resources are available.",
+                "Spracovanie je pozastavené, kým nebudú dostupné zdroje.",
+                "Zpracování je pozastaveno, dokud nebudou dostupné zdroje.",
+                language
+            )
+        case .processingPausedForCapture:
+            return pick(
+                "Processing is paused to protect the running recording.",
+                "Spracovanie je pozastavené, aby chránilo prebiehajúce nahrávanie.",
+                "Zpracování je pozastaveno, aby chránilo probíhající nahrávání.",
+                language
+            )
+        case .processingPausedForMemory:
+            return pick(
+                "Processing is paused because the system is low on memory.",
+                "Spracovanie je pozastavené pre nedostatok pamäte v systéme.",
+                "Zpracování je pozastaveno kvůli nedostatku paměti v systému.",
+                language
+            )
+        case .processingPausedForThermal:
+            return pick(
+                "Processing is paused because the Mac is too hot.",
+                "Spracovanie je pozastavené, pretože Mac je príliš zahriaty.",
+                "Zpracování je pozastaveno, protože Mac je příliš zahřátý.",
+                language
+            )
+        case .processingPausedForStorage:
+            return pick(
+                "Processing is paused because free disk space is below the reserve.",
+                "Spracovanie je pozastavené, pretože voľné miesto na disku je pod rezervou.",
+                "Zpracování je pozastaveno, protože volné místo na disku je pod rezervou.",
+                language
+            )
         }
     }
 

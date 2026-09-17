@@ -1,9 +1,48 @@
 import Foundation
 
+/// Why the scheduler refuses to start queued work. `resource` is re-evaluated on
+/// every policy tick, `manual` and `shutdown` are explicit decisions.
+enum ProcessingPauseKind: String, Equatable, Sendable {
+    case resource
+    case manual
+    case shutdown
+}
+
+/// A queued job keeps its own `.queued` state while the scheduler is paused, so
+/// the pause belongs to the scheduler and has to be published separately. Without
+/// this the queue looks idle while nothing can start.
+struct ProcessingQueuePause: Equatable, Sendable {
+    var kind: ProcessingPauseKind
+    var reason: String
+
+    init(kind: ProcessingPauseKind, reason: String) {
+        self.kind = kind
+        self.reason = reason
+    }
+}
+
+/// Scheduler state independent of any single job.
+struct ProcessingQueueStatus: Equatable, Sendable {
+    var pause: ProcessingQueuePause?
+    var isWorking: Bool
+    var queuedCount: Int
+
+    static let idle = ProcessingQueueStatus(pause: nil, isWorking: false, queuedCount: 0)
+
+    init(pause: ProcessingQueuePause? = nil, isWorking: Bool = false, queuedCount: Int = 0) {
+        self.pause = pause
+        self.isWorking = isWorking
+        self.queuedCount = queuedCount
+    }
+
+    var isPausedForResources: Bool { pause?.kind == .resource }
+    var isPaused: Bool { pause != nil }
+}
+
 /// The only owner of the processing slot. A slot remains reserved across every await,
 /// including cancellation, resource release, checkpoint persistence and notifications.
 actor ProcessingQueue {
-    typealias ChangeHandler = @Sendable ([RecordingSession]) async -> Void
+    typealias ChangeHandler = @Sendable ([RecordingSession], ProcessingQueueStatus) async -> Void
     typealias CompletionHandler = @Sendable (RecordingSession, SessionProcessingResult?) async -> Void
 
     private let repository: SessionManager
@@ -11,12 +50,12 @@ actor ProcessingQueue {
     private var sessions: [String: RecordingSession] = [:]
     private var worker: Task<Void, Never>?
     private var workerIdentity: SessionProcessingEventIdentity?
-    private var pauseReason: String?
+    private var activePause: ProcessingQueuePause?
     private var shuttingDown = false
     private var hasRestored = false
     private var acceptVersions: [String: UUID] = [:]
     private let logger = ProcessingLogger()
-    private var onChange: ChangeHandler = { _ in }
+    private var onChange: ChangeHandler = { _, _ in }
     private var onCompletion: CompletionHandler = { _, _ in }
     private var waiters: [UUID: [UUID: CheckedContinuation<SessionProcessingResult, Error>]] = [:]
     private var results: [UUID: Result<SessionProcessingResult, Error>] = [:]
@@ -86,12 +125,17 @@ actor ProcessingQueue {
 
     /// Test/integration barrier; stopping capture never waits for this.
     func waitUntilSettled() async {
-        if worker == nil && (pauseReason != nil || !sessions.values.contains(where: { $0.metadata.processing?.state == .queued })) { return }
+        if worker == nil && (activePause != nil || !sessions.values.contains(where: { $0.metadata.processing?.state == .queued })) { return }
         await withCheckedContinuation { idleWaiters.append($0) }
     }
 
-    func pause(reason: String) async {
-        pauseReason = reason
+    /// The scheduler's published pause, so callers never have to mirror it.
+    func status() -> ProcessingQueueStatus { currentStatus() }
+
+    func pause(reason: String, kind: ProcessingPauseKind = .resource) async {
+        // A shutdown pause outranks every other reason and must not be relabelled.
+        guard activePause?.kind != .shutdown || kind == .shutdown else { return }
+        activePause = ProcessingQueuePause(kind: kind, reason: reason)
         if let identity = workerIdentity {
             do {
                 let updated = try await repository.updateProcessing(
@@ -106,9 +150,23 @@ actor ProcessingQueue {
         await publish()
     }
 
+    /// Throwing leaves the pause in place on purpose: the caller keeps seeing a
+    /// paused queue and can retry instead of losing the request.
     func resume() async throws {
         guard !shuttingDown else { return }
-        pauseReason = nil
+        let previousPause = activePause
+        activePause = nil
+        do { try await requeuePausedJobs() }
+        catch {
+            activePause = previousPause
+            await publish()
+            throw error
+        }
+        await publish()
+        schedule()
+    }
+
+    private func requeuePausedJobs() async throws {
         for session in sortedSessions() {
             guard let job = session.metadata.processing, job.state == .paused else { continue }
             let updated = try await repository.updateProcessing(
@@ -117,19 +175,29 @@ actor ProcessingQueue {
             )
             sessions[session.metadata.id] = updated
         }
-        await publish()
-        schedule()
     }
 
     func shutdown() async {
         shuttingDown = true
-        await pause(reason: "Application is closing")
+        await pause(reason: "Application is closing", kind: .shutdown)
         let running = worker
         await running?.value
     }
 
+    /// The system can cancel a termination it already asked us to prepare for.
+    /// Without this the scheduler would stay dead for the rest of the process.
+    func cancelShutdown() async throws {
+        guard shuttingDown else { return }
+        shuttingDown = false
+        guard activePause?.kind == .shutdown else {
+            await publish()
+            return
+        }
+        try await resume()
+    }
+
     private func schedule() {
-        guard worker == nil, pauseReason == nil, !shuttingDown,
+        guard worker == nil, activePause == nil, !shuttingDown,
               let session = sortedSessions().first(where: { $0.metadata.processing?.state == .queued }),
               let job = session.metadata.processing else {
             resolveIdleWaitersIfNeeded()
@@ -182,7 +250,7 @@ actor ProcessingQueue {
             do {
                 let paused = try await repository.updateProcessing(
                     sessionID: identity.sessionID, jobID: identity.jobID, attemptID: identity.attemptID,
-                    patch: ProcessingJobPatch(state: .paused, failureDescription: pauseReason ?? "Processing paused")
+                    patch: ProcessingJobPatch(state: .paused, failureDescription: activePause?.reason ?? "Processing paused")
                 )
                 sessions[identity.sessionID] = paused
             } catch {
@@ -201,7 +269,7 @@ actor ProcessingQueue {
         // Keep the slot occupied until all completion side effects are finished.
         worker = nil
         workerIdentity = nil
-        if pauseReason == nil, !shuttingDown,
+        if activePause == nil, !shuttingDown,
            let session = sessions[identity.sessionID], session.metadata.processing?.state == .paused {
             do { try await resume() } catch { await recordFailure(error, identity: identity) }
         }
@@ -210,7 +278,7 @@ actor ProcessingQueue {
 
     private func receive(_ event: SessionProcessingEvent, expected identity: SessionProcessingEventIdentity) async throws {
         try Task.checkCancellation()
-        guard workerIdentity == identity, pauseReason == nil else { throw CancellationError() }
+        guard workerIdentity == identity, activePause == nil else { throw CancellationError() }
         let patch: ProcessingJobPatch
         var artifacts: ProcessingArtifactMetadata?
         switch event {
@@ -274,11 +342,19 @@ actor ProcessingQueue {
         }
     }
 
-    private func publish() async { await onChange(sortedSessions()) }
+    private func currentStatus() -> ProcessingQueueStatus {
+        ProcessingQueueStatus(
+            pause: activePause,
+            isWorking: worker != nil,
+            queuedCount: sessions.values.filter { $0.metadata.processing?.state == .queued }.count
+        )
+    }
+
+    private func publish() async { await onChange(sortedSessions(), currentStatus()) }
 
     private func resolveIdleWaitersIfNeeded() {
         guard worker == nil,
-              pauseReason != nil || !sessions.values.contains(where: { $0.metadata.processing?.state == .queued }) else { return }
+              activePause != nil || !sessions.values.contains(where: { $0.metadata.processing?.state == .queued }) else { return }
         for continuation in idleWaiters { continuation.resume() }
         idleWaiters.removeAll()
     }
