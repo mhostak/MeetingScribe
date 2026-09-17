@@ -737,3 +737,70 @@ private extension FluidAudioAudioFileInfo {
         )
     }
 }
+
+/// The worker process controller is exercised with `/bin/sleep` so the
+/// cancellation contract is verified without an ASR model or a real worker.
+final class FluidAudioASRWorkerProcessControllerTests: XCTestCase {
+    private static let sleepURL = URL(fileURLWithPath: "/bin/sleep")
+
+    func testStaleCancellationDoesNotTerminateTheNextRun() async throws {
+        let controller = FluidAudioASRWorkerProcessController(terminationGracePeriod: 1)
+
+        // A cancellation that arrives while no process is attached used to latch
+        // and then SIGTERM the next worker, which the queue recorded as a
+        // permanent failure with "exit code 15".
+        controller.cancel()
+
+        let status = try await controller.run(
+            executableURL: Self.sleepURL,
+            arguments: ["0.1"]
+        )
+        XCTAssertEqual(status, 0)
+    }
+
+    func testCancellingTheCurrentRunReportsCancellationNotAnExitCode() async {
+        let controller = FluidAudioASRWorkerProcessController(terminationGracePeriod: 1)
+        let task = Self.startSleeping(controller, seconds: "30")
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.cancel()
+
+        do {
+            let status = try await task.value
+            XCTFail("Expected cancellation, got exit status \(status)")
+        } catch is CancellationError {
+            // The pause path depends on this: a termination we asked for must
+            // not look like a worker failure.
+        } catch {
+            XCTFail("Expected CancellationError, got \(error)")
+        }
+    }
+
+    func testConsecutiveRunsSucceedAfterACancelledRun() async throws {
+        let controller = FluidAudioASRWorkerProcessController(terminationGracePeriod: 1)
+        let task = Self.startSleeping(controller, seconds: "30")
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.cancel()
+        _ = try? await task.value
+
+        let status = try await controller.run(
+            executableURL: Self.sleepURL,
+            arguments: ["0.1"]
+        )
+        XCTAssertEqual(status, 0)
+    }
+
+    /// Kept off the test instance so the task closure captures only Sendable
+    /// values: XCTestCase and XCTestExpectation are not Sendable.
+    private static func startSleeping(
+        _ controller: FluidAudioASRWorkerProcessController,
+        seconds: String
+    ) -> Task<Int32, Error> {
+        let executableURL = sleepURL
+        return Task {
+            try await controller.run(
+                executableURL: executableURL,
+                arguments: [seconds]
+            )
+        }
+    }
+}
