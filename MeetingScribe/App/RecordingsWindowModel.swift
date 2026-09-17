@@ -7,6 +7,8 @@ final class RecordingsWindowModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var loadError: String?
 
+    private var needsReload = false
+
     private let calendar: Calendar
     private let catalog: SessionCatalog
 
@@ -41,14 +43,17 @@ final class RecordingsWindowModel: ObservableObject {
     }
 
     func reload() async {
-        guard !isLoading else { return }
+        guard !isLoading else { needsReload = true; return }
         isLoading = true
         defer { isLoading = false }
-        do {
-            snapshot = try await catalog.load()
-            loadError = nil
-        } catch {
-            loadError = error.localizedDescription
-        }
+        repeat {
+            needsReload = false
+            do {
+                snapshot = try await catalog.load()
+                loadError = nil
+            } catch {
+                loadError = error.localizedDescription
+            }
+        } while needsReload
     }
 }

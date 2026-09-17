@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import ServiceManagement
 import UniformTypeIdentifiers
@@ -136,8 +137,285 @@ final class AppState: ObservableObject {
     private var startRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var stopRecordingOperation: (id: UUID, task: Task<Void, Never>)?
     private var usesDetectedAnalysisExecutable = true
-    private var processingNotificationAttemptID: UUID?
-    private var revisionProcessingStep: ProcessingStepID = .preparingAudio
+    @Published private(set) var processingJobs: [RecordingSession] = []
+    @Published private(set) var processingQueueStatus = ProcessingQueueStatus.idle
+    private var queueIsObserved = false
+    private let resourceMonitoringEnabled: Bool
+    private var resourceMonitorTask: Task<Void, Never>?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    private var resourceMemoryPressure: ProcessingResourceSnapshot.MemoryPressure = .normal
+    private var resourceGovernor = ProcessingResourceGovernor()
+    private var observedDroppedBuffers = 0
+
+    private func startResourceMonitoring() {
+        guard resourceMonitoringEnabled, resourceMonitorTask == nil else { return }
+        resourceGovernor = ProcessingResourceGovernor(
+            limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
+        )
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+        // The handler reads the source through this property, so assigning it
+        // after `resume()` made the first event fall back to `.normal`.
+        memoryPressureSource = source
+        source.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let event = self.memoryPressureSource?.data {
+                    self.resourceMemoryPressure = event.contains(.critical) ? .critical
+                        : event.contains(.warning) ? .warning : .normal
+                }
+                await self.updateResourcePolicy()
+            }
+        }
+        source.resume()
+        resourceMonitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.updateResourcePolicy()
+                do { try await Task.sleep(for: .seconds(1)) } catch { break }
+            }
+        }
+    }
+
+    /// Memory-pressure notifications only fire on transitions. A missed return to
+    /// `.normal` would otherwise hold the queue for the rest of the process, so
+    /// the level is polled and the last event value is only a fallback.
+    private static func pollMemoryPressure() -> ProcessingResourceSnapshot.MemoryPressure? {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else {
+            return nil
+        }
+        switch level {
+        case 1: return .normal
+        case 2: return .warning
+        case 4: return .critical
+        default: return nil
+        }
+    }
+
+    /// Applies the user's capture reserve to background work when the setting changes.
+    func refreshProcessingResourceLimits() {
+        guard resourceMonitoringEnabled else { return }
+        resourceGovernor = ProcessingResourceGovernor(
+            limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
+        )
+    }
+
+    private func updateResourcePolicy() async {
+        guard resourceMonitoringEnabled else { return }
+        let lifecycle: ProcessingResourceSnapshot.CaptureLifecycle = switch status {
+        case .preparing: .preparing
+        case .recording: .recording
+        case .stopping: .stopping
+        default: .idle
+        }
+        let thermal: ProcessingResourceSnapshot.ThermalState = switch ProcessInfo.processInfo.thermalState {
+        case .nominal: .nominal
+        case .fair: .fair
+        case .serious: .serious
+        case .critical: .critical
+        @unknown default: .serious
+        }
+        let diagnostic = captureDiagnostics
+        let dropped = diagnostic.systemAudio.droppedBufferCount + diagnostic.microphone.droppedBufferCount
+        let healthy = diagnostic.systemAudio.health() != .stalled && diagnostic.systemAudio.health() != .failed
+            && dropped <= observedDroppedBuffers
+        observedDroppedBuffers = dropped
+        let available = try? await sessionManager.storageStatus().availableBytes
+        if let polled = Self.pollMemoryPressure() { resourceMemoryPressure = polled }
+        let snapshot = ProcessingResourceSnapshot(captureLifecycle: lifecycle,
+            captureIsHealthy: lifecycle == .recording ? healthy : nil,
+            memoryPressure: resourceMemoryPressure, thermalState: thermal, availableStorageBytes: available)
+        // The queue's published pause is the single source of truth. Mirroring it
+        // in a local flag used to strand the queue whenever the two disagreed,
+        // for example after a resume that threw.
+        let pause = processingQueueStatus.pause
+        switch resourceGovernor.decision(for: snapshot, workerIsRunning: isProcessingInBackground) {
+        case .allow:
+            guard pause?.kind == .resource else { return }
+            do { try await processingQueue.resume() } catch { lastError = localized(error) }
+        case let .hold(reasons), let .cancelRunning(reasons):
+            let reason = localizedResourcePauseReason(reasons)
+            guard pause?.kind != .resource || pause?.reason != reason else { return }
+            await processingQueue.pause(reason: reason, kind: .resource)
+        }
+    }
+
+    private func localizedResourcePauseReason(
+        _ reasons: [ProcessingResourceReason]
+    ) -> String {
+        guard let reason = reasons.first else {
+            return localized(.processingPausedForResources)
+        }
+        switch reason {
+        case .captureUnhealthy:
+            return localized(.processingPausedForCapture)
+        case .memoryPressure:
+            return localized(.processingPausedForMemory)
+        case .thermal:
+            return localized(.processingPausedForThermal)
+        case .storageReserve:
+            return localized(.processingPausedForStorage)
+        }
+    }
+
+    /// Clears a resource pause on the user's explicit request. The governor
+    /// re-evaluates on the next tick, so a still-blocked queue pauses again with
+    /// a visible reason rather than silently doing nothing.
+    func resumeProcessing() async {
+        do {
+            try await processingQueue.resume()
+            lastError = nil
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    private var pendingCaptureHandoff: (sessionID: String, endedAt: Date, diagnostics: CaptureSessionDiagnostics)?
+    private let injectedProcessor: (any SessionProcessing)?
+    private lazy var processingQueue = ProcessingQueue(
+        repository: sessionManager,
+        processor: injectedProcessor ?? SessionProcessor(
+            audioFinalizer: audioFinalizer,
+            transcriber: sessionTranscriber,
+            fileService: processingFileService,
+            modelResolver: DefaultTranscriptionModelResolver(manager: fluidAudioModelManager),
+            analysisCommandRunner: analysisCommandRunner,
+            audioSourceCleaner: audioSourceCleaner,
+            logger: processingLogger
+        )
+    )
+
+    var hasPendingProcessing: Bool {
+        processingJobs.contains { session in
+            guard let job = session.metadata.processing else { return false }
+            return job.state != .completed && job.state != .failed
+        }
+    }
+
+    var isProcessingInBackground: Bool {
+        processingJobs.contains { [.running, .pauseRequested].contains($0.metadata.processing?.state) }
+    }
+
+    var hasProcessingFailures: Bool { processingJobs.contains { $0.metadata.processing?.state == .failed } }
+
+    /// True only when a pause actually withholds work the queue would run.
+    var isProcessingPaused: Bool {
+        processingQueueStatus.isPaused && hasPendingProcessing
+    }
+
+    var processingPauseReason: String? {
+        isProcessingPaused ? processingQueueStatus.pause?.reason : nil
+    }
+
+    /// A shutdown pause belongs to a terminating app and must not offer a button.
+    var canResumeProcessing: Bool {
+        guard let pause = processingQueueStatus.pause, hasPendingProcessing else { return false }
+        return pause.kind != .shutdown
+    }
+
+    var canStartRecording: Bool {
+        currentSession == nil && ![.preparing, .recording, .stopping].contains(status)
+            && !isCleaningRecordingAudio && !isScanningRecordingAudio
+    }
+
+    func canEnqueueProcessing(sessionID: String) -> Bool {
+        currentSession?.metadata.id != sessionID && !isCleaningRecordingAudio && !isScanningRecordingAudio
+            && !processingJobs.contains {
+                $0.metadata.id == sessionID && $0.metadata.processing?.state != .completed
+                    && $0.metadata.processing?.state != .failed
+            }
+    }
+
+    var canChangeModels: Bool { !hasPendingProcessing }
+
+    private var processingConfiguration: ProcessingJobConfiguration {
+        ProcessingJobConfiguration(outputDirectoryURL: outputFolderURL,
+                                   outputDirectoryBookmark: outputFolderStore.bookmark(for: outputFolderURL),
+                                   automaticallyDeleteSourceCAF: automaticallyDeleteSourceCAF)
+    }
+
+    private func observeProcessingQueue() async {
+        guard !queueIsObserved else { return }
+        queueIsObserved = true
+        startResourceMonitoring()
+        await updateResourcePolicy()
+        await processingQueue.observe(onChange: { [weak self] sessions, status in
+            await self?.receiveProcessingSessions(sessions, status: status)
+        }, onCompletion: { [weak self] session, result in
+            await self?.processingDidFinish(session, result: result)
+        })
+    }
+
+    private func receiveProcessingSessions(
+        _ sessions: [RecordingSession],
+        status: ProcessingQueueStatus
+    ) {
+        processingJobs = sessions
+        processingQueueStatus = status
+    }
+
+    private func processingDidFinish(_ session: RecordingSession, result: SessionProcessingResult?) async {
+        guard let job = session.metadata.processing else { return }
+        lastCompletedSession = session
+        let markdownURL = result?.revision.flatMap { revision in
+            revision.manifest.markdownFileName.map { revision.directoryURL.appendingPathComponent($0) }
+        } ?? session.metadata.output?.markdownPath.map { URL(fileURLWithPath: $0) }
+        lastMarkdownURL = markdownURL
+        guard notificationsEnabled else { return }
+        let language: ProcessingNotificationLanguage = switch selectedAppLanguage.resolved {
+        case .slovak: .slovak
+        case .czech: .czech
+        case .english, .system: .english
+        }
+        let failedSteps = result?.failedSteps ?? (job.state == .failed ? [job.stage ?? .preparingAudio] : [])
+        await processingNotifier.send(ProcessingNotification(
+            id: job.attemptID, sessionID: session.metadata.id, title: session.metadata.title,
+            failedSteps: Array(failedSteps), markdownURL: markdownURL, language: language,
+            occurredAt: session.metadata.startedAt ?? session.metadata.createdAt
+        ))
+    }
+
+    func waitForProcessing() async {
+        await processingQueue.waitUntilSettled()
+    }
+
+    func retryProcessing(_ session: RecordingSession) async {
+        do {
+            guard canEnqueueProcessing(sessionID: session.metadata.id) else {
+                // A pending job cannot be re-enqueued. Say so instead of
+                // returning silently, which looks like a dead button.
+                if canResumeProcessing { lastError = processingQueueStatus.pause?.reason }
+                return
+            }
+            let job = session.metadata.processing
+            let queued = try await sessionManager.queueProcessing(
+                sessionID: session.metadata.id, kind: job?.kind ?? .recovery,
+                configuration: job?.configuration ?? processingConfiguration
+            )
+            await observeProcessingQueue()
+            await processingQueue.accept(queued)
+        } catch { lastError = localized(error) }
+    }
+
+    func prepareForTermination() async -> Bool {
+        if status == .recording { await stopRecording() }
+        guard currentSession == nil, status != .preparing, status != .stopping else { return false }
+        resourceMonitorTask?.cancel()
+        memoryPressureSource?.cancel()
+        await processingQueue.shutdown()
+        return true
+    }
+
+    /// The system can withdraw a termination the app already prepared for. The
+    /// monitor task and the scheduler must come back, or the queue stays dead for
+    /// the rest of the process with no way to restart it.
+    func abortTermination() async {
+        resourceMonitorTask = nil
+        memoryPressureSource = nil
+        do { try await processingQueue.cancelShutdown() } catch { lastError = localized(error) }
+        startResourceMonitoring()
+        await updateResourcePolicy()
+    }
 
     init(
         sessionManager: SessionManager = SessionManager(),
@@ -163,8 +441,12 @@ final class AppState: ObservableObject {
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
         storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
         processingNotifier: any ProcessingNotifying = ProcessingNotificationService(),
-        notificationDefaults: UserDefaults = .standard
+        notificationDefaults: UserDefaults = .standard,
+        sessionProcessor: (any SessionProcessing)? = nil,
+        resourceMonitoringEnabled: Bool = true
     ) {
+        self.resourceMonitoringEnabled = resourceMonitoringEnabled
+        self.injectedProcessor = sessionProcessor
         self.sessionManager = sessionManager
         self.captureCoordinator = captureCoordinator
         self.audioFinalizer = audioFinalizer
@@ -241,6 +523,9 @@ final class AppState: ObservableObject {
 
         await refreshFluidAudioModelStatuses()
         refreshLegacyModelCleanupReport()
+        await observeProcessingQueue()
+        do { try await processingQueue.restore() }
+        catch { lastError = localized(error) }
         await refreshRecoveryCandidates()
         hasPreparedStorage = true
         await runAutomaticRecordingAudioCleanup()
@@ -255,144 +540,37 @@ final class AppState: ObservableObject {
         }
     }
 
-    func reprocessWithFluidAudio(
-        session: RecordingSession
-    ) async throws -> TranscriptionRevisionResult {
-        guard status != .recording, !status.isProcessing,
-              !isCleaningRecordingAudio,
-              fluidAudioReprocessingSessionID == nil,
-              aiAnalysisReprocessingSessionID == nil else {
-            throw TranscriptionRevisionError.applicationBusy
+    func reprocessWithFluidAudio(session: RecordingSession) async throws -> TranscriptionRevisionResult {
+        guard canEnqueueProcessing(sessionID: session.metadata.id) else { throw TranscriptionRevisionError.applicationBusy }
+        let queued = try await sessionManager.queueProcessing(
+            sessionID: session.metadata.id, kind: .retranscribe, configuration: processingConfiguration
+        )
+        await observeProcessingQueue()
+        await processingQueue.accept(queued)
+        let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
+        guard let revision = result.revision else {
+            throw NSError(domain: "MeetingScribe.Processing", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: result.failureDescription ?? "Transcription revision failed."])
         }
-        let descriptor = FluidAudioModelDescriptor.parakeetV3
-        let modelStatus = await fluidAudioModelManager.status(for: descriptor)
-        fluidAudioModelState.asrStatus = modelStatus
-        guard case let .ready(bundleURL, _) = modelStatus else {
-            if case .missing = modelStatus {
-                lastError = localized(.fluidAudioTranscriptionModelRequired)
-            } else {
-                lastError = localized(.recordingSaved(localized(.fluidAudioModelInvalid)))
-            }
-            throw TranscriptionError.modelBundleCouldNotBeLoaded(
-                name: descriptor.displayName
-            )
-        }
-
-        fluidAudioReprocessingSessionID = session.metadata.id
-        beginProcessingNotificationAttempt()
-        revisionProcessingStep = .preparingAudio
-        defer {
-            fluidAudioReprocessingSessionID = nil
-            processingNotificationAttemptID = nil
-        }
-        do {
-            let result = try await FluidAudioTranscriptionRevisionService().reprocess(
-                session: session,
-                modelBundleURL: bundleURL,
-                descriptor: descriptor,
-                onStep: { [weak self] step in
-                    await self?.updateRevisionProcessingStep(step)
-                }
-            )
-            let markdownURL = result.manifest.markdownFileName.map {
-                result.directoryURL.appendingPathComponent($0)
-            }
-            await sendProcessingNotification(
-                session: session, markdownURL: markdownURL,
-                failedSteps: result.manifest.status == .completed ? [] : [revisionProcessingStep]
-            )
-            return result
-        } catch {
-            lastError = localized(.recordingSavedTranscription(localized(error)))
-            await sendProcessingNotification(
-                session: session, markdownURL: nil, failedSteps: [revisionProcessingStep]
-            )
-            throw error
-        }
+        return revision
     }
 
     @discardableResult
-    func reanalyze(
-        session: RecordingSession
-    ) async throws -> URL {
-        guard status != .recording, !status.isProcessing,
-              !isCleaningRecordingAudio,
-              fluidAudioReprocessingSessionID == nil,
-              aiAnalysisReprocessingSessionID == nil else {
-            throw AnalysisRevisionError.applicationBusy
+    func reanalyze(session: RecordingSession) async throws -> URL {
+        guard canEnqueueProcessing(sessionID: session.metadata.id) else { throw AnalysisRevisionError.applicationBusy }
+        var configuration = processingConfiguration
+        configuration.analysisConfiguration = configuredAnalysisConfiguration()
+        let queued = try await sessionManager.queueProcessing(
+            sessionID: session.metadata.id, kind: .reanalyze, configuration: configuration
+        )
+        await observeProcessingQueue()
+        await processingQueue.accept(queued)
+        let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
+        guard result.failedSteps.isEmpty, let path = result.artifacts.output?.markdownPath else {
+            throw NSError(domain: "MeetingScribe.Processing", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: result.failureDescription ?? "Analysis failed."])
         }
-        guard let recovered = await processingFileService.loadRecoveredArtifacts(from: session),
-              !recovered.transcript.segments.isEmpty else {
-            throw AnalysisRevisionError.transcriptMissing
-        }
-        guard let markdownPath = session.metadata.output?.markdownPath,
-              !markdownPath.isEmpty else {
-            throw AnalysisRevisionError.markdownMissing
-        }
-        let markdownURL = URL(fileURLWithPath: markdownPath)
-        guard FileManager.default.fileExists(atPath: markdownURL.path) else {
-            throw AnalysisRevisionError.markdownMissing
-        }
-
-        let configuration = configuredAnalysisConfiguration()
-        var analysisSession = session
-        analysisSession.metadata.analysisConfiguration = configuration
-
-        aiAnalysisReprocessingSessionID = session.metadata.id
-        beginProcessingNotificationAttempt()
-        var failedStep: ProcessingStepID = .analyzing
-        defer {
-            aiAnalysisReprocessingSessionID = nil
-            processingNotificationAttemptID = nil
-        }
-        do {
-            let outcome = try await runAnalysis(
-                session: analysisSession,
-                transcript: recovered.transcript,
-                configuration: configuration
-            )
-            guard let artifact = outcome.analysis, let metadata = outcome.metadata else {
-                throw AnalysisError.emptyOutput
-            }
-            try await processingFileService.persistAnalysis(
-                artifact,
-                to: session.analysisURL
-            )
-            failedStep = .exporting
-            try outputFolderStore.withAccess(to: markdownURL.deletingLastPathComponent()) {
-                try MarkdownAnalysisUpdater().update(artifact, at: markdownURL)
-            }
-            let updatedSession = try await sessionManager.recordAnalysisRevision(
-                configuration: configuration,
-                analysis: metadata,
-                for: session
-            )
-            if lastCompletedSession?.metadata.id == updatedSession.metadata.id {
-                lastCompletedSession = updatedSession
-            }
-            lastMarkdownURL = markdownURL
-            lastError = nil
-            try? await processingLogger.log(
-                .analysisCompleted,
-                for: updatedSession,
-                attributes: [.model(metadata.model)]
-            )
-            await sendProcessingNotification(
-                session: updatedSession, markdownURL: markdownURL, failedSteps: []
-            )
-            return markdownURL
-        } catch {
-            await sendProcessingNotification(
-                session: session, markdownURL: markdownURL, failedSteps: [failedStep]
-            )
-            lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
-            try? await processingLogger.log(
-                .analysisFailed,
-                for: session,
-                attributes: [.model(configuration.model ?? "default")]
-            )
-            throw error
-        }
+        return URL(fileURLWithPath: path)
     }
 
     func startRecording() async {
@@ -418,9 +596,8 @@ final class AppState: ObservableObject {
                 lastError = markdownFileNameTemplateError
                 return
             }
-            guard recoveryCandidates.isEmpty else {
-                throw SessionRecoveryError.pendingRecoveryMustBeResolved
-            }
+            guard canStartRecording else { return }
+            if status == .completed || status == .failed { reset() }
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
@@ -488,36 +665,40 @@ final class AppState: ObservableObject {
     }
 
     private func performStopRecording() async {
+        guard let session = currentSession,
+              status == .recording || pendingCaptureHandoff?.sessionID == session.metadata.id else { return }
         do {
-            try transition(to: .stopping)
-            resetProcessingProgress()
-            setProcessingStep(.preparingAudio, to: .active)
-            let stoppedAt = Date()
-            stopCaptureMonitoring()
-
-            let diagnostics = await captureCoordinator.stop()
-            updateCaptureDiagnostics(diagnostics)
-
-            guard let session = currentSession else {
-                throw SessionManagerError.noActiveSession
+            if pendingCaptureHandoff == nil {
+                try transition(to: .stopping)
+                let stoppedAt = Date()
+                stopCaptureMonitoring()
+                let diagnostics = await captureCoordinator.stop()
+                updateCaptureDiagnostics(diagnostics)
+                pendingCaptureHandoff = (session.metadata.id,
+                    max(stoppedAt, session.metadata.startedAt ?? stoppedAt), diagnostics)
+                try? await processingLogger.log(.captureStopped, for: session,
+                    attributes: [.bufferCount(diagnostics.systemAudio.bufferCount), .frameCount(diagnostics.systemAudio.totalFrames)])
             }
-            let recordingEndedAt = max(stoppedAt, session.metadata.startedAt ?? stoppedAt)
-            beginProcessingNotificationAttempt()
-            try? await processingLogger.log(
-                .captureStopped,
-                for: session,
-                attributes: [
-                    .bufferCount(diagnostics.systemAudio.bufferCount),
-                    .frameCount(diagnostics.systemAudio.totalFrames),
-                ]
+            guard let handoff = pendingCaptureHandoff else { return }
+            let queued = try await sessionManager.finishCaptureAndQueue(
+                expectedSessionID: handoff.sessionID, endedAt: handoff.endedAt,
+                diagnostics: handoff.diagnostics, configuration: processingConfiguration
             )
-            await processStoppedSession(
-                session: session,
-                diagnostics: diagnostics,
-                recordingEndedAt: recordingEndedAt
-            )
+            pendingCaptureHandoff = nil
+            currentSession = nil
+            meetingTitle = ""
+            pendingCalendarEvent = nil
+            calendarEventCandidates = []
+            // Capture is now independent of all subsequent processing.
+            stateMachine = AppStateMachine()
+            status = .idle
+            await observeProcessingQueue()
+            await processingQueue.accept(queued)
         } catch {
-            setFailure(error)
+            // Keep the stopped capture and original diagnostics until the durable handoff succeeds.
+            lastError = localized(error)
+            status = .failed
+            stateMachine = AppStateMachine(status: .failed)
         }
     }
 
@@ -528,10 +709,12 @@ final class AppState: ObservableObject {
             return
         }
 
+        let expectedID = currentSession?.metadata.id
         do {
             let renamedSession = try await sessionManager.renameActiveSession(
                 to: normalizedTitle
             )
+            guard currentSession?.metadata.id == expectedID else { return }
             currentSession = renamedSession
             meetingTitle = renamedSession.metadata.title
         } catch {
@@ -540,73 +723,19 @@ final class AppState: ObservableObject {
     }
 
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {
-        guard !isRecoveringSession else { return }
-        isRecoveringSession = true
-        defer { isRecoveringSession = false }
-
+        guard canEnqueueProcessing(sessionID: candidate.id) else { return }
         do {
-            if status == .completed || status == .failed { reset() }
-            guard status == .idle else { return }
-            try transition(to: .preparing)
-            lastError = nil
-            lastMarkdownURL = nil
-            resetProcessingProgress()
-
-            let session = try await sessionManager.beginRecovery(id: candidate.id)
-            removeRecoveryCandidate(id: candidate.id)
-            currentSession = session
-            beginProcessingNotificationAttempt()
-            try transition(to: .recording)
-            try transition(to: .stopping)
-            try? await processingLogger.log(.recoveryStarted, for: session)
-
-            if let recoveredArtifacts = await processingFileService.loadRecoveredArtifacts(
-                from: session
-            ) {
-                setProcessingStep(.preparingAudio, to: .completed)
-                let diagnostics = recoveredMetadataDiagnostics(for: session)
-                updateCaptureDiagnostics(diagnostics)
-                await completeProcessedSession(
-                    session: session,
-                    diagnostics: diagnostics,
-                    recordingEndedAt: candidate.suggestedEndAt,
-                    finalization: session.metadata.audioFinalization,
-                    transcription: recoveredTranscriptionOutcome(
-                        session: session,
-                        transcript: recoveredArtifacts.transcript,
-                        utteranceTranscript: recoveredArtifacts.utteranceTranscript
-                    ),
-                    recoveredAnalysis: recoveredAnalysisOutcome(
-                        session: session,
-                        analysis: recoveredArtifacts.analysis
-                    )
-                )
-            } else {
-                let diagnostics = try recoveredAudioInspector.inspect(session: session)
-                updateCaptureDiagnostics(diagnostics)
-                await processStoppedSession(
-                    session: session,
-                    diagnostics: diagnostics,
-                    recordingEndedAt: candidate.suggestedEndAt
-                )
-            }
-        } catch {
-            if await sessionManager.currentSession() != nil {
-                let failed = try? await sessionManager.failSession(reason: error.localizedDescription)
-                lastCompletedSession = failed
-            }
-            currentSession = nil
-            await sendProcessingNotification(
-                session: candidate.session,
-                markdownURL: nil,
-                failedSteps: notificationFailureSteps(default: .preparingAudio)
+            let queued = try await sessionManager.queueProcessing(
+                sessionID: candidate.id, kind: .recovery, configuration: processingConfiguration
             )
-            setFailure(error)
-            await refreshRecoveryCandidate(id: candidate.id)
-        }
+            removeRecoveryCandidate(id: candidate.id)
+            await observeProcessingQueue()
+            await processingQueue.accept(queued)
+        } catch { lastError = localized(error) }
     }
 
     func closeRecovery(_ candidate: SessionRecoveryCandidate) async {
+        guard canEnqueueProcessing(sessionID: candidate.id) else { return }
         do {
             let closed = try await sessionManager.closeRecovery(id: candidate.id)
             lastCompletedSession = closed
@@ -656,6 +785,7 @@ final class AppState: ObservableObject {
     }
 
     func reset() {
+        guard currentSession == nil else { return }
         guard status == .completed || status == .failed else { return }
 
         do {
@@ -932,7 +1062,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshRecordingAudioCleanupPlan() async {
-        guard !isScanningRecordingAudio, !isCleaningRecordingAudio else { return }
+        guard !isScanningRecordingAudio, !isCleaningRecordingAudio, !hasPendingProcessing, currentSession == nil else { return }
         isScanningRecordingAudio = true
         recordingAudioCleanupError = nil
         defer { isScanningRecordingAudio = false }
@@ -945,7 +1075,7 @@ final class AppState: ObservableObject {
 
     func cleanProcessedRecordingAudio() async {
         guard !isScanningRecordingAudio, !isCleaningRecordingAudio,
-              currentSession == nil,
+              currentSession == nil, !hasPendingProcessing,
               fluidAudioReprocessingSessionID == nil,
               aiAnalysisReprocessingSessionID == nil else { return }
         isCleaningRecordingAudio = true
@@ -971,7 +1101,7 @@ final class AppState: ObservableObject {
         _ keepAudio: Bool,
         for session: RecordingSession
     ) async throws {
-        guard currentSession?.metadata.id != session.metadata.id,
+        guard canEnqueueProcessing(sessionID: session.metadata.id),
               fluidAudioReprocessingSessionID == nil,
               aiAnalysisReprocessingSessionID == nil,
               !isCleaningRecordingAudio else {
@@ -988,7 +1118,7 @@ final class AppState: ObservableObject {
         guard let cutoff = audioRetentionPolicy.cutoffDate(now: Date()),
               !isScanningRecordingAudio,
               !isCleaningRecordingAudio,
-              currentSession == nil,
+              currentSession == nil, !hasPendingProcessing,
               fluidAudioReprocessingSessionID == nil,
               aiAnalysisReprocessingSessionID == nil else { return }
         isCleaningRecordingAudio = true
@@ -1015,6 +1145,8 @@ final class AppState: ObservableObject {
         applicationSettingsStore.setMarkdownFileNameTemplate(markdownFileNameTemplate)
         applicationSettingsStore.setMinimumStorageBytes(minimumStorageBytes)
         await sessionManager.setMinimumStorageBytes(minimumStorageBytes)
+        refreshProcessingResourceLimits()
+        await updateResourcePolicy()
     }
 
     var approvedCalendarEvent: CalendarEventSnapshot? {
@@ -1255,7 +1387,7 @@ final class AppState: ObservableObject {
         _ kind: FluidAudioModelKind,
         repair: Bool = false
     ) {
-        guard fluidAudioInstallTasks[kind] == nil else { return }
+        guard canChangeModels, fluidAudioInstallTasks[kind] == nil else { return }
         setFluidAudioInstalling(true, kind: kind)
         setFluidAudioProgress(
             .init(
@@ -1276,7 +1408,7 @@ final class AppState: ObservableObject {
     }
 
     func importFluidAudioModel(_ kind: FluidAudioModelKind) async {
-        guard fluidAudioInstallTasks[kind] == nil else { return }
+        guard canChangeModels, fluidAudioInstallTasks[kind] == nil else { return }
         let descriptor = descriptor(for: kind)
         let panel = NSOpenPanel()
         panel.title = localized(.importFluidAudioModelTitle(descriptor.displayName))
@@ -1309,7 +1441,7 @@ final class AppState: ObservableObject {
     }
 
     func deleteFluidAudioModel(_ kind: FluidAudioModelKind) async {
-        guard fluidAudioInstallTasks[kind] == nil else { return }
+        guard canChangeModels, fluidAudioInstallTasks[kind] == nil else { return }
         let descriptor = descriptor(for: kind)
         do {
             try await fluidAudioModelManager.removeModel(descriptor)
@@ -1437,583 +1569,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func processStoppedSession(
-        session: RecordingSession,
-        diagnostics: CaptureSessionDiagnostics,
-        recordingEndedAt: Date
-    ) async {
-        let finalization: AudioFinalizationMetadata
-        setProcessingStep(.preparingAudio, to: .active)
-        do {
-            try? await processingLogger.log(.finalizationStarted, for: session)
-            finalization = try await audioFinalizer.finalize(
-                session: session,
-                diagnostics: diagnostics
-            )
-            try? await processingLogger.log(
-                .finalizationCompleted,
-                for: session,
-                attributes: [
-                    .durationSeconds(
-                        finalization.system?.durationSeconds
-                            ?? finalization.microphone?.durationSeconds
-                            ?? 0
-                    ),
-                ]
-            )
-            setProcessingStep(.preparingAudio, to: .completed)
-        } catch {
-            setProcessingStep(.preparingAudio, to: .failed)
-            let failedSession = try? await sessionManager.failSession(
-                reason: error.localizedDescription,
-                now: recordingEndedAt,
-                systemAudio: diagnostics.systemAudio.sessionMetadata,
-                microphoneAudio: diagnostics.microphone.sessionMetadata
-            )
-            currentSession = nil
-            lastCompletedSession = failedSession
-            try? await processingLogger.log(
-                .processingFailed,
-                for: failedSession ?? session,
-                attributes: processingErrorAttributes(error)
-            )
-            await sendProcessingNotification(
-                session: session,
-                markdownURL: nil,
-                failedSteps: [.preparingAudio]
-            )
-            setFailure(error)
-            return
-        }
-
-        try? await processingLogger.log(
-            .transcriptionStarted,
-            for: session,
-            attributes: [.model(FluidAudioModelDescriptor.parakeetV3.repository)]
-        )
-        let transcription = await transcribeIfPossible(
-            session: session,
-            finalization: finalization
-        )
-        await completeProcessedSession(
-            session: session,
-            diagnostics: diagnostics,
-            recordingEndedAt: recordingEndedAt,
-            finalization: finalization,
-            transcription: transcription
-        )
-    }
-
-    private func completeProcessedSession(
-        session: RecordingSession,
-        diagnostics: CaptureSessionDiagnostics,
-        recordingEndedAt: Date,
-        finalization: AudioFinalizationMetadata?,
-        transcription: TranscriptionOutcome,
-        recoveredAnalysis: AnalysisOutcome? = nil
-    ) async {
-        do {
-            setProcessingStep(
-                .transcribing,
-                to: transcription.metadata.status == .completed ? .completed : .failed
-            )
-            if transcription.metadata.status == .completed {
-                var attributes: [ProcessingLogAttribute] = [
-                    .model(transcription.metadata.model),
-                    .segmentCount(transcription.metadata.mergedSegmentCount ?? 0),
-                ]
-                if let performance = transcription.metadata.systemPerformance {
-                    attributes += [
-                        .systemAudioDurationSeconds(performance.audioDurationSeconds),
-                        .systemActiveDurationSeconds(performance.activeDurationSeconds),
-                        .systemSkippedDurationSeconds(performance.skippedDurationSeconds),
-                        .systemInferenceInputDurationSeconds(performance.inferenceInputDurationSeconds),
-                        .systemTranscriptionWallTimeSeconds(performance.wallTimeSeconds),
-                        .systemChunkCount(performance.chunkCount),
-                    ]
-                }
-                if let performance = transcription.metadata.microphonePerformance {
-                    attributes += [
-                        .microphoneAudioDurationSeconds(performance.audioDurationSeconds),
-                        .microphoneActiveDurationSeconds(performance.activeDurationSeconds),
-                        .microphoneSkippedDurationSeconds(performance.skippedDurationSeconds),
-                        .microphoneInferenceInputDurationSeconds(performance.inferenceInputDurationSeconds),
-                        .microphoneTranscriptionWallTimeSeconds(performance.wallTimeSeconds),
-                        .microphoneChunkCount(performance.chunkCount),
-                    ]
-                }
-                try? await processingLogger.log(
-                    .transcriptionCompleted,
-                    for: session,
-                    attributes: attributes
-                )
-            } else {
-                try? await processingLogger.log(
-                    .transcriptionFailed,
-                    for: session,
-                    attributes: [
-                        .model(transcription.metadata.model),
-                    ]
-                )
-            }
-
-            let analysis: AnalysisOutcome
-            if let recoveredAnalysis {
-                analysis = recoveredAnalysis
-            } else {
-                analysis = await analyzeIfPossible(
-                    session: session,
-                    transcript: transcription.mergedTranscript
-                )
-            }
-            if let metadata = analysis.metadata {
-                setProcessingStep(
-                    .analyzing,
-                    to: metadata.status == .completed ? .completed : .failed
-                )
-                try? await processingLogger.log(
-                    metadata.status == .completed ? .analysisCompleted : .analysisFailed,
-                    for: session,
-                    attributes: [
-                        .model(metadata.model),
-                    ]
-                )
-            }
-            if analysis.metadata == nil {
-                setProcessingStep(.analyzing, to: .skipped)
-            }
-            try transition(to: .exporting)
-            setProcessingStep(.exporting, to: .active)
-
-            var exportSession = session
-            exportSession.metadata.endedAt = recordingEndedAt
-            let output = await exportMarkdownIfPossible(
-                session: exportSession,
-                transcript: transcription.mergedTranscript,
-                utteranceTranscript: transcription.utteranceTranscript,
-                analysis: analysis.analysis
-            )
-            if let output {
-                setProcessingStep(
-                    .exporting,
-                    to: output.status == .completed ? .completed : .failed
-                )
-                try? await processingLogger.log(
-                    output.status == .completed ? .exportCompleted : .exportFailed,
-                    for: session
-                )
-            } else {
-                setProcessingStep(.exporting, to: .skipped)
-            }
-
-            var completedSession = try await sessionManager.stopSession(
-                now: recordingEndedAt,
-                systemAudio: diagnostics.systemAudio.sessionMetadata,
-                microphoneAudio: diagnostics.microphone.sessionMetadata,
-                audioFinalization: finalization,
-                transcription: transcription.metadata,
-                analysis: analysis.metadata,
-                output: output
-            )
-            completedSession = await cleanupSourceAudioIfEnabled(
-                for: completedSession
-            )
-            currentSession = nil
-            lastCompletedSession = completedSession
-            meetingTitle = ""
-            pendingCalendarEvent = nil
-            calendarEventCandidates = []
-            if completedSession.metadata.recovery?.status == .completed {
-                try? await processingLogger.log(.recoveryCompleted, for: completedSession)
-            }
-            try transition(to: .completed)
-            let failedSteps = ProcessingStepID.allCases.filter { id in
-                processingSteps.first(where: { $0.id == id })?.state == .failed
-            }
-            let markdownURL = completedSession.metadata.output?.markdownPath
-                .flatMap { path in path.isEmpty ? nil : URL(fileURLWithPath: path) }
-            await sendProcessingNotification(
-                session: completedSession,
-                markdownURL: markdownURL,
-                failedSteps: failedSteps
-            )
-            await runAutomaticRecordingAudioCleanup()
-        } catch {
-            if await sessionManager.currentSession() != nil {
-                let failed = try? await sessionManager.failSession(
-                    reason: error.localizedDescription,
-                    now: recordingEndedAt,
-                    systemAudio: diagnostics.systemAudio.sessionMetadata,
-                    microphoneAudio: diagnostics.microphone.sessionMetadata
-                )
-                lastCompletedSession = failed
-            }
-            currentSession = nil
-            try? await processingLogger.log(
-                .processingFailed,
-                for: lastCompletedSession ?? session,
-                attributes: processingErrorAttributes(error)
-            )
-            await sendProcessingNotification(
-                session: session,
-                markdownURL: nil,
-                failedSteps: notificationFailureSteps(default: .exporting)
-            )
-            setFailure(error)
-        }
-    }
-
-    private func cleanupSourceAudioIfEnabled(
-        for session: RecordingSession
-    ) async -> RecordingSession {
-        guard automaticallyDeleteSourceCAF,
-              !session.metadata.keepsRecordingAudio else { return session }
-        let cleaner = audioSourceCleaner
-        do {
-            let cleanupTask = Task.detached(priority: .utility) {
-                try cleaner.cleanupSourceCAFIfEligible(session: session)
-            }
-            guard let cleanup = try await cleanupTask.value else {
-                return session
-            }
-            let updated = try await sessionManager.recordAudioSourceCleanup(
-                cleanup,
-                for: session
-            )
-            try? await processingLogger.log(
-                .sourceAudioCleanupCompleted,
-                for: updated
-            )
-            return updated
-        } catch {
-            let cleanup = AudioSourceCleanupMetadata(
-                status: .failed,
-                completedAt: Date(),
-                deletedFiles: [],
-                failureReason: error.localizedDescription
-            )
-            let updated = (try? await sessionManager.recordAudioSourceCleanup(
-                cleanup,
-                for: session
-            )) ?? session
-            try? await processingLogger.log(
-                .sourceAudioCleanupFailed,
-                for: updated,
-                attributes: processingErrorAttributes(error)
-            )
-            if lastError == nil {
-                lastError = localized(.sourceCAFPreserved(localized(error)))
-            }
-            return updated
-        }
-    }
-
-    private func recoveredTranscriptionOutcome(
-        session: RecordingSession,
-        transcript: MergedTranscript,
-        utteranceTranscript: ContinuousUtteranceTranscript?
-    ) -> TranscriptionOutcome {
-        let metadata = session.metadata.transcription.flatMap {
-            $0.status == .completed ? $0 : nil
-        } ?? SessionTranscriptionMetadata(
-            status: .completed,
-            model: "recovered-transcript",
-            startedAt: nil,
-            completedAt: transcript.completedAt,
-            systemSegmentCount: transcript.segments.filter { $0.source == .system }.count,
-            microphoneSegmentCount: transcript.segments.filter { $0.source == .microphone }.count,
-            mergedSegmentCount: transcript.segments.count,
-            warnings: ["Reused a merged transcript found during session recovery."],
-            failureReason: nil
-        )
-        return TranscriptionOutcome(
-            metadata: metadata,
-            mergedTranscript: transcript,
-            utteranceTranscript: utteranceTranscript
-        )
-    }
-
-    private func recoveredAnalysisOutcome(
-        session: RecordingSession,
-        analysis: AIAnalysisArtifact?
-    ) -> AnalysisOutcome? {
-        guard let analysis else { return nil }
-        let metadata = session.metadata.analysis.flatMap {
-            $0.status == .completed ? $0 : nil
-        } ?? SessionAnalysisMetadata(
-            status: .completed,
-            provider: "recovered",
-            model: "recovered-analysis",
-            startedAt: nil,
-            completedAt: Date(),
-            transcriptChunkCount: nil,
-            requestCount: 0,
-            promptHash: analysis.promptHash,
-            toolVersion: analysis.toolVersion,
-            failureReason: nil
-        )
-        return AnalysisOutcome(metadata: metadata, analysis: analysis)
-    }
-
-    private func recoveredMetadataDiagnostics(for session: RecordingSession) -> CaptureSessionDiagnostics {
-        CaptureSessionDiagnostics(
-            systemAudio: recoveredDiagnostics(
-                metadata: session.metadata.systemAudio,
-                fileName: session.metadata.audioFiles.system
-            ),
-            microphone: recoveredDiagnostics(
-                metadata: session.metadata.microphoneAudio,
-                fileName: session.metadata.audioFiles.microphone
-            )
-        )
-    }
-
-    private func recoveredDiagnostics(
-        metadata: AudioTrackMetadata?,
-        fileName: String
-    ) -> AudioCaptureDiagnostics {
-        guard let metadata else {
-            var empty = AudioCaptureDiagnostics.empty
-            empty.fileName = fileName
-            return empty
-        }
-        return AudioCaptureDiagnostics(
-            fileName: metadata.fileName,
-            startedAt: nil,
-            lastBufferReceivedAt: nil,
-            bufferCount: metadata.bufferCount,
-            totalFrames: metadata.totalFrames,
-            sampleRate: metadata.sampleRate,
-            channelCount: metadata.channelCount,
-            firstPresentationTimestamp: metadata.firstPresentationTimestamp,
-            lastPresentationTimestamp: metadata.lastPresentationTimestamp,
-            lastBufferDurationSeconds: nil,
-            failureReason: metadata.failureReason
-        )
-    }
-
     private func transition(to nextStatus: AppStatus) throws {
         try stateMachine.transition(to: nextStatus)
         status = stateMachine.status
-    }
-
-    private func transcribeIfPossible(
-        session: RecordingSession,
-        finalization: AudioFinalizationMetadata
-    ) async -> TranscriptionOutcome {
-        setProcessingStep(.transcribing, to: .active)
-        let descriptor = FluidAudioModelDescriptor.parakeetV3
-        let provenance = TranscriptionProvenance.fluidAudioParakeetV3(
-            descriptor: descriptor
-        )
-        let modelStatus = await fluidAudioModelManager.status(for: descriptor)
-        fluidAudioModelState.asrStatus = modelStatus
-
-        guard case let .ready(bundleURL, _) = modelStatus else {
-            let reason: String
-            switch modelStatus {
-            case .missing:
-                reason = "Download or import the verified Parakeet v3 model bundle to transcribe this recording."
-                lastError = localized(.fluidAudioTranscriptionModelRequired)
-            case let .invalid(invalidReason):
-                reason = invalidReason
-                lastError = localized(.recordingSaved(localized(.fluidAudioModelInvalid)))
-            case .ready:
-                preconditionFailure("The ready model status was handled by the guard.")
-            }
-            return TranscriptionOutcome(
-                metadata: SessionTranscriptionMetadata(
-                    status: .modelMissing,
-                    model: descriptor.repository,
-                    startedAt: nil,
-                    completedAt: Date(),
-                    systemSegmentCount: nil,
-                    microphoneSegmentCount: nil,
-                    warnings: [],
-                    failureReason: reason,
-                    provenance: provenance
-                ),
-                mergedTranscript: nil
-            )
-        }
-
-        do {
-            try transition(to: .transcribing)
-            let result = try await sessionTranscriber.transcribe(
-                session: session,
-                finalization: finalization,
-                model: .fluidAudioParakeetV3(
-                    bundleURL: bundleURL,
-                    descriptor: descriptor
-                ),
-                language: session.metadata.language
-            )
-            return TranscriptionOutcome(
-                metadata: result.metadata,
-                mergedTranscript: result.mergedTranscript,
-                utteranceTranscript: result.utteranceTranscript
-            )
-        } catch {
-            lastError = localized(.recordingSavedTranscription(localized(error)))
-            return TranscriptionOutcome(
-                metadata: SessionTranscriptionMetadata(
-                    status: .failed,
-                    model: descriptor.repository,
-                    startedAt: nil,
-                    completedAt: Date(),
-                    systemSegmentCount: nil,
-                    microphoneSegmentCount: nil,
-                    warnings: [],
-                    failureReason: error.localizedDescription,
-                    provenance: provenance
-                ),
-                mergedTranscript: nil
-            )
-        }
-    }
-
-    private func exportMarkdownIfPossible(
-        session: RecordingSession,
-        transcript: MergedTranscript?,
-        utteranceTranscript: ContinuousUtteranceTranscript?,
-        analysis: AIAnalysisArtifact?
-    ) async -> SessionOutputMetadata? {
-        guard let transcript else { return nil }
-
-        let destination = outputFolderURL ?? session.directoryURL
-        do {
-            let processingFileService = processingFileService
-            let result = try await outputFolderStore.withAccess(to: destination) {
-                try await processingFileService.exportMarkdown(
-                    session: session.metadata,
-                    transcript: transcript,
-                    utteranceTranscript: utteranceTranscript,
-                    analysis: analysis,
-                    to: destination
-                )
-            }
-            lastMarkdownURL = result.fileURL
-            return SessionOutputMetadata(
-                status: .completed,
-                markdownFileName: result.fileURL.lastPathComponent,
-                markdownPath: result.fileURL.path,
-                exportedAt: result.exportedAt,
-                failureReason: nil
-            )
-        } catch {
-            lastError = localized(.transcriptSavedMarkdown(localized(error)))
-            return SessionOutputMetadata(
-                status: .failed,
-                markdownFileName: nil,
-                markdownPath: nil,
-                exportedAt: Date(),
-                failureReason: error.localizedDescription
-            )
-        }
-    }
-
-    private func analyzeIfPossible(
-        session: RecordingSession,
-        transcript: MergedTranscript?
-    ) async -> AnalysisOutcome {
-        guard let configuration = session.metadata.analysisConfiguration,
-              let transcript,
-              !transcript.segments.isEmpty else {
-            setProcessingStep(.analyzing, to: .skipped)
-            return .none
-        }
-
-        setProcessingStep(.analyzing, to: .active)
-
-        let startedAt = Date()
-        do {
-            try transition(to: .analyzing)
-            let outcome = try await runAnalysis(
-                session: session,
-                transcript: transcript,
-                configuration: configuration
-            )
-            guard let artifact = outcome.analysis else {
-                throw AnalysisError.emptyOutput
-            }
-            try await processingFileService.persistAnalysis(
-                artifact,
-                to: session.analysisURL
-            )
-            return outcome
-        } catch {
-            lastError = localized(.transcriptSavedAnalysisFailed(localized(error)))
-            return AnalysisOutcome(
-                metadata: SessionAnalysisMetadata(
-                    status: .failed,
-                    provider: configuration.tool.rawValue,
-                    model: configuration.model ?? "default",
-                    startedAt: startedAt,
-                    completedAt: Date(),
-                    transcriptChunkCount: nil,
-                    requestCount: nil,
-                    promptHash: configuration.promptHash,
-                    toolVersion: nil,
-                    failureReason: error.localizedDescription
-                ),
-                analysis: nil
-            )
-        }
-    }
-
-    private func runAnalysis(
-        session: RecordingSession,
-        transcript: MergedTranscript,
-        configuration: SessionAnalysisConfiguration
-    ) async throws -> AnalysisOutcome {
-        let startedAt = Date()
-        let executablePath = configuration.executablePath
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !executablePath.isEmpty else {
-            throw AnalysisError.executableNotFound(
-                path: configuration.tool.executableName
-            )
-        }
-        let executableURL = URL(fileURLWithPath: executablePath)
-        let provider = CLIAnalysisProvider(
-            tool: configuration.tool,
-            executableURL: executableURL,
-            model: configuration.model,
-            runner: analysisCommandRunner
-        )
-        let toolVersion = try await provider.toolVersion()
-        let renderedPrompt = AnalysisPrompt.render(
-            template: configuration.prompt,
-            session: session.metadata
-        )
-        let run = try await MeetingAnalyzer(provider: provider).analyze(
-            session: session.metadata,
-            transcript: transcript,
-            userPrompt: renderedPrompt
-        )
-        let validated = try AnalysisMarkdownSchema.validate(run.analysis)
-        let artifact = AIAnalysisArtifact(
-            markdown: validated.markdown,
-            tool: configuration.tool,
-            model: configuration.model,
-            toolVersion: toolVersion,
-            prompt: renderedPrompt
-        )
-        return AnalysisOutcome(
-            metadata: SessionAnalysisMetadata(
-                status: .completed,
-                provider: configuration.tool.rawValue,
-                model: configuration.model ?? "default",
-                startedAt: startedAt,
-                completedAt: Date(),
-                transcriptChunkCount: run.transcriptChunkCount,
-                requestCount: run.requestCount,
-                promptHash: artifact.promptHash,
-                toolVersion: toolVersion,
-                failureReason: nil
-            ),
-            analysis: artifact
-        )
     }
 
     private func setFailure(_ error: Error) {
@@ -2031,51 +1589,6 @@ final class AppState: ObservableObject {
                 lastError = "\(lastError ?? localized(.unknownError)) \(localized(error))"
             }
         }
-    }
-
-    private func updateRevisionProcessingStep(_ step: ProcessingStepID) {
-        revisionProcessingStep = step
-    }
-
-    private func beginProcessingNotificationAttempt() {
-        processingNotificationAttemptID = UUID()
-    }
-
-    private func notificationFailureSteps(default fallback: ProcessingStepID) -> [ProcessingStepID] {
-        let failed = ProcessingStepID.allCases.filter { id in
-            processingSteps.first(where: { $0.id == id })?.state == .failed
-        }
-        if !failed.isEmpty {
-            return failed.contains(fallback) ? failed : failed + [fallback]
-        }
-        if let active = processingSteps.first(where: { $0.state == .active })?.id {
-            return [active]
-        }
-        return [fallback]
-    }
-
-    private func sendProcessingNotification(
-        session: RecordingSession,
-        markdownURL: URL?,
-        failedSteps: [ProcessingStepID]
-    ) async {
-        guard let attemptID = processingNotificationAttemptID else { return }
-        processingNotificationAttemptID = nil
-        guard notificationsEnabled else { return }
-        let language: ProcessingNotificationLanguage = switch selectedAppLanguage.resolved {
-        case .slovak: .slovak
-        case .czech: .czech
-        case .english, .system: .english
-        }
-        await processingNotifier.send(ProcessingNotification(
-            id: attemptID,
-            sessionID: session.metadata.id,
-            title: session.metadata.title,
-            failedSteps: failedSteps,
-            markdownURL: markdownURL,
-            language: language,
-            occurredAt: session.metadata.startedAt ?? session.metadata.createdAt
-        ))
     }
 
     func localized(_ message: AppUserMessage) -> String {
@@ -2123,7 +1636,10 @@ final class AppState: ObservableObject {
                 }
 
                 guard let self else { break }
+                let captureID = self.currentSession?.metadata.id
                 let diagnostics = await self.captureCoordinator.diagnostics()
+                guard !Task.isCancelled, self.status == .recording,
+                      self.currentSession?.metadata.id == captureID else { break }
                 self.updateCaptureDiagnostics(diagnostics)
                 let requiredAudioHealth: AudioCaptureHealth
                 if self.currentSession?.metadata.resolvedCaptureMode == .microphoneOnly {
@@ -2244,27 +1760,4 @@ final class AppState: ObservableObject {
     private func updateCaptureDiagnostics(_ diagnostics: CaptureSessionDiagnostics) {
         captureDiagnosticsModel.update(diagnostics)
     }
-}
-
-private struct TranscriptionOutcome: Sendable {
-    let metadata: SessionTranscriptionMetadata
-    let mergedTranscript: MergedTranscript?
-    let utteranceTranscript: ContinuousUtteranceTranscript?
-
-    init(
-        metadata: SessionTranscriptionMetadata,
-        mergedTranscript: MergedTranscript?,
-        utteranceTranscript: ContinuousUtteranceTranscript? = nil
-    ) {
-        self.metadata = metadata
-        self.mergedTranscript = mergedTranscript
-        self.utteranceTranscript = utteranceTranscript
-    }
-}
-
-private struct AnalysisOutcome: Sendable {
-    let metadata: SessionAnalysisMetadata?
-    let analysis: AIAnalysisArtifact?
-
-    static let none = AnalysisOutcome(metadata: nil, analysis: nil)
 }

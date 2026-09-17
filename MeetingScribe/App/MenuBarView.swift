@@ -26,14 +26,17 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
 
-            Group {
-                if let candidate = activeRecoveryCandidate {
-                    recoveryContent(candidate)
-                } else if let issue = activeRecoveryIssue {
-                    recoveryIssueContent(issue)
-                } else {
-                    statusContent
-                }
+            statusContent
+
+            if let candidate = activeRecoveryCandidate {
+                recoveryContent(candidate)
+            } else if let issue = activeRecoveryIssue {
+                recoveryIssueContent(issue)
+            }
+
+            if !visibleProcessingJobs.isEmpty {
+                Divider()
+                processingQueueContent
             }
 
             if let lastError = appState.lastError, appState.status != .failed {
@@ -61,9 +64,64 @@ struct MenuBarView: View {
             completedContent
         case .failed:
             failedContent
+            if appState.currentSession != nil {
+                Button("Retry saving recording") { Task { await appState.stopRecording() } }
+            }
         case .preparing, .stopping, .transcribing, .analyzing, .exporting:
             processingContent
         }
+    }
+
+    private var visibleProcessingJobs: [RecordingSession] {
+        appState.processingJobs.filter { $0.metadata.processing?.state != .completed }
+    }
+
+    private var processingQueueContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Processing queue").font(.headline)
+                Spacer()
+                Text("\(visibleProcessingJobs.count)").monospacedDigit().foregroundStyle(.secondary)
+            }
+            if let reason = appState.processingPauseReason {
+                pausedBanner(reason)
+            }
+            ForEach(Array(visibleProcessingJobs.prefix(3)), id: \.metadata.id) { session in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.metadata.title).lineLimit(1)
+                        Text(LocalizedStringKey(
+                            session.metadata.processing?
+                                .statusLabel(queueStatus: appState.processingQueueStatus) ?? "Queued"
+                        ))
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if session.metadata.processing?.state == .failed {
+                        Button("Retry") { Task { await appState.retryProcessing(session) } }
+                    } else if session.metadata.processing?.state == .running {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            Button("Show recordings", action: openRecordingsAction)
+        }
+    }
+
+    /// A paused scheduler leaves every job on `.queued`, so the reason and the
+    /// way out both have to be stated here.
+    private func pausedBanner(_ reason: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(reason, systemImage: "pause.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if appState.canResumeProcessing {
+                Button("Resume processing") { Task { await appState.resumeProcessing() } }
+                    .controlSize(.small)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var activeRecoveryCandidate: SessionRecoveryCandidate? {
@@ -132,9 +190,7 @@ struct MenuBarView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(
-                appState.isRecoveringSession
-                    || appState.aiAnalysisReprocessingSessionID != nil
-                    || appState.fluidAudioReprocessingSessionID != nil
+                !appState.canStartRecording
             )
 
             Text("Make sure you have the required permission or participant consent.")

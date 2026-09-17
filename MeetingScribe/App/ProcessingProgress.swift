@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProcessingStepID: String, CaseIterable, Identifiable, Sendable {
+enum ProcessingStepID: String, Codable, CaseIterable, Identifiable, Sendable {
     case preparingAudio
     case transcribing
     case analyzing

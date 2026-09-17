@@ -185,6 +185,53 @@ final class OutputExporterTests: XCTestCase {
         XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
+    func testQueuedExportReusesUnchangedOutputAfterInterruptedCheckpoint() throws {
+        var session = makeSession()
+        session.processing = ProcessingJob(
+            kind: .initial,
+            configuration: .init(outputDirectoryURL: temporaryRoot, automaticallyDeleteSourceCAF: false)
+        )
+        let exporter = OutputExporter(
+            renderer: MarkdownRenderer(timeZone: utc),
+            filenameSanitizer: FilenameSanitizer(timeZone: utc)
+        )
+        let first = try exporter.export(session: session, transcript: makeTranscript(), to: temporaryRoot)
+        let second = try exporter.export(session: session, transcript: makeTranscript(), to: temporaryRoot)
+        XCTAssertEqual(first.fileURL, second.fileURL)
+
+        // A user edit is never replaced during retry; the next unused name is claimed.
+        try "User edited this note".write(to: first.fileURL, atomically: true, encoding: .utf8)
+        let third = try exporter.export(session: session, transcript: makeTranscript(), to: temporaryRoot)
+        XCTAssertNotEqual(third.fileURL, first.fileURL)
+        XCTAssertEqual(try String(contentsOf: first.fileURL), "User edited this note")
+    }
+
+    func testQueuedExportsWithSameTitleNeverReuseAnotherSession() throws {
+        var firstSession = makeSession()
+        firstSession.processing = ProcessingJob(
+            kind: .initial,
+            configuration: .init(outputDirectoryURL: temporaryRoot, automaticallyDeleteSourceCAF: false)
+        )
+        var secondSession = SessionMetadata(
+            id: "recording-2", title: firstSession.title, status: .recorded,
+            createdAt: startedAt, startedAt: startedAt,
+            endedAt: startedAt.addingTimeInterval(30 * 60)
+        )
+        secondSession.processing = ProcessingJob(
+            kind: .initial,
+            configuration: .init(outputDirectoryURL: temporaryRoot, automaticallyDeleteSourceCAF: false)
+        )
+        let exporter = OutputExporter(
+            renderer: MarkdownRenderer(timeZone: utc),
+            filenameSanitizer: FilenameSanitizer(timeZone: utc)
+        )
+        let first = try exporter.export(session: firstSession, transcript: makeTranscript(), to: temporaryRoot)
+        let second = try exporter.export(session: secondSession, transcript: makeTranscript(), to: temporaryRoot)
+        XCTAssertNotEqual(first.fileURL, second.fileURL)
+        XCTAssertTrue(try String(contentsOf: first.fileURL).contains("recording-1"))
+        XCTAssertTrue(try String(contentsOf: second.fileURL).contains("recording-2"))
+    }
+
     private func makeSession() -> SessionMetadata {
         SessionMetadata(
             id: "recording-1",

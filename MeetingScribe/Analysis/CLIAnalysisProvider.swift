@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 struct AnalysisCommand: Equatable, Sendable {
     let executableURL: URL
@@ -21,16 +24,23 @@ protocol AnalysisCommandRunning: Sendable {
 
 struct AnalysisProcessRunner: AnalysisCommandRunning {
     private let maximumCapturedBytes: Int
+    private let terminationGracePeriod: TimeInterval
 
-    init(maximumCapturedBytes: Int = 1_100_000) {
+    init(
+        maximumCapturedBytes: Int = 1_100_000,
+        terminationGracePeriod: TimeInterval = 2
+    ) {
         self.maximumCapturedBytes = max(1_024, maximumCapturedBytes)
+        self.terminationGracePeriod = max(0, terminationGracePeriod)
     }
 
     func run(
         _ command: AnalysisCommand,
         tool: AnalysisTool
     ) async throws -> AnalysisCommandResult {
-        let controller = ProcessController()
+        let controller = ProcessController(
+            terminationGracePeriod: terminationGracePeriod
+        )
         return try await withTaskCancellationHandler {
             try await withThrowingTaskGroup(of: AnalysisCommandResult.self) { group in
                 group.addTask {
@@ -43,17 +53,18 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 }
                 group.addTask {
                     try await ContinuousClock().sleep(for: command.timeout)
-                    controller.terminate()
+                    controller.requestTermination()
                     throw AnalysisError.processTimedOut(tool: tool)
                 }
                 defer { group.cancelAll() }
                 guard let result = try await group.next() else {
                     throw CancellationError()
                 }
+                try Task.checkCancellation()
                 return result
             }
         } onCancel: {
-            controller.terminate()
+            controller.requestTermination()
         }
     }
 
@@ -78,16 +89,28 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
             process.standardOutput = outputPipe
             process.standardError = errorPipe
 
+            #if canImport(Darwin)
+            // A cancellation can close this owned writer while the input is
+            // still being copied. Convert the resulting broken pipe into an
+            // error instead of delivering SIGPIPE to the test/app process.
+            _ = Darwin.fcntl(
+                inputPipe.fileHandleForWriting.fileDescriptor,
+                F_SETNOSIGPIPE,
+                1
+            )
+            #endif
+
             outputPipe.fileHandleForReading.readabilityHandler = { handle in
                 output.append(handle.availableData)
             }
             errorPipe.fileHandleForReading.readabilityHandler = { handle in
                 errors.append(handle.availableData)
             }
-            controller.attach(process)
+            controller.attach(process, inputWriter: inputPipe.fileHandleForWriting)
 
             do {
                 try process.run()
+                controller.establishOwnedProcessGroup(for: process)
                 controller.terminateIfRequested(process)
             } catch {
                 outputPipe.fileHandleForReading.readabilityHandler = nil
@@ -103,11 +126,14 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 try inputPipe.fileHandleForWriting.write(contentsOf: command.standardInput)
                 try inputPipe.fileHandleForWriting.close()
             } catch {
-                process.terminate()
+                controller.terminateAfterInputFailure(process)
                 process.waitUntilExit()
                 outputPipe.fileHandleForReading.readabilityHandler = nil
                 errorPipe.fileHandleForReading.readabilityHandler = nil
                 controller.detach(process)
+                if controller.isTerminationRequested {
+                    throw CancellationError()
+                }
                 throw AnalysisError.processLaunchFailed(
                     tool: tool,
                     message: error.localizedDescription
@@ -130,38 +156,126 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
     }
 }
 
+/// Coordinates one process launched by this runner. A pending cancellation is
+/// retained until after `Process.run()`, so cancellation before launch cannot
+/// leave a new child behind. The owned stdin writer is closed before sending a
+/// signal, which unblocks a write when a tool is not reading its input.
 private final class ProcessController: @unchecked Sendable {
     private let lock = NSLock()
+    private let terminationGracePeriod: TimeInterval
     private var process: Process?
+    private var inputWriter: FileHandle?
     private var shouldTerminate = false
+    private var processGroupID: pid_t?
 
-    func attach(_ process: Process) {
+    init(terminationGracePeriod: TimeInterval) {
+        self.terminationGracePeriod = max(0, terminationGracePeriod)
+    }
+
+    func attach(_ process: Process, inputWriter: FileHandle) {
         lock.lock()
         self.process = process
-        let terminate = shouldTerminate
+        self.inputWriter = inputWriter
+        let requiresTermination = shouldTerminate
         lock.unlock()
-        if terminate, process.isRunning { process.terminate() }
+        if requiresTermination { terminate(process) }
     }
 
     func detach(_ process: Process) {
         lock.lock()
-        if self.process === process { self.process = nil }
+        if self.process === process {
+            self.process = nil
+            inputWriter = nil
+            processGroupID = nil
+        }
         lock.unlock()
+    }
+
+    /// Foundation does not create a process group for `Process`. Best effort
+    /// setpgid makes the just-launched child the group leader before we ever
+    /// signal it. If macOS rejects the race with exec, we safely fall back to
+    /// signalling only the owned direct process.
+    func establishOwnedProcessGroup(for process: Process) {
+        #if canImport(Darwin)
+        let pid = process.processIdentifier
+        guard pid > 0, Darwin.setpgid(pid, pid) == 0 else { return }
+        lock.lock()
+        if self.process === process { processGroupID = pid }
+        lock.unlock()
+        #endif
     }
 
     func terminateIfRequested(_ process: Process) {
         lock.lock()
         let terminate = shouldTerminate && self.process === process
         lock.unlock()
-        if terminate, process.isRunning { process.terminate() }
+        if terminate { self.terminate(process) }
     }
 
-    func terminate() {
+    var isTerminationRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return shouldTerminate
+    }
+
+    func requestTermination() {
         lock.lock()
         shouldTerminate = true
         let runningProcess = process
+        let inputWriter = inputWriter
         lock.unlock()
-        if runningProcess?.isRunning == true { runningProcess?.terminate() }
+        try? inputWriter?.close()
+        terminate(runningProcess)
+    }
+
+    func terminateAfterInputFailure(_ process: Process) {
+        lock.lock()
+        let inputWriter = self.process === process ? inputWriter : nil
+        lock.unlock()
+        try? inputWriter?.close()
+        terminate(process)
+    }
+
+    private func terminate(_ process: Process?) {
+        guard let process, process.isRunning else { return }
+        signal(.term, to: process)
+        DispatchQueue.global().asyncAfter(
+            deadline: .now() + terminationGracePeriod
+        ) { [weak self, weak process] in
+            self?.forceKillIfStillOwned(process)
+        }
+    }
+
+    private func forceKillIfStillOwned(_ process: Process?) {
+        guard let process, process.isRunning else { return }
+        lock.lock()
+        let isOwned = self.process === process
+        lock.unlock()
+        guard isOwned else { return }
+        signal(.kill, to: process)
+    }
+
+    private enum Signal {
+        case term
+        case kill
+    }
+
+    private func signal(_ signal: Signal, to process: Process) {
+        #if canImport(Darwin)
+        lock.lock()
+        let groupID = self.process === process ? processGroupID : nil
+        lock.unlock()
+        let value: Int32 = signal == .term ? SIGTERM : SIGKILL
+        if let groupID, groupID > 0 {
+            // A negative PID targets only the group we established for this
+            // child, including descendants that inherited its stdio pipes.
+            _ = Darwin.kill(-groupID, value)
+        } else {
+            _ = Darwin.kill(process.processIdentifier, value)
+        }
+        #else
+        process.terminate()
+        #endif
     }
 }
 

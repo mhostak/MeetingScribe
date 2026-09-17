@@ -81,9 +81,9 @@ actor FluidAudioTranscriptionRevisionService {
         session: RecordingSession,
         modelBundleURL: URL,
         descriptor: FluidAudioModelDescriptor = .parakeetV3,
-        onStep: @Sendable (ProcessingStepID) async -> Void = { _ in }
+        onStep: @Sendable (ProcessingStepID) async throws -> Void = { _ in }
     ) async throws -> TranscriptionRevisionResult {
-        await onStep(.preparingAudio)
+        try await onStep(.preparingAudio)
         let finalization = try await finalizationForReprocessing(session)
         try Task.checkCancellation()
 
@@ -141,7 +141,7 @@ actor FluidAudioTranscriptionRevisionService {
         )
 
         do {
-            await onStep(.transcribing)
+            try await onStep(.transcribing)
             let result = try await transcriber.transcribe(
                 session: revisionSession,
                 finalization: finalization,
@@ -152,7 +152,7 @@ actor FluidAudioTranscriptionRevisionService {
                 language: session.metadata.language
             )
             try Task.checkCancellation()
-            await onStep(.exporting)
+            try await onStep(.exporting)
             let markdown = try await processingFileService.exportMarkdown(
                 session: revisionMetadata,
                 transcript: result.mergedTranscript,
@@ -180,6 +180,8 @@ actor FluidAudioTranscriptionRevisionService {
                 directoryURL: directoryURL,
                 manifest: manifest
             )
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             let manifest = TranscriptionRevisionManifest(
                 schemaVersion: 2,

@@ -305,10 +305,13 @@ final class CLIAnalysisProviderTests: XCTestCase {
     func testProductionRunnerTerminatesTimedOutProcess() async throws {
         let fixture = try makeExecutableFixture(script: """
         #!/bin/sh
-        exec sleep 5
+        trap '' TERM
+        while :; do
+          /bin/sleep 0.1
+        done
         """)
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let runner = AnalysisProcessRunner()
+        let runner = AnalysisProcessRunner(terminationGracePeriod: 0.05)
 
         do {
             _ = try await runner.run(
@@ -317,7 +320,7 @@ final class CLIAnalysisProviderTests: XCTestCase {
                     arguments: [],
                     standardInput: Data(),
                     currentDirectoryURL: fixture.directory,
-                    timeout: .milliseconds(50)
+                    timeout: .milliseconds(20)
                 ),
                 tool: .codex
             )
@@ -325,6 +328,38 @@ final class CLIAnalysisProviderTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? AnalysisError, .processTimedOut(tool: .codex))
         }
+    }
+
+    func testProductionRunnerCancellationTerminatesTermIgnoringProcess() async throws {
+        let fixture = try makeExecutableFixture(script: """
+        #!/bin/sh
+        trap '' TERM
+        : > ready
+        while :; do
+          /bin/sleep 0.1
+        done
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let runner = AnalysisProcessRunner(terminationGracePeriod: 0.05)
+        let task = Task {
+            try await runner.run(
+                AnalysisCommand(
+                    executableURL: fixture.executable,
+                    arguments: [],
+                    standardInput: Data(repeating: 65, count: 128 * 1_024),
+                    currentDirectoryURL: fixture.directory,
+                    timeout: .seconds(5)
+                ),
+                tool: .codex
+            )
+        }
+        try await waitForFile(fixture.directory.appendingPathComponent("ready"))
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation to terminate the owned process.")
+        } catch is CancellationError {}
     }
 
     private func makeRequest() -> AnalysisRequest {
@@ -335,6 +370,18 @@ final class CLIAnalysisProviderTests: XCTestCase {
             preferredLanguage: .czech,
             userPrompt: "Vytvor vlastnú štruktúru.",
             content: "[00:00:01] [segment-1] Other: Meeting text"
+        )
+    }
+
+    private func waitForFile(_ url: URL) async throws {
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: url.path) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw NSError(
+            domain: "CLIAnalysisProviderTests",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for controlled process readiness."]
         )
     }
 

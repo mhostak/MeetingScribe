@@ -258,6 +258,387 @@ final class SessionManagerTests: XCTestCase {
         }
     }
 
+    func testFinishCaptureAndQueuePersistsHandoffBeforeReleasingCapture() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let endedAt = startedAt.addingTimeInterval(42)
+        let started = try await manager.startSession(title: "Queued capture", now: startedAt)
+        let configuration = ProcessingJobConfiguration(
+            outputDirectoryURL: URL(fileURLWithPath: "/tmp/Meeting Notes"),
+            automaticallyDeleteSourceCAF: true
+        )
+        let diagnostics = makeDiagnostics()
+
+        let handedOff = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: endedAt,
+            diagnostics: diagnostics,
+            configuration: configuration,
+            now: endedAt
+        )
+
+        let job = try XCTUnwrap(handedOff.metadata.processing)
+        XCTAssertEqual(handedOff.metadata.status, .recorded)
+        XCTAssertEqual(handedOff.metadata.endedAt, endedAt)
+        XCTAssertEqual(handedOff.metadata.systemAudio, diagnostics.systemAudio.sessionMetadata)
+        XCTAssertEqual(handedOff.metadata.microphoneAudio, diagnostics.microphone.sessionMetadata)
+        XCTAssertEqual(job.kind, .initial)
+        XCTAssertEqual(job.state, .queued)
+        XCTAssertEqual(job.enqueuedAt, endedAt)
+        XCTAssertEqual(job.configuration, configuration)
+        let activeSession = await manager.currentSession()
+        XCTAssertNil(activeSession)
+
+        let restarted = SessionManager(recordingsRoot: temporaryRoot)
+        let pending = try await restarted.loadProcessingSessions()
+        XCTAssertEqual(pending.map(\.metadata.id), [started.metadata.id])
+        XCTAssertEqual(pending.first?.metadata.processing, job)
+    }
+
+    func testFinishCaptureAndQueueRetryDoesNotCreateSecondJob() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Idempotent handoff")
+        let configuration = ProcessingJobConfiguration(
+            outputDirectoryURL: nil,
+            automaticallyDeleteSourceCAF: false
+        )
+        let first = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: configuration
+        )
+        let retried = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date().addingTimeInterval(20),
+            diagnostics: .empty,
+            configuration: configuration
+        )
+
+        XCTAssertEqual(retried.metadata.processing?.jobID, first.metadata.processing?.jobID)
+        XCTAssertEqual(retried.metadata.processing?.attemptID, first.metadata.processing?.attemptID)
+        XCTAssertEqual(
+            try decodeMetadata(at: started.manifestURL).processing?.jobID,
+            first.metadata.processing?.jobID
+        )
+    }
+
+    func testProcessingUpdateRejectsStaleAttemptAndPreservesLatestManifest() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Stale callback")
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        let finalization = makeFinalization()
+        let updated = try await manager.updateProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            patch: ProcessingJobPatch(
+                state: .running,
+                stage: .transcribing,
+                checkpoint: .preparingAudio,
+                updatesStage: true,
+                updatesCheckpoint: true
+            ),
+            artifactMetadata: ProcessingArtifactMetadata(audioFinalization: finalization)
+        )
+
+        XCTAssertEqual(updated.metadata.processing?.state, .running)
+        XCTAssertEqual(updated.metadata.processing?.stage, .transcribing)
+        XCTAssertEqual(updated.metadata.processing?.checkpoint, .preparingAudio)
+        XCTAssertEqual(updated.metadata.audioFinalization, finalization)
+
+        do {
+            _ = try await manager.updateProcessing(
+                sessionID: started.metadata.id,
+                jobID: job.jobID,
+                attemptID: UUID(),
+                patch: ProcessingJobPatch(state: .failed)
+            )
+            XCTFail("Expected a delayed processing callback to be rejected.")
+        } catch {
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .processingIdentityMismatch(started.metadata.id)
+            )
+        }
+
+        let persisted = try decodeMetadata(at: started.manifestURL)
+        XCTAssertEqual(persisted.processing?.state, .running)
+        XCTAssertEqual(persisted.audioFinalization, finalization)
+    }
+
+    func testCompleteProcessingPersistsArtifactsAndFailureWithoutActiveMutation() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Per-job completion")
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        let transcription = SessionTranscriptionMetadata(
+            status: .completed,
+            model: "test-model",
+            systemSegmentCount: 3,
+            microphoneSegmentCount: 2,
+            warnings: [],
+            failureReason: nil
+        )
+        let completed = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata(transcription: transcription),
+            failureDescription: "Export destination unavailable",
+            failedSteps: [.exporting]
+        )
+
+        XCTAssertEqual(completed.metadata.processing?.state, .failed)
+        XCTAssertEqual(completed.metadata.processing?.failureDescription, "Export destination unavailable")
+        XCTAssertEqual(completed.metadata.transcription, transcription)
+        let activeSession = await manager.currentSession()
+        XCTAssertNil(activeSession)
+    }
+
+    func testTerminalJobRejectsLateCallback() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Terminal job")
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        _ = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata()
+        )
+
+        do {
+            _ = try await manager.updateProcessing(
+                sessionID: started.metadata.id,
+                jobID: job.jobID,
+                attemptID: job.attemptID,
+                patch: ProcessingJobPatch(state: .pauseRequested)
+            )
+            XCTFail("Expected a terminal job to reject a delayed callback.")
+        } catch {
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .processingJobAlreadyTerminal(started.metadata.id)
+            )
+        }
+        XCTAssertEqual(try decodeMetadata(at: started.manifestURL).processing?.state, .completed)
+    }
+
+    func testCompletionPromotesFrozenAnalysisConfigurationOnlyOnSuccess() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Analysis snapshot")
+        let configuration = SessionAnalysisConfiguration(
+            tool: .codex,
+            executablePath: "/tmp/codex",
+            model: "test-model",
+            prompt: "Summarize the meeting."
+        )
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false,
+                analysisConfiguration: configuration
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        let analysis = SessionAnalysisMetadata(
+            status: .completed,
+            provider: "codex",
+            model: "test-model",
+            startedAt: nil,
+            completedAt: Date(),
+            transcriptChunkCount: 1,
+            requestCount: 1,
+            failureReason: nil
+        )
+        let completed = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata(analysis: analysis)
+        )
+
+        XCTAssertEqual(completed.metadata.analysisConfiguration, configuration)
+        XCTAssertEqual(try decodeMetadata(at: started.manifestURL).analysisConfiguration, configuration)
+    }
+
+    func testFutureProcessingSchemaIsVisibleAndCannotBeRequeued() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Future schema")
+        _ = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+        )
+        var document = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: started.manifestURL)) as? [String: Any]
+        )
+        var processing = try XCTUnwrap(document["processing"] as? [String: Any])
+        processing["schemaVersion"] = ProcessingJob.currentSchemaVersion + 1
+        document["processing"] = processing
+        try JSONSerialization.data(withJSONObject: document).write(to: started.manifestURL, options: .atomic)
+
+        do {
+            _ = try await manager.queueProcessing(
+                sessionID: started.metadata.id,
+                kind: .retranscribe,
+                configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false)
+            )
+            XCTFail("Expected a future job schema to reject queue mutation.")
+        } catch {
+            XCTAssertEqual(
+                error as? ProcessingJobRepositoryError,
+                .unsupportedSchema(
+                    sessionID: started.metadata.id,
+                    schemaVersion: ProcessingJob.currentSchemaVersion + 1
+                )
+            )
+        }
+        let issues = try await manager.scanForRecovery().issues
+        XCTAssertTrue(issues.contains { $0.directoryName == started.metadata.id })
+    }
+
+    func testQueueProcessingIsIdempotentThenCreatesFreshTerminalAttempt() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let started = try await manager.startSession(title: "Retry queue")
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: Date(),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+        let initial = try XCTUnwrap(queued.metadata.processing)
+        let duplicate = try await manager.queueProcessing(
+            sessionID: started.metadata.id,
+            kind: .retranscribe,
+            configuration: initial.configuration
+        )
+        XCTAssertEqual(duplicate.metadata.processing?.jobID, initial.jobID)
+
+        _ = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: initial.jobID,
+            attemptID: initial.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata()
+        )
+        let retry = try await manager.queueProcessing(
+            sessionID: started.metadata.id,
+            kind: .retranscribe,
+            configuration: initial.configuration
+        )
+        XCTAssertNotEqual(retry.metadata.processing?.jobID, initial.jobID)
+        XCTAssertNotEqual(retry.metadata.processing?.attemptID, initial.attemptID)
+        XCTAssertEqual(retry.metadata.processing?.kind, .retranscribe)
+        XCTAssertEqual(retry.metadata.processing?.state, .queued)
+    }
+
+    func testLoadProcessingSessionsIncludesTerminalJobsAndResumeCreatesNewAttempt() async throws {
+        let manager = SessionManager(recordingsRoot: temporaryRoot)
+        let first = try await manager.startSession(title: "First", now: Date(timeIntervalSince1970: 100))
+        let firstQueued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: first.metadata.id,
+            endedAt: Date(timeIntervalSince1970: 110),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false),
+            now: Date(timeIntervalSince1970: 120)
+        )
+        let firstJob = try XCTUnwrap(firstQueued.metadata.processing)
+        let running = try await manager.updateProcessing(
+            sessionID: first.metadata.id,
+            jobID: firstJob.jobID,
+            attemptID: firstJob.attemptID,
+            patch: ProcessingJobPatch(state: .running)
+        )
+        let runningJob = try XCTUnwrap(running.metadata.processing)
+
+        let second = try await manager.startSession(title: "Second", now: Date(timeIntervalSince1970: 200))
+        let secondQueued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: second.metadata.id,
+            endedAt: Date(timeIntervalSince1970: 210),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(outputDirectoryURL: nil, automaticallyDeleteSourceCAF: false),
+            now: Date(timeIntervalSince1970: 220)
+        )
+        let secondJob = try XCTUnwrap(secondQueued.metadata.processing)
+        _ = try await manager.completeProcessing(
+            sessionID: second.metadata.id,
+            jobID: secondJob.jobID,
+            attemptID: secondJob.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata()
+        )
+
+        let loaded = try await manager.loadProcessingSessions()
+        XCTAssertEqual(loaded.map(\.metadata.id), [first.metadata.id, second.metadata.id])
+        XCTAssertEqual(loaded.last?.metadata.processing?.state, .completed)
+
+        let resumed = try await manager.resumeInterruptedProcessing(
+            sessionID: first.metadata.id,
+            jobID: runningJob.jobID,
+            attemptID: runningJob.attemptID
+        )
+        XCTAssertEqual(resumed.metadata.processing?.state, .queued)
+        XCTAssertEqual(resumed.metadata.processing?.jobID, runningJob.jobID)
+        XCTAssertNotEqual(resumed.metadata.processing?.attemptID, runningJob.attemptID)
+    }
+
+    func testRecoveryQueuePreservesSuggestedEndAndIsExcludedFromLegacyScan() async throws {
+        let captureManager = SessionManager(recordingsRoot: temporaryRoot)
+        let startedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let interrupted = try await captureManager.startSession(
+            title: "Interrupted",
+            now: startedAt
+        )
+        try Data([1, 2, 3]).write(to: interrupted.systemAudioURL)
+
+        let repository = SessionManager(recordingsRoot: temporaryRoot)
+        let queued = try await repository.queueProcessing(
+            sessionID: interrupted.metadata.id,
+            kind: .recovery,
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            ),
+            now: startedAt.addingTimeInterval(30)
+        )
+
+        XCTAssertEqual(queued.metadata.processing?.kind, .recovery)
+        XCTAssertEqual(queued.metadata.status, .recorded)
+        XCTAssertEqual(queued.metadata.recovery?.status, .inProgress)
+        XCTAssertNotNil(queued.metadata.endedAt)
+        let candidates = try await repository.scanForRecovery().candidates
+        XCTAssertFalse(candidates.contains { $0.id == interrupted.metadata.id })
+    }
+
     func testAudioFileListDecodesLegacyManifestWithoutWorkingTracks() throws {
         let data = Data(#"""
         {
@@ -351,6 +732,43 @@ final class SessionManagerTests: XCTestCase {
     private func decodeMetadata(at url: URL) throws -> SessionMetadata {
         let data = try Data(contentsOf: url)
         return try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: data)
+    }
+
+    private func makeDiagnostics() -> CaptureSessionDiagnostics {
+        CaptureSessionDiagnostics(
+            systemAudio: AudioCaptureDiagnostics(
+                fileName: "system.caf",
+                bufferCount: 4,
+                totalFrames: 192_000,
+                sampleRate: 48_000,
+                channelCount: 2,
+                firstPresentationTimestamp: 100,
+                lastPresentationTimestamp: 104,
+                lastBufferDurationSeconds: 1,
+                failureReason: nil
+            ),
+            microphone: AudioCaptureDiagnostics(
+                fileName: "microphone.caf",
+                bufferCount: 4,
+                totalFrames: 192_000,
+                sampleRate: 48_000,
+                channelCount: 1,
+                firstPresentationTimestamp: 100,
+                lastPresentationTimestamp: 104,
+                lastBufferDurationSeconds: 1,
+                failureReason: nil
+            )
+        )
+    }
+
+    private func makeFinalization() -> AudioFinalizationMetadata {
+        AudioFinalizationMetadata(
+            completedAt: Date(timeIntervalSince1970: 1_800_000_100),
+            timelineOrigin: 100,
+            system: nil,
+            microphone: nil,
+            warnings: []
+        )
     }
 
     private func makeCalendarSnapshot(title: String) -> CalendarEventSnapshot {

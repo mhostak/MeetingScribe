@@ -40,6 +40,12 @@ final class OutputFolderStore {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
+    func bookmark(for url: URL?) -> Data? {
+        guard let url, let selected = restoreFolder(),
+              selected.standardizedFileURL == url.standardizedFileURL else { return nil }
+        return defaults.data(forKey: Key.bookmark)
+    }
+
     func selectFolder(_ url: URL) throws {
         let standardizedURL = url.standardizedFileURL
         let bookmark = try standardizedURL.bookmarkData(

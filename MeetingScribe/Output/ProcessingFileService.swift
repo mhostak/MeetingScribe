@@ -76,7 +76,8 @@ actor ProcessingFileService: ProcessingFileServicing {
               let transcript = try? TranscriptJSONCoder.makeDecoder().decode(
                   MergedTranscript.self,
                   from: transcriptData
-              ) else {
+              ),
+              transcript.sessionID == session.metadata.id else {
             return nil
         }
 
