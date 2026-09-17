@@ -383,7 +383,6 @@
     "Turn off AI" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Vypnout AI" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Vypnúť AI" } } } },
     "Open Calendar settings" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Otevřít nastavení kalendáře" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Otvoriť nastavenia kalendára" } } } },
     "Open notification settings" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Otevřít nastavení notifikací" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Otvoriť nastavenia notifikácií" } } } },
-    "Setup is available" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Příprava je k dispozici" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Príprava je k dispozícii" } } } },
     "The recording test is upcoming." : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Test nahrávání přibude později." } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Test nahrávania pribudne neskôr." } } } }
     ,
     "Choose output folder…" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Zvolit výstupní složku…" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Zvoliť výstupný priečinok…" } } } }
