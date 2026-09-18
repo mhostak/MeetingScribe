@@ -43,19 +43,29 @@ struct OnboardingView: View {
 
             Divider()
 
-            Group {
-                switch appState.onboardingStep {
-                case .welcome:
-                    welcomeStep
-                case .audioPermissions:
-                    audioPermissionsStep
-                case .transcriptionAndOutput:
-                    transcriptionAndOutputStep
-                case .review:
-                    reviewStep
+            // A step can be taller than the window — the readiness list alone
+            // needs roughly 950pt — so only the step body scrolls. The step
+            // indicator and the navigation buttons stay reachable at any size.
+            ScrollView {
+                Group {
+                    switch appState.onboardingStep {
+                    case .welcome:
+                        welcomeStep
+                    case .audioPermissions:
+                        audioPermissionsStep
+                    case .transcriptionAndOutput:
+                        transcriptionAndOutputStep
+                    case .review:
+                        reviewStep
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 2)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .scrollBounceBehavior(.basedOnSize)
+            // An ideal height keeps the window's natural size independent of
+            // how tall the current step happens to be.
+            .frame(minHeight: 160, idealHeight: 260, maxHeight: .infinity)
 
             HStack {
                 Button("Back") {
@@ -65,23 +75,22 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                Button("Continue") {
-                    appState.advanceOnboarding()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(appState.onboardingStep == .review)
-
                 if appState.onboardingStep == .review {
-                    Button("Finish without test") {
+                    Button("Finish setup") {
                         appState.completeOnboarding()
                         closeAction()
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button("Continue") {
+                        appState.advanceOnboarding()
                     }
                     .buttonStyle(.borderedProminent)
                 }
             }
         }
         .padding(24)
-        .frame(minWidth: 760, minHeight: 560)
+        .frame(minWidth: 720, minHeight: 420)
         .environment(\.locale, appState.selectedAppLanguage.locale)
         .task { await appState.refreshReadiness() }
         .onReceive(NotificationCenter.default.publisher(
@@ -243,63 +252,16 @@ struct OnboardingView: View {
                 openSettingsAction: openSettingsAction
             )
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Markdown and exported files will be stored in")
-                    .font(.caption.weight(.semibold))
-                Text(appState.onboardingTestArtifactDestinationURL.path)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Permission is not proof that audio is arriving. The ten-second setup test lives in Readiness.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Text("Test audio will be stored in")
-                    .font(.caption.weight(.semibold))
-                    .padding(.top, 2)
-                Text(appState.onboardingTestAudioDestinationURL.path)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-
-                HStack {
-                    switch appState.onboardingTestPhase {
-                    case .idle, .completed, .failed:
-                        Button("Run 10-second test") {
-                            Task { await appState.startOnboardingTest() }
-                        }
-                        .disabled(!appState.canStartOnboardingTest)
-                        .help(appState.canStartOnboardingTest ? "" : "The setup test is unavailable while MeetingScribe is busy.")
-                    case .starting:
-                        ProgressView("Starting test…")
-                    case .recording:
-                        Button("Stop test") {
-                            Task { await appState.stopOnboardingTest() }
-                        }
-                    case .processing:
-                        ProgressView("Processing test…")
-                    }
-                    Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open readiness settings") {
+                    appState.selectedSettingsSection = "readiness"
+                    openSettingsAction()
                 }
-
-                if appState.onboardingTestPhase == .recording {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        if let remaining = appState.onboardingTestRemainingSeconds(at: context.date) {
-                            Text("Test stops automatically in \(remaining) seconds")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("Say a short sentence. If testing system audio, play sound during the test.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                if let error = appState.onboardingTestError {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                if let result = appState.onboardingTestResult {
-                    OnboardingTestResultView(result: result)
-                }
+                .controlSize(.small)
             }
         }
     }
@@ -391,6 +353,76 @@ struct OnboardingView: View {
             fromByteCount: appState.fluidAudioASRDescriptor.approximateSizeBytes,
             countStyle: .file
         )
+    }
+}
+
+/// The ten-second setup test. It is shown both in the guide and in the
+/// readiness overview: a replaced microphone or a permission revoked by a
+/// system update has to be re-checked without walking back through a guide
+/// that is already finished.
+struct SetupTestView: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Markdown and exported files will be stored in")
+                .font(.caption.weight(.semibold))
+            Text(appState.onboardingTestArtifactDestinationURL.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("Test audio will be stored in")
+                .font(.caption.weight(.semibold))
+                .padding(.top, 2)
+            Text(appState.onboardingTestAudioDestinationURL.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            HStack {
+                switch appState.onboardingTestPhase {
+                case .idle, .completed, .failed:
+                    Button("Run 10-second test") {
+                        Task { await appState.startOnboardingTest() }
+                    }
+                    .disabled(!appState.canStartOnboardingTest)
+                    .help(appState.canStartOnboardingTest ? "" : "The setup test is unavailable while MeetingScribe is busy.")
+                case .starting:
+                    ProgressView("Starting test…")
+                case .recording:
+                    Button("Stop test") {
+                        Task { await appState.stopOnboardingTest() }
+                    }
+                case .processing:
+                    ProgressView("Processing test…")
+                }
+                Spacer()
+            }
+
+            if appState.onboardingTestPhase == .recording {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    if let remaining = appState.onboardingTestRemainingSeconds(at: context.date) {
+                        Text("Test stops automatically in \(remaining) seconds")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("Say a short sentence. If testing system audio, play sound during the test.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let error = appState.onboardingTestError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            if let result = appState.onboardingTestResult {
+                OnboardingTestResultView(result: result)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

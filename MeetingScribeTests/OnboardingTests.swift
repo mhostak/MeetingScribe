@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import MeetingScribe
 
@@ -456,6 +458,97 @@ final class OnboardingTests: XCTestCase {
     private func makeTemporaryRoot() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeOnboardingTests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// The setup test now runs from the readiness overview, and finishing the
+    /// guide afterwards still has to persist the completion.
+    func testSetupCanBeFinishedAfterTheSetupTest() async throws {
+        let fixture = try makeOnboardingTestFixture()
+        defer { fixture.cleanup() }
+        let appState = makeOnboardingTestAppState(
+            fixture: fixture,
+            capture: OnboardingTestCaptureService(systemActivity: true),
+            finalizer: CountingOnboardingTestFinalizer(),
+            delay: ImmediateOnboardingTestDelay()
+        )
+        await appState.prepareStorage()
+        appState.setOnboardingStep(.review)
+
+        await appState.startOnboardingTest()
+        await waitForOnboardingTestCompletion(appState)
+        XCTAssertEqual(appState.onboardingTestPhase, .completed)
+        XCTAssertNotNil(appState.onboardingTestResult)
+
+        appState.completeOnboarding()
+
+        XCTAssertTrue(appState.onboardingState.isCompleted)
+        XCTAssertFalse(appState.shouldShowOnboardingInvitation)
+        XCTAssertFalse(OnboardingStore(defaults: fixture.defaults).shouldOpenOnLaunch)
+    }
+
+    /// The onboarding window opens at 780x580. Before the step body became
+    /// scrollable, the review step needed 944pt, so the header, the step
+    /// indicator and the Back/Continue/Finish buttons were clipped away and the
+    /// guide could not be finished at all.
+    func testEveryOnboardingStepFitsTheOnboardingWindow() async throws {
+        let fixture = try makeOnboardingTestFixture()
+        defer { fixture.cleanup() }
+        let appState = makeOnboardingTestAppState(
+            fixture: fixture,
+            capture: OnboardingTestCaptureService(systemActivity: true),
+            finalizer: CountingOnboardingTestFinalizer(),
+            delay: ImmediateOnboardingTestDelay()
+        )
+        await appState.refreshReadiness()
+        XCTAssertEqual(appState.readinessSnapshot?.checks.count, 8)
+
+        let windowHeight: CGFloat = 580
+        let controller = NSHostingController(
+            rootView: OnboardingView(
+                appState: appState,
+                openSettingsAction: {},
+                closeAction: {}
+            )
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 780, height: windowHeight)
+
+        for step in OnboardingStep.allCases {
+            appState.setOnboardingStep(step)
+            controller.view.layoutSubtreeIfNeeded()
+            XCTAssertLessThanOrEqual(
+                controller.view.fittingSize.height,
+                windowHeight,
+                "Step \(step) wants \(controller.view.fittingSize.height)pt of a \(windowHeight)pt window."
+            )
+        }
+    }
+
+    /// The readiness overview now carries the setup test as well, so it has to
+    /// keep a bounded height instead of growing with the eight checks and a
+    /// test result.
+    func testReadinessOverviewStaysInsideASettingsSizedWindow() async throws {
+        let fixture = try makeOnboardingTestFixture()
+        defer { fixture.cleanup() }
+        let appState = makeOnboardingTestAppState(
+            fixture: fixture,
+            capture: OnboardingTestCaptureService(systemActivity: true),
+            finalizer: CountingOnboardingTestFinalizer(),
+            delay: ImmediateOnboardingTestDelay()
+        )
+        await appState.refreshReadiness()
+        XCTAssertEqual(appState.readinessSnapshot?.checks.count, 8)
+
+        let controller = NSHostingController(
+            rootView: ReadinessView(appState: appState, openOnboardingAction: {})
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 620)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertLessThanOrEqual(
+            controller.view.fittingSize.height,
+            620,
+            "Readiness wants \(controller.view.fittingSize.height)pt."
+        )
     }
 
     private func makeReadinessService() -> ReadinessService {

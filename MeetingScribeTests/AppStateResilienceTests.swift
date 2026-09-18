@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UserNotifications
 import XCTest
 @testable import MeetingScribe
 
@@ -1910,6 +1911,10 @@ private final class ResilienceProcessingNotifier: ProcessingNotifying {
 
     func requestAuthorization() async {
         authorizationRequests += 1
+    }
+
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        .authorized
     }
 
     func send(_ notification: ProcessingNotification) async {

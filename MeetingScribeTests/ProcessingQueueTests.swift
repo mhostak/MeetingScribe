@@ -231,6 +231,94 @@ final class ProcessingQueueTests: XCTestCase {
             now: now.addingTimeInterval(2)
         )
     }
+
+    func testPlannedStepsFollowTheAttemptKind() {
+        XCTAssertEqual(
+            job(kind: .initial).plannedSteps(analysisConfigured: true),
+            [.preparingAudio, .transcribing, .analyzing, .exporting]
+        )
+        XCTAssertEqual(
+            job(kind: .initial).plannedSteps(analysisConfigured: false),
+            [.preparingAudio, .transcribing, .exporting]
+        )
+        XCTAssertEqual(
+            job(kind: .retranscribe).plannedSteps(analysisConfigured: true),
+            [.preparingAudio, .transcribing, .exporting]
+        )
+        XCTAssertEqual(
+            job(kind: .reanalyze).plannedSteps(analysisConfigured: true),
+            [.analyzing, .exporting]
+        )
+    }
+
+    func testStageProgressMarksTheRunningStepAndEverythingBeforeIt() {
+        let progress = job(
+            kind: .initial,
+            state: .running,
+            stage: .transcribing,
+            checkpoint: .preparingAudio
+        ).stageProgress(analysisConfigured: true)
+
+        XCTAssertEqual(progress.steps.count, 4)
+        XCTAssertEqual(progress.activeIndex, 1)
+        XCTAssertEqual(progress.completedCount, 1)
+        XCTAssertNil(progress.failedIndex)
+        XCTAssertEqual(progress.currentStepNumber, 2)
+    }
+
+    /// A retranscription only checkpoints at the very end, so the bar has to
+    /// take everything before the running step as done.
+    func testRetranscriptionProgressDoesNotWaitForACheckpoint() {
+        let progress = job(
+            kind: .retranscribe,
+            state: .running,
+            stage: .transcribing
+        ).stageProgress(analysisConfigured: true)
+
+        XCTAssertEqual(progress.steps, [.preparingAudio, .transcribing, .exporting])
+        XCTAssertEqual(progress.completedCount, 1)
+        XCTAssertEqual(progress.activeIndex, 1)
+    }
+
+    func testQueuedAttemptHasNoStepInFlight() {
+        let progress = job(kind: .initial, state: .queued).stageProgress(analysisConfigured: true)
+
+        XCTAssertFalse(progress.isInFlight)
+        XCTAssertNil(progress.currentStepNumber)
+        XCTAssertEqual(progress.completedCount, 0)
+    }
+
+    func testFailedAttemptMarksTheStepThatFailed() {
+        let progress = job(
+            kind: .initial,
+            state: .failed,
+            stage: .analyzing,
+            checkpoint: .transcribing
+        ).stageProgress(analysisConfigured: true)
+
+        XCTAssertEqual(progress.failedIndex, 2)
+        XCTAssertNil(progress.activeIndex)
+        XCTAssertEqual(progress.completedCount, 2)
+        XCTAssertTrue(progress.isInFlight)
+    }
+
+    private func job(
+        kind: ProcessingJobKind,
+        state: ProcessingJobState = .queued,
+        stage: ProcessingStepID? = nil,
+        checkpoint: ProcessingStepID? = nil
+    ) -> ProcessingJob {
+        ProcessingJob(
+            kind: kind,
+            state: state,
+            stage: stage,
+            checkpoint: checkpoint,
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+    }
 }
 
 private struct QueueTestCapacity: StorageCapacityProviding {

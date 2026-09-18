@@ -784,6 +784,223 @@ enum AppLocalization {
         }
     }
 
+    /// One short line describing what a readiness check is currently set to, so
+    /// a passing row still tells the user which model, folder or tool it used.
+    static func readinessDetail(_ detail: ReadinessDetail, language: AppLanguage) -> String {
+        let language = language.resolved
+        switch detail {
+        case let .systemAudio(permission, captureMode):
+            return join([
+                permissionField(permission, language: language),
+                pick(
+                    "recording mode: \(captureModeText(captureMode, language: language))",
+                    "režim nahrávania: \(captureModeText(captureMode, language: language))",
+                    "režim nahrávání: \(captureModeText(captureMode, language: language))",
+                    language
+                ),
+            ])
+        case let .microphone(permission):
+            return permissionField(permission, language: language)
+        case let .storage(availableBytes, requiredBytes):
+            return join([
+                pick(
+                    "Free space: \(byteText(availableBytes))",
+                    "Voľné miesto: \(byteText(availableBytes))",
+                    "Volné místo: \(byteText(availableBytes))",
+                    language
+                ),
+                pick(
+                    "required minimum: \(byteText(requiredBytes))",
+                    "požadované minimum: \(byteText(requiredBytes))",
+                    "požadované minimum: \(byteText(requiredBytes))",
+                    language
+                ),
+            ])
+        case .storageUnavailable:
+            return pick(
+                "The available space could not be determined.",
+                "Voľné miesto sa nepodarilo zistiť.",
+                "Volné místo se nepodařilo zjistit.",
+                language
+            )
+        case let .transcriptionModel(name, state):
+            let stateText: String
+            switch state {
+            case .ready:
+                stateText = pick("installed", "nainštalovaný", "nainstalovaný", language)
+            case .missing:
+                stateText = pick(
+                    "not installed",
+                    "nie je nainštalovaný",
+                    "není nainstalovaný",
+                    language
+                )
+            case .invalid:
+                stateText = pick(
+                    "incomplete or damaged",
+                    "neúplný alebo poškodený",
+                    "neúplný nebo poškozený",
+                    language
+                )
+            case .unavailable:
+                stateText = pick(
+                    "state not verified",
+                    "stav neoverený",
+                    "stav neověřený",
+                    language
+                )
+            }
+            return join([
+                pick("Model: \(name)", "Model: \(name)", "Model: \(name)", language),
+                stateText,
+            ])
+        case let .output(folderPath, template):
+            let folder = folderPath ?? message(.recordingSessionFolderDescription, language: language)
+            return join([
+                pick("Folder: \(folder)", "Priečinok: \(folder)", "Složka: \(folder)", language),
+                pick(
+                    "file name: \(template)",
+                    "názov súboru: \(template)",
+                    "název souboru: \(template)",
+                    language
+                ),
+            ])
+        case let .outputTemplateInvalid(tokens):
+            let list = tokens.joined(separator: ", ")
+            return pick(
+                "Unsupported placeholders in the file name: \(list)",
+                "Nepodporované zástupné znaky v názve súboru: \(list)",
+                "Nepodporované zástupné znaky v názvu souboru: \(list)",
+                language
+            )
+        case .analysisDisabled:
+            return pick("Turned off", "Vypnuté", "Vypnuto", language)
+        case let .analysis(tool, model, status):
+            let modelText = model ?? pick(
+                "chosen by the tool",
+                "volí nástroj",
+                "volí nástroj",
+                language
+            )
+            let statusText: String
+            switch status {
+            case .available:
+                statusText = pick("tool available", "nástroj dostupný", "nástroj dostupný", language)
+            case .unknown:
+                statusText = pick(
+                    "tool not verified",
+                    "nástroj neoverený",
+                    "nástroj neověřený",
+                    language
+                )
+            case .unavailable:
+                statusText = pick(
+                    "tool not found",
+                    "nástroj sa nenašiel",
+                    "nástroj se nenašel",
+                    language
+                )
+            case .authenticationRequired:
+                statusText = pick(
+                    "sign-in required",
+                    "vyžaduje prihlásenie",
+                    "vyžaduje přihlášení",
+                    language
+                )
+            case .failed:
+                statusText = pick(
+                    "tool check failed",
+                    "kontrola nástroja zlyhala",
+                    "kontrola nástroje selhala",
+                    language
+                )
+            }
+            return join([
+                pick("Tool: \(tool)", "Nástroj: \(tool)", "Nástroj: \(tool)", language),
+                pick(
+                    "model: \(modelText)",
+                    "model: \(modelText)",
+                    "model: \(modelText)",
+                    language
+                ),
+                statusText,
+            ])
+        case let .optionalFeature(isEnabled, permission):
+            guard isEnabled else {
+                return pick("Turned off", "Vypnuté", "Vypnuto", language)
+            }
+            return join([
+                pick("Turned on", "Zapnuté", "Zapnuto", language),
+                permissionField(permission, language: language, capitalized: false),
+            ])
+        }
+    }
+
+    private static func permissionField(
+        _ permission: ReadinessPermissionStatus,
+        language: AppLanguage,
+        capitalized: Bool = true
+    ) -> String {
+        let value = permissionText(permission, language: language)
+        let label = capitalized
+            ? pick("Permission", "Oprávnenie", "Oprávnění", language)
+            : pick("permission", "oprávnenie", "oprávnění", language)
+        return "\(label): \(value)"
+    }
+
+    private static func permissionText(
+        _ permission: ReadinessPermissionStatus,
+        language: AppLanguage
+    ) -> String {
+        switch permission {
+        case .granted:
+            return pick("granted", "povolené", "povoleno", language)
+        case .denied:
+            return pick("denied", "zamietnuté", "zamítnuto", language)
+        case .notDetermined:
+            return pick(
+                "not requested yet",
+                "zatiaľ nevyžiadané",
+                "dosud nevyžádáno",
+                language
+            )
+        case .restricted:
+            return pick(
+                "restricted by policy",
+                "obmedzené politikou",
+                "omezeno politikou",
+                language
+            )
+        case .unknown:
+            return pick("not verified", "neoverené", "neověřeno", language)
+        }
+    }
+
+    private static func captureModeText(
+        _ captureMode: CaptureMode,
+        language: AppLanguage
+    ) -> String {
+        switch captureMode {
+        case .systemAndMicrophone:
+            return pick(
+                "system audio + microphone",
+                "systémový zvuk + mikrofón",
+                "systémový zvuk + mikrofon",
+                language
+            )
+        case .microphoneOnly:
+            return pick("microphone only", "iba mikrofón", "jen mikrofon", language)
+        }
+    }
+
+    private static func byteText(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private static func join(_ fields: [String]) -> String {
+        fields.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
     private static func pick(
         _ english: String,
         _ slovak: String,

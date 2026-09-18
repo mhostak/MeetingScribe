@@ -46,6 +46,7 @@ struct ProcessingNotification: Identifiable, Sendable {
 @MainActor
 protocol ProcessingNotifying {
     func requestAuthorization() async
+    func authorizationStatus() async -> UNAuthorizationStatus
     func send(_ notification: ProcessingNotification) async
 }
 
@@ -108,6 +109,12 @@ final class ProcessingNotificationService: NSObject, ProcessingNotifying, UNUser
     func requestAuthorization() async {
         installDelegate()
         _ = try? await center.requestAuthorization(options: [.alert, .sound])
+    }
+
+    /// Reads the delivery permission without requesting it, so readiness can
+    /// report a granted opt-in as ready instead of unverified.
+    func authorizationStatus() async -> UNAuthorizationStatus {
+        await center.authorizationStatus()
     }
 
     func send(_ notification: ProcessingNotification) async {

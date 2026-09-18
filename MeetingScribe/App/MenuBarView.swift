@@ -6,7 +6,6 @@ struct MenuBarView: View {
     let openSettingsAction: () -> Void
     let openRecordingsAction: () -> Void
     let openCalendarPickerAction: () -> Void
-    let openOnboardingAction: () -> Void
     @AppStorage("meetingNotesDisclosureIsExpanded") private var isMeetingNotesExpanded = false
     @State private var isEditingMeetingTitle = false
     @State private var meetingTitleDraft = ""
@@ -18,14 +17,12 @@ struct MenuBarView: View {
         appState: AppState,
         openSettingsAction: @escaping () -> Void = {},
         openRecordingsAction: @escaping () -> Void = {},
-        openCalendarPickerAction: @escaping () -> Void = {},
-        openOnboardingAction: @escaping () -> Void = {}
+        openCalendarPickerAction: @escaping () -> Void = {}
     ) {
         self.appState = appState
         self.openSettingsAction = openSettingsAction
         self.openRecordingsAction = openRecordingsAction
         self.openCalendarPickerAction = openCalendarPickerAction
-        self.openOnboardingAction = openOnboardingAction
     }
 
     var body: some View {
@@ -86,34 +83,113 @@ struct MenuBarView: View {
 
     private var processingQueueContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 7) {
                 Text("Processing queue").font(.headline)
+                Text(verbatim: "\(visibleProcessingJobs.count)")
+                    .font(.caption.weight(.semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityLabel(Text("Queued recordings"))
                 Spacer()
-                Text("\(visibleProcessingJobs.count)").monospacedDigit().foregroundStyle(.secondary)
             }
             if let reason = appState.processingPauseReason {
                 pausedBanner(reason)
             }
             ForEach(Array(visibleProcessingJobs.prefix(3)), id: \.metadata.id) { session in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
+                processingQueueRow(session)
+            }
+        }
+    }
+
+    /// The whole row opens the recording in the overview, so the queue needs no
+    /// button of its own beside the one already in the footer.
+    private func processingQueueRow(_ session: RecordingSession) -> some View {
+        let job = session.metadata.processing
+        let progress = job?.stageProgress(
+            analysisConfigured: session.metadata.analysisConfiguration != nil
+        )
+        return HStack(spacing: 8) {
+            Button {
+                appState.requestRecordingsOverview(for: session)
+                openRecordingsAction()
+            } label: {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(session.metadata.title).lineLimit(1)
-                        Text(LocalizedStringKey(
-                            session.metadata.processing?
-                                .statusLabel(queueStatus: appState.processingQueueStatus) ?? "Queued"
-                        ))
-                        .font(.caption).foregroundStyle(.secondary)
+                        if let progress, progress.isInFlight {
+                            processingStageBar(progress)
+                        }
+                        processingQueueCaption(job, progress: progress)
                     }
-                    Spacer()
-                    if session.metadata.processing?.state == .failed {
-                        Button("Retry") { Task { await appState.retryProcessing(session) } }
-                    } else if session.metadata.processing?.state == .running {
-                        ProgressView().controlSize(.small)
+                    Spacer(minLength: 4)
+                    if job?.state != .failed {
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                 }
+                .contentShape(Rectangle())
             }
-            Button("Show recordings", action: openRecordingsAction)
+            .buttonStyle(.plain)
+            .help("Show recording")
+
+            if job?.state == .failed {
+                Button("Retry") { Task { await appState.retryProcessing(session) } }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func processingQueueCaption(
+        _ job: ProcessingJob?,
+        progress: ProcessingStageProgress?
+    ) -> some View {
+        let label = LocalizedStringKey(
+            job?.statusLabel(queueStatus: appState.processingQueueStatus) ?? "Queued"
+        )
+        Group {
+            if let progress, let step = progress.currentStepNumber {
+                Text(label)
+                    + Text(verbatim: " · ")
+                    + Text("Step \(step) of \(progress.steps.count)")
+            } else {
+                Text(label)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    /// One segment per step this attempt will really run. There is no progress
+    /// fraction inside a step, so the bar states the step boundaries only.
+    private func processingStageBar(_ progress: ProcessingStageProgress) -> some View {
+        HStack(spacing: 3) {
+            ForEach(Array(progress.steps.enumerated()), id: \.element) { index, _ in
+                Capsule()
+                    .fill(segmentStyle(at: index, progress: progress))
+                    .frame(height: 4)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func segmentStyle(
+        at index: Int,
+        progress: ProcessingStageProgress
+    ) -> AnyShapeStyle {
+        if index == progress.failedIndex {
+            return AnyShapeStyle(Color.red)
+        }
+        if index == progress.activeIndex {
+            return AnyShapeStyle(Color.accentColor.opacity(0.45))
+        }
+        if index < progress.completedCount {
+            return AnyShapeStyle(Color.accentColor)
+        }
+        return AnyShapeStyle(.quaternary)
     }
 
     /// A paused scheduler leaves every job on `.queued`, so the reason and the
@@ -206,26 +282,6 @@ struct MenuBarView: View {
             Text("Make sure you have the required permission or participant consent.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-
-            HStack(spacing: 7) {
-                settingsChip(
-                    appState.fluidAudioASRDescriptor.displayName,
-                    icon: "waveform",
-                    section: "transcription",
-                    localizeTitle: false
-                )
-                settingsChip(
-                    appState.aiAnalysisEnabled ? "AI on" : "AI off",
-                    icon: "sparkles",
-                    section: "ai"
-                )
-                settingsChip(
-                    appState.outputFolderURL?.lastPathComponent ?? "Output folder",
-                    icon: "folder",
-                    section: "output",
-                    localizeTitle: appState.outputFolderURL == nil
-                )
-            }
         }
     }
 
@@ -236,7 +292,6 @@ struct MenuBarView: View {
                 recordingTitleEditor
                 clearCalendarSelectionButton
             }
-            calendarSelectionSummary
 
             if let startedAt = appState.currentSession?.metadata.startedAt {
                 RecordingDurationView(startedAt: startedAt)
@@ -534,8 +589,11 @@ struct MenuBarView: View {
 
                 Spacer()
 
+                // The entry is named after the readiness overview, so it has
+                // to open that and not the first-run guide.
                 Button {
-                    openOnboardingAction()
+                    appState.selectedSettingsSection = "readiness"
+                    openSettingsAction()
                 } label: {
                     Label("Readiness", systemImage: "checkmark.seal")
                 }
@@ -614,33 +672,6 @@ struct MenuBarView: View {
             return
         }
         openCalendarPickerAction()
-    }
-
-    private func settingsChip(
-        _ title: String,
-        icon: String,
-        section: String,
-        localizeTitle: Bool = true
-    ) -> some View {
-        Button {
-            appState.selectedSettingsSection = section
-            openSettingsAction()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                if localizeTitle {
-                    Text(LocalizedStringKey(title))
-                } else {
-                    Text(verbatim: title)
-                }
-            }
-            .font(.caption2)
-            .lineLimit(1)
-        }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(.quaternary, in: Capsule())
     }
 
     private func processingRow(_ step: ProcessingStep) -> some View {
@@ -850,26 +881,32 @@ private struct LiveCaptureDiagnosticsView: View {
                 )
                 .frame(height: 42)
 
-                VStack(spacing: 7) {
-                    if captureMode != .microphoneOnly {
-                        AudioCaptureStatusView(
-                            title: "System audio",
-                            health: snapshot.systemAudio.health(at: context.date),
-                            failureReason: snapshot.systemAudio.failureReason,
-                            required: true
-                        )
-                        .equatable()
-                    }
-                    AudioCaptureStatusView(
-                        title: "Microphone",
-                        health: snapshot.microphone.health(at: context.date),
-                        failureReason: snapshot.microphone.failureReason,
-                        required: captureMode == .microphoneOnly
-                    )
+                CaptureSourcesView(sources: sources(from: snapshot, at: context.date))
                     .equatable()
-                }
             }
         }
+    }
+
+    private func sources(
+        from snapshot: CaptureSessionDiagnostics,
+        at date: Date
+    ) -> [CaptureSourceStatus] {
+        var sources: [CaptureSourceStatus] = []
+        if captureMode != .microphoneOnly {
+            sources.append(CaptureSourceStatus(
+                title: "System audio",
+                health: snapshot.systemAudio.health(at: date),
+                failureReason: snapshot.systemAudio.failureReason,
+                required: true
+            ))
+        }
+        sources.append(CaptureSourceStatus(
+            title: "Microphone",
+            health: snapshot.microphone.health(at: date),
+            failureReason: snapshot.microphone.failureReason,
+            required: captureMode == .microphoneOnly
+        ))
+        return sources
     }
 
     private func liveRecordingAudioLevels(
@@ -883,33 +920,18 @@ private struct LiveCaptureDiagnosticsView: View {
     }
 }
 
-private struct AudioCaptureStatusView: View, Equatable {
+private struct CaptureSourceStatus: Identifiable, Equatable {
+    /// The localization key of the track name, which is also unique per row.
     let title: String
     let health: AudioCaptureHealth
     let failureReason: String?
     let required: Bool
 
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: audioIcon(for: health))
-                .foregroundStyle(health == .stalled || health == .failed ? .orange : .green)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(LocalizedStringKey(title)) + Text(": ") + Text(audioHealthKey(health))
-                if let failureReason {
-                    Text(verbatim: failureReason)
-                        .foregroundStyle(required ? .red : .orange)
-                        .lineLimit(2)
-                }
-            }
-            Spacer()
-        }
-        .font(.caption)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
-    }
+    var id: String { title }
 
-    private func audioHealthKey(_ health: AudioCaptureHealth) -> LocalizedStringKey {
+    var isHealthy: Bool { health == .active }
+
+    var healthKey: LocalizedStringKey {
         switch health {
         case .idle, .waitingForData: return "waiting for data"
         case .active: return "active"
@@ -918,12 +940,77 @@ private struct AudioCaptureStatusView: View, Equatable {
         }
     }
 
-    private func audioIcon(for health: AudioCaptureHealth) -> String {
+    var iconName: String {
         switch health {
         case .active: return "waveform.badge.checkmark"
         case .stalled, .failed: return "exclamationmark.triangle.fill"
         case .idle, .waitingForData: return "waveform"
         }
+    }
+
+    var tint: Color {
+        switch health {
+        case .active: return .green
+        case .stalled, .failed: return required ? .red : .orange
+        case .idle, .waitingForData: return .secondary
+        }
+    }
+}
+
+/// Both capture tracks in one row. A healthy track is carried by its icon
+/// alone; anything else spells the state out, because that is when the user
+/// has to read it.
+private struct CaptureSourcesView: View, Equatable {
+    let sources: [CaptureSourceStatus]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                ForEach(sources) { source in
+                    chip(source)
+                }
+            }
+
+            ForEach(sources) { source in
+                if let failureReason = source.failureReason {
+                    Text(verbatim: failureReason)
+                        .font(.caption2)
+                        .foregroundStyle(source.required ? .red : .orange)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func chip(_ source: CaptureSourceStatus) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: source.iconName)
+                .foregroundStyle(source.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(LocalizedStringKey(source.title))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                if !source.isHealthy {
+                    Text(source.healthKey)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            Text("\(Text(LocalizedStringKey(source.title))): \(Text(source.healthKey))")
+        )
     }
 }
 
