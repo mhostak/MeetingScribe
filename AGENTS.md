@@ -37,3 +37,34 @@ Whenever Codex pushes or otherwise lands a new MeetingScribe version on the Git 
 3. Terminate any running MeetingScribe instance, then replace `/Applications/MeetingScribe.app` with the newly built signed bundle. The user has explicitly authorized this replacement for future `main` updates in this project.
 4. Verify the installed `/Applications/MeetingScribe.app` again with the required `codesign` checks, launch that installed bundle, and confirm that it is the only MeetingScribe instance running.
 5. If building, signing, installation, verification, or launch fails, report the blocker clearly and do not launch an older, unsigned, differently signed, or wrong-commit build as a fallback.
+
+## Running the tests
+
+This project has **two** test suites, and they do not cover the same thing:
+
+- the Xcode scheme (`MeetingScribeTests` hosted by the app), which the assistant build daemon's
+  `test` job runs, and
+- the SwiftPM package (`Package.swift`), which CI runs as a separate `swift test` job.
+
+A green daemon run therefore does not mean CI is green. The suites compile a different set of
+sources — `Package.swift` excludes the SwiftUI entry point and several views — and `swift test`
+runs every test in one process with a different environment, so a change can pass one and fail the
+other. It has happened: a test-host guard keyed off `XCTestConfigurationFilePath` passed under
+Xcode and failed under `swift test`, which sets none of those variables. Run both before pushing a
+branch for review.
+
+Running `swift test` from a checkout under `~/Documents` may fail while signing the test bundle:
+
+```
+MeetingScribeTests.xctest: resource fork, Finder information, or similar detritus not allowed
+error: CodeSign ... failed with a nonzero exit code
+```
+
+Build outside the checkout instead, which avoids it reliably:
+
+```sh
+swift test --scratch-path /private/tmp/MeetingScribe-spm
+```
+
+`xattr -cr .build` sometimes clears the failure for one run, but it comes back on the next relink.
+The daemon and CI both build elsewhere and are unaffected.
