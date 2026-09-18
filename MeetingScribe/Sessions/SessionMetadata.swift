@@ -297,6 +297,12 @@ struct SessionOutputMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+struct SessionNotesMetadata: Codable, Equatable, Sendable {
+    var fileName: String = "notes.md"
+    var updatedAt: Date
+    var characterCount: Int
+}
+
 struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -309,6 +315,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var outputLanguage: OutputLanguage?
     var outputFileNameTemplate: String?
     var calendarEvent: CalendarEventSnapshot?
+    var notes: SessionNotesMetadata?
     var captureMode: CaptureMode?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
@@ -323,6 +330,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var analysis: SessionAnalysisMetadata?
     var output: SessionOutputMetadata?
     var recovery: SessionRecoveryMetadata?
+    var recoveryDetectedAt: Date?
     /// The current durable processing attempt. Omitted from legacy manifests.
     var processing: ProcessingJob?
     var failureReason: String?
@@ -339,6 +347,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         outputLanguage: OutputLanguage? = .slovak,
         outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        notes: SessionNotesMetadata? = nil,
         captureMode: CaptureMode? = .systemAndMicrophone,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
@@ -353,6 +362,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         analysis: SessionAnalysisMetadata? = nil,
         output: SessionOutputMetadata? = nil,
         recovery: SessionRecoveryMetadata? = nil,
+        recoveryDetectedAt: Date? = nil,
         processing: ProcessingJob? = nil,
         failureReason: String? = nil
     ) {
@@ -367,6 +377,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.outputLanguage = outputLanguage
         self.outputFileNameTemplate = outputFileNameTemplate
         self.calendarEvent = calendarEvent
+        self.notes = notes
         self.captureMode = captureMode
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
@@ -381,6 +392,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.analysis = analysis
         self.output = output
         self.recovery = recovery
+        self.recoveryDetectedAt = recoveryDetectedAt
         self.processing = processing
         self.failureReason = failureReason
     }

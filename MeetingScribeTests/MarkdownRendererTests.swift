@@ -7,6 +7,60 @@ final class MarkdownRendererTests: XCTestCase {
     private let startedAt = ISO8601DateFormatter().date(from: "2026-07-10T10:30:00Z")!
     private let endedAt = ISO8601DateFormatter().date(from: "2026-07-10T11:24:00Z")!
 
+    func testNotesAreRenderedBetweenMarkersWithLocalizedHeading() {
+        let expectedHeadings = [
+            (OutputLanguage.slovak, "Poznámky"),
+            (OutputLanguage.czech, "Poznámky"),
+            (OutputLanguage.english, "Notes"),
+        ]
+
+        for (language, heading) in expectedHeadings {
+            let session = SessionMetadata(
+                id: "recording-1",
+                title: "Notes heading",
+                status: .recorded,
+                createdAt: startedAt,
+                startedAt: startedAt,
+                endedAt: endedAt,
+                outputLanguage: language
+            )
+
+            let markdown = MarkdownRenderer(timeZone: utc).render(
+                session: session,
+                transcript: makeTranscript(segments: []),
+                notes: "First note"
+            )
+
+            XCTAssertTrue(markdown.contains(
+                "\(MarkdownRenderer.userNotesStartMarker)\n## \(heading)\nFirst note\n"
+                    + MarkdownRenderer.userNotesEndMarker
+            ))
+            XCTAssertTrue(markdown.contains("notes: true"))
+        }
+    }
+
+    func testWithoutNotesNoNotesSectionOrFrontmatterKeyIsRendered() {
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "No notes",
+            status: .recorded,
+            createdAt: startedAt,
+            startedAt: startedAt,
+            endedAt: endedAt
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: []),
+            notes: nil
+        )
+
+        XCTAssertFalse(markdown.contains(MarkdownRenderer.userNotesStartMarker))
+        XCTAssertFalse(markdown.contains(MarkdownRenderer.userNotesEndMarker))
+        XCTAssertFalse(markdown.contains("## Poznámky"))
+        XCTAssertFalse(markdown.contains("notes: true"))
+    }
+
     func testRenderCreatesFrontmatterSectionsAndTimestampedTranscript() {
         let session = SessionMetadata(
             id: "recording-1",

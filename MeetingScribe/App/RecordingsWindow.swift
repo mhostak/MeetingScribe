@@ -319,6 +319,8 @@ private struct RecordingSessionRow: View {
     @ObservedObject var appState: AppState
     let reload: () async -> Void
     @State private var reprocessingError: String?
+    @State private var notesPreview: String?
+    @State private var notesFileExists = true
 
     private let obsidianService = ObsidianService()
 
@@ -368,6 +370,14 @@ private struct RecordingSessionRow: View {
                     .truncationMode(.middle)
             }
 
+            if let notesPreview {
+                Label(notesPreview, systemImage: "note.text")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if let message {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .textSelection(.enabled)
@@ -388,6 +398,12 @@ private struct RecordingSessionRow: View {
                 ArtifactBadge(title: "Audio", state: entry.audio)
                 ArtifactBadge(title: "Transcript", state: entry.transcript)
                 ArtifactBadge(title: "Markdown", state: entry.markdown)
+                if entry.hasNotes {
+                    ArtifactBadge(
+                        title: "Notes",
+                        state: .available(entry.session.notesURL)
+                    )
+                }
                 if entry.session.metadata.keepsRecordingAudio {
                     Label("Audio kept", systemImage: "pin.fill")
                         .font(.caption2)
@@ -419,6 +435,17 @@ private struct RecordingSessionRow: View {
                     Label("Open Markdown", systemImage: "doc.text")
                 }
                 .disabled(markdownURL == nil)
+
+                if entry.hasNotes {
+                    Button {
+                        if notesFileExists {
+                            NSWorkspace.shared.open(notesURL)
+                        }
+                    } label: {
+                        Label("Open notes.md", systemImage: "note.text")
+                    }
+                    .disabled(!notesFileExists)
+                }
 
                 Button {
                     Task {
@@ -515,6 +542,9 @@ private struct RecordingSessionRow: View {
             }
         }
         .contextMenu { actionItems }
+        .task(id: entry.id) {
+            await loadNotesPreview()
+        }
     }
 
     private var timeText: String {
@@ -554,6 +584,34 @@ private struct RecordingSessionRow: View {
         markdownURL?.lastPathComponent ?? entry.session.metadata.output?.markdownFileName
     }
 
+    private var notesURL: URL {
+        entry.session.notesURL
+    }
+
+    @MainActor
+    private func loadNotesPreview() async {
+        guard entry.hasNotes else {
+            notesPreview = nil
+            notesFileExists = false
+            return
+        }
+
+        let url = notesURL
+        do {
+            let notes = try await Task.detached(priority: .utility) {
+                try String(contentsOf: url, encoding: .utf8)
+            }.value
+            notesFileExists = true
+            notesPreview = notes
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .prefix(3)
+                .joined(separator: "\n")
+        } catch {
+            notesPreview = nil
+            notesFileExists = false
+        }
+    }
+
     private var finderTarget: URL {
         markdownURL ?? entry.session.manifestURL
     }
@@ -577,6 +635,13 @@ private struct RecordingSessionRow: View {
                     NSWorkspace.shared.open(obsidianURL)
                 }
             }
+        }
+
+        if entry.hasNotes {
+            Button("Open notes.md") {
+                NSWorkspace.shared.open(notesURL)
+            }
+            .disabled(!notesFileExists)
         }
 
         if entry.audio.isAvailable {

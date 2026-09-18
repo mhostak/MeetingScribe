@@ -13,6 +13,7 @@ enum ProcessingLogEvent: String, Codable, Sendable {
     case transcriptionFailed
     case diarizationCompleted
     case diarizationFailed
+    case noteSaved
     case analysisCompleted
     case analysisFailed
     case exportCompleted
@@ -48,6 +49,7 @@ enum ProcessingLogAttribute: Sendable {
     case microphoneChunkCount(Int)
     case model(String)
     case segmentCount(Int)
+    case characterCount(Int)
     case errorDomain(String)
     case errorCode(Int)
 
@@ -74,6 +76,7 @@ enum ProcessingLogAttribute: Sendable {
         case let .microphoneChunkCount(value): return ("microphoneChunkCount", String(value))
         case let .model(value): return ("model", value)
         case let .segmentCount(value): return ("segmentCount", String(value))
+        case let .characterCount(value): return ("characterCount", String(value))
         case let .errorDomain(value): return ("errorDomain", value)
         case let .errorCode(value): return ("errorCode", String(value))
         }

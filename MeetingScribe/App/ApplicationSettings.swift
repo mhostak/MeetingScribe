@@ -57,6 +57,7 @@ enum AppUserMessage: Equatable, Sendable {
     case captureStalledSafeStop
     case lowStorageSafeStop
     case storageCheckFailedSafeStop
+    case recordingOwnershipUpdateFailed(String)
     case chooseOutputFolderTitle
     case chooseAnalysisExecutableTitle(String)
     case choose
@@ -222,6 +223,13 @@ enum AppLocalization {
                 "Recording was stopped safely because free disk space could not be verified. Existing audio was preserved.",
                 "Nahrávanie bolo bezpečne zastavené, pretože voľné miesto na disku nebolo možné overiť. Existujúce audio zostalo zachované.",
                 "Nahrávání bylo bezpečně zastaveno, protože volné místo na disku nebylo možné ověřit. Existující audio zůstalo zachované.",
+                language
+            )
+        case let .recordingOwnershipUpdateFailed(detail):
+            return pick(
+                "Recording ownership could not be updated. Recording continues: \(detail)",
+                "Vlastníctvo nahrávky sa nepodarilo aktualizovať. Nahrávanie pokračuje: \(detail)",
+                "Vlastnictví nahrávky se nepodařilo aktualizovat. Nahrávání pokračuje: \(detail)",
                 language
             )
         case .chooseOutputFolderTitle:

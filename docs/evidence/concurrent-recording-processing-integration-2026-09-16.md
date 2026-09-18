@@ -17,10 +17,10 @@ Integration branch: `codex/concurrent-integration`, based on `origin/main`
   283 tests, 6 skipped, 0 failures. Log:
   `/private/tmp/MeetingScribe-concurrent-xcode-tests-fixed.log`.
 - The built app passed `codesign --verify --deep --strict --verbose=4`.
-  `codesign -dv --verbose=4` reported `TeamIdentifier=H8LTS9AT3K` and the
-  configured Apple Development authority. The extracted leaf certificate's
-  SHA-1 fingerprint matched the local signing configuration:
-  `4EC5B29E0C39402AE3F49126C45C43B9C9987EB4`.
+  `codesign -dv --verbose=4` reported the Team ID and Apple Development
+  authority configured in the unversioned `Config/Signing.local.xcconfig`, and
+  the extracted leaf certificate's SHA-1 fingerprint matched it. The values
+  themselves are local signing metadata and stay out of this repository.
 - `git diff --check`, project plist lint, and localization JSON parsing passed.
 
 An earlier custom `async @MainActor` executable entry point caused Xcode-hosted

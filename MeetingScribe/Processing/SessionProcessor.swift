@@ -59,9 +59,14 @@ struct SessionAnalysisRun: Sendable {
 
 struct CLIAnalysisService: SessionAnalyzing {
     private let runner: any AnalysisCommandRunning
+    private let processingFiles: any ProcessingFileServicing
 
-    init(runner: any AnalysisCommandRunning = AnalysisProcessRunner()) {
+    init(
+        runner: any AnalysisCommandRunning = AnalysisProcessRunner(),
+        processingFiles: any ProcessingFileServicing = ProcessingFileService()
+    ) {
         self.runner = runner
+        self.processingFiles = processingFiles
     }
 
     func analyze(
@@ -87,14 +92,21 @@ struct CLIAnalysisService: SessionAnalyzing {
         )
         let toolVersion = try await provider.toolVersion()
         try Task.checkCancellation()
+        let userNotes = await processingFiles.loadUserNotes(from: session)
+            .map(AnalysisPrompt.truncateUserNotes)
+        let promptHasUserNotesPlaceholder = AnalysisPrompt.containsUserNotesPlaceholder(
+            template: configuration.prompt
+        )
         let prompt = AnalysisPrompt.render(
             template: configuration.prompt,
-            session: session.metadata
+            session: session.metadata,
+            userNotes: promptHasUserNotesPlaceholder ? userNotes : nil
         )
         let run = try await MeetingAnalyzer(provider: provider).analyze(
             session: session.metadata,
             transcript: transcript,
-            userPrompt: prompt
+            userPrompt: prompt,
+            userNotes: promptHasUserNotesPlaceholder ? nil : userNotes
         )
         try Task.checkCancellation()
         let validated = try AnalysisMarkdownSchema.validate(run.analysis)
@@ -302,7 +314,10 @@ actor SessionProcessor: SessionProcessing {
         self.audioFinalizer = audioFinalizer
         self.transcriber = transcriber
         self.modelResolver = modelResolver
-        analyzer = CLIAnalysisService(runner: analysisCommandRunner)
+        analyzer = CLIAnalysisService(
+            runner: analysisCommandRunner,
+            processingFiles: fileService
+        )
         processingFiles = fileService
         self.audioSourceCleaner = audioSourceCleaner
         self.revisionService = revisionService
@@ -712,7 +727,9 @@ actor SessionProcessor: SessionProcessing {
             let output = try await withSecurityScopedAccess(to: destination) {
                 try await self.processingFiles.exportMarkdown(
                     session: session.metadata, transcript: transcript,
-                    utteranceTranscript: utterances, analysis: analysis, to: destination
+                    utteranceTranscript: utterances, analysis: analysis,
+                    notes: await self.processingFiles.loadUserNotes(from: session),
+                    to: destination
                 )
             }
             try Task.checkCancellation()

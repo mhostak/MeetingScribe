@@ -5,6 +5,7 @@ actor SessionManager {
 
     private let fileManager: FileManager
     private var storageGuard: StorageGuard
+    private let ownership: RecordingOwnership
     private let recoveryScanner: SessionRecoveryScanner
     private var activeSession: RecordingSession?
 
@@ -12,12 +13,14 @@ actor SessionManager {
         recordingsRoot: URL = SessionManager.defaultRecordingsRoot,
         fileManager: FileManager = .default,
         storageGuard: StorageGuard = StorageGuard(),
-        recoveryScanner: SessionRecoveryScanner? = nil
+        recoveryScanner: SessionRecoveryScanner? = nil,
+        ownership: RecordingOwnership = RecordingOwnership()
     ) {
         self.recordingsRoot = recordingsRoot
         self.fileManager = fileManager
         self.storageGuard = storageGuard
-        self.recoveryScanner = recoveryScanner ?? SessionRecoveryScanner(fileManager: fileManager)
+        self.ownership = ownership
+        self.recoveryScanner = recoveryScanner ?? SessionRecoveryScanner(fileManager: fileManager, ownership: ownership)
     }
 
     static var defaultRecordingsRoot: URL {
@@ -40,6 +43,7 @@ actor SessionManager {
         outputLanguage: OutputLanguage = .slovak,
         outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        notes: String? = nil,
         analysisConfiguration: SessionAnalysisConfiguration? = nil,
         now: Date = Date()
     ) throws -> RecordingSession {
@@ -68,9 +72,26 @@ actor SessionManager {
             captureMode: .systemAndMicrophone,
             analysisConfiguration: analysisConfiguration
         )
-        let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
+        var session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 
-        try persist(session)
+        try ownership.claim(in: session.directoryURL)
+        do {
+            try persist(session)
+            if let notes {
+                let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedNotes.isEmpty {
+                    try Data(notes.utf8).write(to: session.notesURL, options: .atomic)
+                    session.metadata.notes = SessionNotesMetadata(
+                        updatedAt: now,
+                        characterCount: notes.count
+                    )
+                    try persist(session)
+                }
+            }
+        } catch {
+            try? ownership.release(in: session.directoryURL)
+            throw error
+        }
         activeSession = session
         return session
     }
@@ -111,6 +132,8 @@ actor SessionManager {
                     ?? "Recovery processing did not produce a completed Markdown output."
         }
         try persist(session)
+        // A leftover advisory claim expires; it must not keep capture active.
+        try? ownership.release(in: session.directoryURL)
         activeSession = nil
         return session
     }
@@ -154,6 +177,8 @@ actor SessionManager {
             configuration: configuration
         )
         try persist(session)
+        // A leftover advisory claim expires; it must not keep capture active.
+        try? ownership.release(in: session.directoryURL)
         activeSession = nil
         return session
     }
@@ -167,53 +192,60 @@ actor SessionManager {
         configuration: ProcessingJobConfiguration,
         now: Date = Date()
     ) throws -> RecordingSession {
-        var session = try loadSession(id: sessionID)
-        guard activeSession?.metadata.id != sessionID else {
-            throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
+        let directory = try sessionDirectoryURL(for: sessionID)
+        guard fileManager.fileExists(atPath: directory.path) else {
+            throw ProcessingJobRepositoryError.sessionNotFound(sessionID)
         }
-        guard session.metadata.status != .recording || kind == .recovery else {
-            throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
-        }
-        if let job = session.metadata.processing {
-            guard job.schemaVersion == ProcessingJob.currentSchemaVersion else {
-                throw ProcessingJobRepositoryError.unsupportedSchema(
-                    sessionID: sessionID,
-                    schemaVersion: job.schemaVersion
-                )
+        return try ownership.withExclusiveAccess(to: directory) {
+            var session = try loadSession(id: sessionID)
+            guard activeSession?.metadata.id != sessionID,
+                  ownership.classification(of: session.directoryURL) != .claimedByAnotherLiveProcess else {
+                throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
             }
-            if !job.state.isTerminal {
-                return session
+            guard session.metadata.status != .recording || kind == .recovery else {
+                throw ProcessingJobRepositoryError.sessionStillRecording(sessionID)
             }
-        }
+            if let job = session.metadata.processing {
+                guard job.schemaVersion == ProcessingJob.currentSchemaVersion else {
+                    throw ProcessingJobRepositoryError.unsupportedSchema(
+                        sessionID: sessionID,
+                        schemaVersion: job.schemaVersion
+                    )
+                }
+                if !job.state.isTerminal {
+                    return session
+                }
+            }
 
-        if kind == .recovery {
-            let recoveredAt = recoveryScanner.candidate(
-                recordingsRoot: recordingsRoot,
-                id: sessionID,
-                now: now
-            )?.suggestedEndAt ?? session.metadata.startedAt ?? session.metadata.createdAt
-            let originalStatus = session.metadata.recovery?.originalStatus ?? session.metadata.status
-            let attempts = session.metadata.recovery?.attemptCount ?? 0
-            session.metadata.status = .recorded
-            session.metadata.endedAt = session.metadata.endedAt ?? recoveredAt
-            session.metadata.recovery = SessionRecoveryMetadata(
-                status: .inProgress,
-                originalStatus: originalStatus,
-                detectedAt: session.metadata.recovery?.detectedAt ?? now,
-                startedAt: now,
-                completedAt: nil,
-                attemptCount: attempts + 1,
-                failureReason: nil
+            if kind == .recovery {
+                let recoveredAt = recoveryScanner.candidate(
+                    recordingsRoot: recordingsRoot,
+                    id: sessionID,
+                    now: now
+                )?.suggestedEndAt ?? session.metadata.startedAt ?? session.metadata.createdAt
+                let originalStatus = session.metadata.recovery?.originalStatus ?? session.metadata.status
+                let attempts = session.metadata.recovery?.attemptCount ?? 0
+                session.metadata.status = .recorded
+                session.metadata.endedAt = session.metadata.endedAt ?? recoveredAt
+                session.metadata.recovery = SessionRecoveryMetadata(
+                    status: .inProgress,
+                    originalStatus: originalStatus,
+                    detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
+                    startedAt: now,
+                    completedAt: nil,
+                    attemptCount: attempts + 1,
+                    failureReason: nil
+                )
+                session.metadata.failureReason = nil
+            }
+            session.metadata.processing = ProcessingJob(
+                kind: kind,
+                enqueuedAt: now,
+                configuration: configuration
             )
-            session.metadata.failureReason = nil
+            try persist(session)
+            return session
         }
-        session.metadata.processing = ProcessingJob(
-            kind: kind,
-            enqueuedAt: now,
-            configuration: configuration
-        )
-        try persist(session)
-        return session
     }
 
     /// Applies a checkpoint and any artifacts to the latest on-disk manifest.
@@ -405,8 +437,20 @@ actor SessionManager {
             session.metadata.recovery?.failureReason = reason
         }
         try persist(session)
+        // A leftover advisory claim expires; it must not keep capture active.
+        try? ownership.release(in: session.directoryURL)
         activeSession = nil
         return session
+    }
+
+    func refreshRecordingOwnership() throws {
+        guard let session = activeSession else { return }
+        try ownership.refresh(in: session.directoryURL)
+    }
+
+    func reclaimRecordingOwnership() throws {
+        guard let session = activeSession else { return }
+        try ownership.claim(in: session.directoryURL)
     }
 
     func currentSession() -> RecordingSession? {
@@ -424,6 +468,29 @@ actor SessionManager {
         }
 
         session.metadata.title = normalizedTitle
+        try persist(session)
+        activeSession = session
+        return session
+    }
+
+    func updateActiveSessionNotes(_ text: String) throws -> RecordingSession {
+        guard var session = activeSession else {
+            throw SessionManagerError.noActiveSession
+        }
+
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isEmpty {
+            if fileManager.fileExists(atPath: session.notesURL.path) {
+                try fileManager.removeItem(at: session.notesURL)
+            }
+            session.metadata.notes = nil
+        } else {
+            try Data(text.utf8).write(to: session.notesURL, options: .atomic)
+            session.metadata.notes = SessionNotesMetadata(
+                updatedAt: Date(),
+                characterCount: text.count
+            )
+        }
         try persist(session)
         activeSession = session
         return session
@@ -488,7 +555,8 @@ actor SessionManager {
         let processingIDs = Set(processingSessions.map(\.metadata.id))
         let excludedIDs = processingIDs.union(activeSession.map { [$0.metadata.id] } ?? [])
         let unsupportedIssues = processingSessions.compactMap { session -> SessionRecoveryIssue? in
-            guard let job = session.metadata.processing,
+            guard !ownership.classification(of: session.directoryURL).isLive,
+                  let job = session.metadata.processing,
                   job.schemaVersion != ProcessingJob.currentSchemaVersion else {
                 return nil
             }
@@ -497,11 +565,32 @@ actor SessionManager {
                 reason: "Processing job schema version \(job.schemaVersion) is unsupported. The job was not resumed."
             )
         }
-        guard !excludedIDs.isEmpty || !unsupportedIssues.isEmpty else { return result }
         return SessionRecoveryScanResult(
-            candidates: result.candidates.filter { !excludedIDs.contains($0.id) },
-            issues: (result.issues + unsupportedIssues).sorted { $0.directoryName < $1.directoryName }
+            candidates: result.candidates.filter {
+                !excludedIDs.contains($0.id) && !ownership.classification(of: $0.session.directoryURL).isLive
+            },
+            issues: (result.issues + unsupportedIssues).filter {
+                $0.directoryName != activeSession?.metadata.id
+                    && !ownership.classification(of: recordingsRoot.appendingPathComponent($0.directoryName)).isLive
+            }.sorted { $0.directoryName < $1.directoryName }
         )
+    }
+
+    func recordRecoveryDetection(id: String, now: Date = Date()) throws -> Bool {
+        // Reload through the candidate gate so stale scans cannot change active,
+        // owned, queued, closed, or completed sessions.
+        guard let candidate = try recoveryCandidate(id: id, now: now) else { return false }
+        var session = candidate.session
+        if let detectedAt = session.metadata.recoveryDetectedAt {
+            guard let recovery = session.metadata.recovery,
+                  recovery.status == .failed,
+                  let failedAt = recovery.completedAt,
+                  failedAt > detectedAt else { return false }
+        }
+
+        session.metadata.recoveryDetectedAt = now
+        try persist(session)
+        return true
     }
 
     func beginRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
@@ -527,14 +616,20 @@ actor SessionManager {
         session.metadata.recovery = SessionRecoveryMetadata(
             status: .inProgress,
             originalStatus: originalStatus,
-            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
             startedAt: now,
             completedAt: nil,
             attemptCount: attempts + 1,
             failureReason: nil
         )
         session.metadata.failureReason = nil
-        try persist(session)
+        try ownership.claim(in: session.directoryURL)
+        do {
+            try persist(session)
+        } catch {
+            try? ownership.release(in: session.directoryURL)
+            throw error
+        }
         activeSession = session
         return session
     }
@@ -576,7 +671,7 @@ actor SessionManager {
         session.metadata.recovery = SessionRecoveryMetadata(
             status: .closed,
             originalStatus: originalStatus,
-            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
             startedAt: session.metadata.recovery?.startedAt,
             completedAt: now,
             attemptCount: session.metadata.recovery?.attemptCount ?? 0,

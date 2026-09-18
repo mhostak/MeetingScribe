@@ -175,6 +175,205 @@ final class SessionManagerTests: XCTestCase {
         )
     }
 
+    func testStartWithNotesWritesNotesFileAndManifestField() async throws {
+        let manager = makeManager()
+        let startedAt = Date(timeIntervalSince1970: 1_725_876_600)
+
+        let started = try await manager.startSession(
+            title: "Notes meeting",
+            notes: "  Agenda and decisions  ",
+            now: startedAt
+        )
+
+        XCTAssertEqual(try String(contentsOf: started.notesURL, encoding: .utf8), "  Agenda and decisions  ")
+        XCTAssertEqual(started.metadata.notes?.fileName, "notes.md")
+        XCTAssertEqual(started.metadata.notes?.updatedAt, startedAt)
+        XCTAssertEqual(started.metadata.notes?.characterCount, "  Agenda and decisions  ".count)
+
+        let metadata = try decodeMetadata(at: started.manifestURL)
+        XCTAssertEqual(metadata.notes, started.metadata.notes)
+    }
+
+    func testStartWithEmptyOrNilNotesDoesNotWriteFile() async throws {
+        for notes: String? in ["", "  \n ", nil] {
+            let manager = makeManager()
+            let started = try await manager.startSession(
+                title: "No notes",
+                notes: notes
+            )
+
+            XCTAssertFalse(FileManager.default.fileExists(atPath: started.notesURL.path))
+            XCTAssertNil(started.metadata.notes)
+            XCTAssertNil(try decodeMetadata(at: started.manifestURL).notes)
+            _ = try await manager.stopSession()
+        }
+    }
+
+    func testUpdateActiveSessionNotesOverwritesFileAndUpdatesMetadata() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(
+            title: "Notes update",
+            notes: "First note",
+            now: Date(timeIntervalSince1970: 1_725_876_600)
+        )
+
+        let updated = try await manager.updateActiveSessionNotes("  Second note  ")
+        let active = await manager.currentSession()
+
+        XCTAssertEqual(try String(contentsOf: started.notesURL, encoding: .utf8), "  Second note  ")
+        XCTAssertEqual(updated.metadata.notes?.characterCount, "  Second note  ".count)
+        XCTAssertGreaterThan(
+            try XCTUnwrap(updated.metadata.notes).updatedAt,
+            try XCTUnwrap(started.metadata.notes).updatedAt
+        )
+        XCTAssertEqual(active?.metadata.notes, updated.metadata.notes)
+        XCTAssertEqual(try decodeMetadata(at: started.manifestURL).notes?.characterCount, updated.metadata.notes?.characterCount)
+    }
+
+    func testUpdateActiveSessionNotesWithWhitespaceRemovesFileAndMetadata() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(title: "Notes removal", notes: "Remove me")
+
+        let updated = try await manager.updateActiveSessionNotes("  \n ")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.notesURL.path))
+        XCTAssertNil(updated.metadata.notes)
+        XCTAssertNil(try decodeMetadata(at: started.manifestURL).notes)
+    }
+
+    func testProcessingRecoveryAndCleanupPreserveSessionNotes() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(
+            title: "Notes lifecycle",
+            notes: "Agenda and decisions",
+            now: Date(timeIntervalSince1970: 1_725_876_600)
+        )
+        let expectedNotes = try XCTUnwrap(started.metadata.notes)
+
+        func assertPersistedNotes() throws {
+            XCTAssertEqual(try decodeMetadata(at: started.manifestURL).notes, expectedNotes)
+        }
+
+        try assertPersistedNotes()
+        try Data(repeating: 1, count: 32).write(to: started.systemAudioURL)
+        let inProgressScan = try await manager.scanForRecovery()
+        XCTAssertTrue(inProgressScan.candidates.isEmpty)
+        try assertPersistedNotes()
+
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: started.metadata.startedAt ?? Date(timeIntervalSince1970: 1_725_876_660),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        try assertPersistedNotes()
+
+        _ = try await manager.updateProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            patch: ProcessingJobPatch(state: .running, stage: .transcribing, checkpoint: .transcribing)
+        )
+        try assertPersistedNotes()
+
+        let transcription = SessionTranscriptionMetadata(
+            status: .completed,
+            model: "test-model",
+            systemSegmentCount: 1,
+            microphoneSegmentCount: 1,
+            warnings: [],
+            failureReason: nil
+        )
+        _ = try await manager.updateProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            patch: ProcessingJobPatch(stage: .analyzing, checkpoint: .analyzing),
+            artifactMetadata: ProcessingArtifactMetadata(transcription: transcription)
+        )
+        try assertPersistedNotes()
+
+        try Data(repeating: 2, count: 32).write(to: started.microphoneAudioURL)
+        try TranscriptJSONCoder.makeEncoder()
+            .encode(MergedTranscript(
+                sessionID: started.metadata.id,
+                title: started.metadata.title,
+                completedAt: Date(timeIntervalSince1970: 1_725_876_700),
+                tracks: [],
+                segments: []
+            ))
+            .write(to: started.mergedTranscriptURL, options: .atomic)
+        let markdownURL = started.directoryURL.appendingPathComponent("meeting.md")
+        try Data("# Meeting".utf8).write(to: markdownURL)
+        let output = SessionOutputMetadata(
+            status: .completed,
+            markdownFileName: markdownURL.lastPathComponent,
+            markdownPath: markdownURL.path,
+            exportedAt: Date(timeIntervalSince1970: 1_725_876_800),
+            failureReason: nil
+        )
+        _ = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata(
+                transcription: transcription,
+                output: output
+            )
+        )
+        try assertPersistedNotes()
+
+        let cleanupService = RecordingAudioCleanupService(recordingsRoot: temporaryRoot)
+        let cleanupPlan = try await cleanupService.scan()
+        XCTAssertEqual(cleanupPlan.candidates.map(\.id), [started.metadata.id])
+        try assertPersistedNotes()
+
+        _ = try await cleanupService.execute(cleanupPlan, trigger: .manual)
+        try assertPersistedNotes()
+
+        var interruptedCleanup = try decodeMetadata(at: started.manifestURL)
+        interruptedCleanup.recordingAudioRetention?.cleanupStatus = .inProgress
+        interruptedCleanup.recordingAudioRetention?.deletedFiles = []
+        interruptedCleanup.recordingAudioRetention?.reclaimedBytes = 0
+        try SessionJSONCoder.makeEncoder().encode(interruptedCleanup)
+            .write(to: started.manifestURL, options: .atomic)
+
+        _ = try await cleanupService.scan()
+        try assertPersistedNotes()
+        XCTAssertEqual(
+            try decodeMetadata(at: started.manifestURL).recordingAudioRetention?.cleanupStatus,
+            .purged
+        )
+    }
+
+    func testManifestWithoutNotesKeyStillDecodes() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(title: "Legacy notes")
+        let data = try Data(contentsOf: started.manifestURL)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "notes")
+
+        let metadata = try SessionJSONCoder.makeDecoder().decode(
+            SessionMetadata.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertEqual(metadata.schemaVersion, 16)
+        XCTAssertNil(metadata.notes)
+    }
+
+    func testOnboardingTestTitleDoesNotCreateNotes() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(title: "MeetingScribe Setup Test")
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: started.notesURL.path))
+        XCTAssertNil(started.metadata.notes)
+    }
+
     func testRenameActiveSessionRejectsEmptyTitle() async throws {
         let manager = SessionManager(recordingsRoot: temporaryRoot)
         let started = try await manager.startSession(title: "Original title")
@@ -734,6 +933,13 @@ final class SessionManagerTests: XCTestCase {
         return try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: data)
     }
 
+    private func makeManager() -> SessionManager {
+        SessionManager(
+            recordingsRoot: temporaryRoot,
+            storageGuard: StorageGuard(provider: SufficientStorageCapacityProvider())
+        )
+    }
+
     private func makeDiagnostics() -> CaptureSessionDiagnostics {
         CaptureSessionDiagnostics(
             systemAudio: AudioCaptureDiagnostics(
@@ -783,5 +989,11 @@ final class SessionManagerTests: XCTestCase {
             ],
             shareParticipantNamesWithAnalysis: false
         )
+    }
+}
+
+private struct SufficientStorageCapacityProvider: StorageCapacityProviding {
+    func availableCapacity(at url: URL) throws -> Int64 {
+        2_147_483_648
     }
 }

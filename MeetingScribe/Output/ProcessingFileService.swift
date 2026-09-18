@@ -9,6 +9,8 @@ struct RecoveredProcessingArtifacts: Equatable, Sendable {
 protocol ProcessingFileServicing: Sendable {
     func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts?
 
+    func loadUserNotes(from session: RecordingSession) async -> String?
+
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws
 
     func exportMarkdown(
@@ -16,6 +18,7 @@ protocol ProcessingFileServicing: Sendable {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         analysis: AIAnalysisArtifact?,
+        notes: String?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult
 }
@@ -33,6 +36,7 @@ extension ProcessingFileServicing {
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
             analysis: analysis,
+            notes: nil,
             to: directoryURL
         )
     }
@@ -48,6 +52,7 @@ extension ProcessingFileServicing {
             transcript: transcript,
             utteranceTranscript: nil,
             analysis: analysis,
+            notes: nil,
             to: directoryURL
         )
     }
@@ -118,11 +123,23 @@ actor ProcessingFileService: ProcessingFileServicing {
         try data.write(to: url, options: .atomic)
     }
 
+    func loadUserNotes(from session: RecordingSession) async -> String? {
+        let notesURL = session.notesURL
+        guard fileManager.fileExists(atPath: notesURL.path),
+              let notesData = try? Data(contentsOf: notesURL),
+              let notes = String(data: notesData, encoding: .utf8),
+              !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return notes
+    }
+
     func exportMarkdown(
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         analysis: AIAnalysisArtifact?,
+        notes: String?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         return try outputExporter.export(
@@ -130,8 +147,8 @@ actor ProcessingFileService: ProcessingFileServicing {
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
             analysis: analysis,
+            notes: notes,
             to: directoryURL
         )
     }
-
 }

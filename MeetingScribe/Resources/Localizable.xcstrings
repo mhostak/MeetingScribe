@@ -288,7 +288,6 @@
     "Queued recordings" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Nahrávky ve frontě"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Nahrávky vo fronte"}}}},
     "Show recording" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Zobrazit nahrávku"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Zobraziť nahrávku"}}}},
     "Recordings folder" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Složka nahrávek"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Priečinok nahrávok"}}}},
-    "Open recordings folder" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Otevřít složku nahrávek"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Otvoriť priečinok nahrávok"}}}},
     "Queued" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Ve frontě"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Vo fronte"}}}},
     "Resume processing" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Obnovit zpracování"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Obnoviť spracovanie"}}}},
     "Retry" : {"localizations" : {"cs" : {"stringUnit" : {"state" : "translated", "value" : "Zkusit znovu"}}, "sk" : {"stringUnit" : {"state" : "translated", "value" : "Skúsiť znova"}}}},
@@ -391,6 +390,15 @@
     "The recording test is upcoming." : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Test nahrávání přibude později." } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Test nahrávania pribudne neskôr." } } } }
     ,
     "Choose output folder…" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Zvolit výstupní složku…" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Zvoliť výstupný priečinok…" } } } }
+    ,
+    "Meeting notes" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Poznámky k meetingu" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Poznámky k meetingu" } } } },
+    "Notes" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Poznámky" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Poznámky" } } } },
+    "Insert note timestamp" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Vložit časovou značku poznámky" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Vložiť časovú známku poznámky" } } } },
+    "Saving…" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Ukládám…" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Ukladám…" } } } },
+    "Saved %@" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Uloženo %@" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Uložené %@" } } } },
+    "Saving failed — text stays in the editor" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Uložení se nezdařilo — text zůstává v popoveru" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Uloženie zlyhalo — text zostáva v popoveri" } } } },
+    "Open notes.md" : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Otevřít notes.md" } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Otvoriť notes.md" } } } },
+    "When AI analysis is enabled, the meeting notes are sent to the selected CLI provider together with the transcript." : { "localizations" : { "cs" : { "stringUnit" : { "state" : "translated", "value" : "Pokud je AI analýza zapnutá, poznámky z meetingu se společně s přepisem odesílají vybranému poskytovateli CLI." } }, "sk" : { "stringUnit" : { "state" : "translated", "value" : "Keď je AI analýza zapnutá, poznámky z meetingu sa spolu s prepisom odosielajú vybranému poskytovateľovi CLI." } } } }
   },
   "version" : "1.0"
 }

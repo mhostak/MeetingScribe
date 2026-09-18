@@ -1,10 +1,10 @@
 # Onboarding a kontrola pripravenosti
 
-Návrh a zadanie pre BlueCode, 16. 9. 2026. Implementácia bola delegovaná cez BlueCode Responses transport v Codex CLI po tom, čo preklad OpenAI → Anthropic v gatewayi blokoval viacstupňový tool-use cez `xclaude`. Poskytovateľ BlueCode zostal zachovaný. Kód všetkých troch úloh je integrovaný s novšou frontou spracovania z `origin/main` (`cb11b9f`). Nezávisle prešlo 319 SwiftPM testov (6 preskočených) a nepodpísané CI zostavenie schémy MeetingScribe. Manuálny zvukový test na podpísanej aplikácii ešte neprebehol.
+Návrh a zadanie pre implementujúceho agenta, 16. 9. 2026. Implementácia bola delegovaná podľa lokálnej konfigurácie mimo tohto repozitára. Kód všetkých troch úloh je integrovaný s novšou frontou spracovania z `origin/main` (`cb11b9f`). Nezávisle prešlo 319 SwiftPM testov (6 preskočených) a nepodpísané CI zostavenie schémy MeetingScribe. Manuálny zvukový test na podpísanej aplikácii ešte neprebehol.
 
 ## Podklad a súčasný stav
 
-Zdroj: `/Users/martin_hostak/Documents/md-wiki/MeetingScribe/napady-na-vylepseni.md`, položka „Onboarding a kontrola připravenosti“ a priorita A „Onboarding při prvním spuštění“.
+Zdroj: interná poznámka k nápadom na vylepšenia (mimo tohto repozitára), položka „Onboarding a kontrola připravenosti“ a priorita A „Onboarding při prvním spuštění“.
 Overený lokálny HEAD: `7109bd92132ed0d917fdaed48fb75b6133e4cba4`.
 
 Vault žiada vysvetlenie aplikácie, oprávnenia, výstup, modely, kontrolu pripravenosti a krátky test. Jeho zmienka o inštalácii **oboch modelov** nezodpovedá tomuto checkoutu: `FluidAudioModelDescriptor.supported` a nastavenia teraz ponúkajú jeden transkripčný model Parakeet v3. Návrh preto používa aktuálny register podporovaných modelov; nepridáva druhý model podľa historického textu.
@@ -68,11 +68,14 @@ Chýbajúci model umožní audio test s označením „Prepis nebol overený“.
 
 Mimo rozsahu: výber audio zariadení/aplikácií, nový capture režim, súbežné spracovanie, nové modely, správa rečníkov a distribúcia aplikácie.
 
-## Zadanie pre BlueCode
+## Zadanie pre implementujúceho agenta
 
-Použi existujúci wrapper `bash /Users/martin_hostak/.local/bin/xclaude -p '<zadanie>' --model DeepSeek-V4-Flash --output-format text`. Pre komplexné ladenie/refaktoring použi `GLM-5.3`, ak je dostupný. Do každého zadania vlož tento dokument a aktuálny `AGENTS.md`; neodovzdávaj prihlasovacie údaje. Pri nedostupnom BlueCode oznám blocker, nemen poskytovateľa.
+Delegovanie implementácie rieš podľa lokálnej konfigurácie mimo tohto
+repozitára. Do každého zadania vlož tento dokument a aktuálny `AGENTS.md`;
+neodovzdávaj prihlasovacie údaje. Pri nedostupnom poskytovateľovi oznám
+blocker namiesto tichej zmeny.
 
-Pracuj postupne v samostatnej vetve/izolovanom worktree s overeným východiskovým commitom. Zachovaj existujúce používateľské zmeny vrátane AGENTS.md, dist/ a ostatných návrhov v docs/. Pri súbežných úlohách je oddelený worktree povinný. Nepushuj, nenasadzuj a nemeň globálnu konfiguráciu poskytovateľa. Nepoužívaj XCLAUDE_BYPASS ani permission-bypass flags.
+Pracuj postupne v samostatnej vetve/izolovanom worktree s overeným východiskovým commitom. Zachovaj existujúce používateľské zmeny vrátane AGENTS.md, dist/ a ostatných návrhov v docs/. Pri súbežných úlohách je oddelený worktree povinný. Nepushuj, nenasadzuj a nemeň globálnu konfiguráciu poskytovateľa. Nepoužívaj žiadne permission-bypass flags.
 
 ### Úloha 1 — služba pripravenosti
 
@@ -112,4 +115,4 @@ Push nie je súčasťou zadania. Ak bude neskôr výslovne autorizované pristá
 
 Manuálna akceptácia na podpísanom builde: čerstvý profil; odloženie a reštart; odmietnuté a dodatočne povolené oprávnenie; systémový záznam bez mikrofónu; chýbajúci model; nedostupný externý export; AI off a nezalogovaná AI; test s rečou aj tichom; zatvorenie testu; recovery; existujúca inštalácia. TCC oprávnenia používateľa neresetovať automaticky.
 
-BlueCode po každej úlohe odovzdá zoznam zmien, výsledky príkazov a zostávajúce obmedzenia. Orchestrátor nezávisle skontroluje diff a zopakuje relevantné testy. Za dokončené sa riešenie považuje až po kontrole všetkých troch úloh; compile úspech nenahrádza manuálny audio test.
+Agent po každej úlohe odovzdá zoznam zmien, výsledky príkazov a zostávajúce obmedzenia. Orchestrátor nezávisle skontroluje diff a zopakuje relevantné testy. Za dokončené sa riešenie považuje až po kontrole všetkých troch úloh; compile úspech nenahrádza manuálny audio test.

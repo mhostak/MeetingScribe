@@ -157,6 +157,30 @@ final class AnalysisSettingsStoreTests: XCTestCase {
         XCTAssertNotEqual(AnalysisPrompt.hash(rendered), AnalysisPrompt.hash(rendered + "!"))
     }
 
+    func testUserNotesPlaceholderRendersNotesOrEmptyString() {
+        let session = SessionMetadata(
+            id: "recording-42",
+            title: "Weekly sync",
+            status: .recorded,
+            createdAt: Date(),
+            outputLanguage: .slovak
+        )
+        let template = "Notes: {{user_notes}}"
+
+        XCTAssertEqual(
+            AnalysisPrompt.render(
+                template: template,
+                session: session,
+                userNotes: "First note"
+            ),
+            "Notes: First note"
+        )
+        XCTAssertEqual(
+            AnalysisPrompt.render(template: template, session: session),
+            "Notes: "
+        )
+    }
+
     func testEveryOutputLanguageHasAnExplicitAnalysisDescription() {
         XCTAssertEqual(
             OutputLanguage.slovak.analysisLanguageDescription,

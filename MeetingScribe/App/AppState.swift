@@ -12,9 +12,13 @@ struct CaptureMonitoringConfiguration: Sendable {
     // Storage checks retain their previous five-second cadence, and a stalled
     // source still needs roughly three seconds of consecutive confirmation.
     var interval: Duration = .milliseconds(200)
+    // Refresh every 15 seconds, well inside the 90-second ownership expiry,
+    // so occasional delayed monitor ticks do not expose a live capture to recovery.
+    var ownershipRefreshEveryTicks = 75
     var storageCheckEveryTicks = 25
     var stalledSystemAudioCheckCount = 15
     var maximumStorageCheckFailures = 3
+    var maximumOwnershipRefreshFailures = 3
 }
 
 @MainActor
@@ -51,6 +55,7 @@ final class AppState: ObservableObject {
     static let onboardingTestSessionTitle = "MeetingScribe Setup Test"
     @Published private(set) var status: AppStatus = .idle
     @Published private(set) var currentSession: RecordingSession?
+    @Published private(set) var captureStartedAt: Date?
     @Published private(set) var lastCompletedSession: RecordingSession?
     @Published private(set) var lastError: String?
     let captureDiagnosticsModel = CaptureDiagnosticsModel()
@@ -103,6 +108,7 @@ final class AppState: ObservableObject {
     @Published var customAnalysisModel = ""
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
+    @Published var meetingNotesDraft = ""
     @Published var automaticallyDeleteSourceCAF = false
     @Published var audioRetentionPolicy: AudioRetentionPolicy = .keepForever
     @Published var selectedAppLanguage: AppLanguage = .system
@@ -161,6 +167,8 @@ final class AppState: ObservableObject {
     private var usesDetectedAnalysisExecutable = true
     @Published private(set) var processingJobs: [RecordingSession] = []
     @Published private(set) var processingQueueStatus = ProcessingQueueStatus.idle
+    @Published private var processingHandoffCount = 0
+    private var processingHandoffWaiters: [CheckedContinuation<Void, Never>] = []
     private var queueIsObserved = false
     private let resourceMonitoringEnabled: Bool
     private var resourceMonitorTask: Task<Void, Never>?
@@ -308,7 +316,7 @@ final class AppState: ObservableObject {
     )
 
     var hasPendingProcessing: Bool {
-        processingJobs.contains { session in
+        processingHandoffCount > 0 || processingJobs.contains { session in
             guard let job = session.metadata.processing else { return false }
             return job.state != .completed && job.state != .failed
         }
@@ -400,8 +408,35 @@ final class AppState: ObservableObject {
         ))
     }
 
+    private func waitForProcessingHandoffs() async {
+        while processingHandoffCount > 0 {
+            await withCheckedContinuation { processingHandoffWaiters.append($0) }
+        }
+    }
+
+    private func beginProcessingHandoff() {
+        processingHandoffCount += 1
+    }
+
+    private func acceptProcessingHandoff(_ session: RecordingSession) async {
+        defer {
+            processingHandoffCount -= 1
+            if processingHandoffCount == 0 {
+                let waiters = processingHandoffWaiters
+                processingHandoffWaiters.removeAll()
+                for waiter in waiters { waiter.resume() }
+            }
+        }
+        await observeProcessingQueue()
+        await processingQueue.accept(session)
+    }
+
     func waitForProcessing() async {
-        await processingQueue.waitUntilSettled()
+        repeat {
+            // Durable work may not have reached the queue yet.
+            await waitForProcessingHandoffs()
+            await processingQueue.waitUntilSettled()
+        } while processingHandoffCount > 0
     }
 
     func retryProcessing(_ session: RecordingSession) async {
@@ -417,13 +452,14 @@ final class AppState: ObservableObject {
                 sessionID: session.metadata.id, kind: job?.kind ?? .recovery,
                 configuration: job?.configuration ?? processingConfiguration
             )
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            beginProcessingHandoff()
+            await acceptProcessingHandoff(queued)
         } catch { lastError = localized(error) }
     }
 
     func prepareForTermination() async -> Bool {
         if status == .recording { await stopRecording() }
+        await waitForProcessingHandoffs()
         guard currentSession == nil, status != .preparing, status != .stopping else { return false }
         resourceMonitorTask?.cancel()
         memoryPressureSource?.cancel()
@@ -597,8 +633,8 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .retranscribe, configuration: processingConfiguration
         )
-        await observeProcessingQueue()
-        await processingQueue.accept(queued)
+        beginProcessingHandoff()
+        await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
         guard let revision = result.revision else {
             throw NSError(domain: "MeetingScribe.Processing", code: 1,
@@ -615,8 +651,8 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .reanalyze, configuration: configuration
         )
-        await observeProcessingQueue()
-        await processingQueue.accept(queued)
+        beginProcessingHandoff()
+        await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
         guard result.failedSteps.isEmpty, let path = result.artifacts.output?.markdownPath else {
             throw NSError(domain: "MeetingScribe.Processing", code: 2,
@@ -657,6 +693,7 @@ final class AppState: ObservableObject {
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
+            captureStartedAt = nil
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
             storageCheckTick = 0
@@ -669,6 +706,7 @@ final class AppState: ObservableObject {
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
                 calendarEvent: isOnboardingTest ? nil : pendingCalendarEvent,
+                notes: isOnboardingTest ? nil : meetingNotesDraft,
                 analysisConfiguration: isOnboardingTest ? nil : currentAnalysisConfiguration()
             )
             currentSession = session
@@ -678,10 +716,18 @@ final class AppState: ObservableObject {
                 pendingCalendarEvent = nil
             }
             try? await processingLogger.log(.sessionCreated, for: session)
+            if let notes = session.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: session,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
 
             do {
                 let diagnostics = try await captureCoordinator.start(for: session)
                 updateCaptureDiagnostics(diagnostics)
+                captureStartedAt = captureStart(from: diagnostics)
                 if isOnboardingTest {
                     onboardingTestStartedAt = diagnostics.systemAudio.startedAt ?? Date()
                 }
@@ -694,6 +740,7 @@ final class AppState: ObservableObject {
                     microphoneAudio: diagnostics.microphone.sessionMetadata
                 )
                 currentSession = nil
+                captureStartedAt = nil
                 lastCompletedSession = failedSession
                 updateCaptureDiagnostics(diagnostics)
                 if isOnboardingTest {
@@ -743,8 +790,9 @@ final class AppState: ObservableObject {
             .flatMap { sessionID in
                 onboardingTestSessionID == sessionID ? sessionID : nil
             }
+        await flushMeetingNotes()
         do {
-            if let stoppedOnboardingTestSessionID {
+            if stoppedOnboardingTestSessionID != nil {
                 onboardingTestTimer?.cancel()
                 onboardingTestTimer = nil
                 onboardingTestPhase = .processing
@@ -754,6 +802,7 @@ final class AppState: ObservableObject {
                 let stoppedAt = Date()
                 stopCaptureMonitoring()
                 let diagnostics = await captureCoordinator.stop()
+                captureStartedAt = nil
                 updateCaptureDiagnostics(diagnostics)
                 pendingCaptureHandoff = (session.metadata.id,
                     max(stoppedAt, session.metadata.startedAt ?? stoppedAt), diagnostics)
@@ -765,18 +814,22 @@ final class AppState: ObservableObject {
                 expectedSessionID: handoff.sessionID, endedAt: handoff.endedAt,
                 diagnostics: handoff.diagnostics, configuration: processingConfiguration
             )
+            // Begin before clearing the session so observers still see pending work; accept after
+            // publishing idle so the resource governor no longer sees a stopping capture.
+            beginProcessingHandoff()
             pendingCaptureHandoff = nil
             currentSession = nil
+            captureStartedAt = nil
             if stoppedOnboardingTestSessionID == nil {
                 meetingTitle = ""
+                meetingNotesDraft = ""
                 pendingCalendarEvent = nil
                 calendarEventCandidates = []
             }
             // Capture is now independent of all subsequent processing.
             stateMachine = AppStateMachine()
             status = .idle
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            await acceptProcessingHandoff(queued)
         } catch {
             // Keep the stopped capture and original diagnostics until the durable handoff succeeds.
             lastError = localized(error)
@@ -1025,15 +1078,91 @@ final class AppState: ObservableObject {
         }
     }
 
+    @discardableResult
+    func updateMeetingNotes(_ text: String) async -> Bool {
+        meetingNotesDraft = text
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession) else {
+            return false
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(text)
+            currentSession = updatedSession
+            return true
+        } catch {
+            lastError = localized(error)
+            return false
+        }
+    }
+
+    var isCurrentSessionOnboardingTest: Bool {
+        guard let currentSession else { return false }
+        return isOnboardingTestSession(currentSession)
+    }
+
+    func flushMeetingNotes() async {
+        guard let currentSession,
+              !isOnboardingTestSession(currentSession) else {
+            return
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(meetingNotesDraft)
+            self.currentSession = updatedSession
+            if let notes = updatedSession.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: updatedSession,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    var currentMeetingNotes: String {
+        meetingNotesDraft
+    }
+
+    func loadMeetingNotesFromDisk() async {
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession),
+              activeSession.metadata.notes != nil,
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+
+        let sessionID = activeSession.metadata.id
+        let notesURL = activeSession.notesURL
+        let notes: String
+        do {
+            notes = try await Task.detached(priority: .utility) {
+                try String(contentsOf: notesURL, encoding: .utf8)
+            }.value
+        } catch {
+            return
+        }
+
+        guard let currentSession,
+              currentSession.metadata.id == sessionID,
+              !isOnboardingTestSession(currentSession),
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+        meetingNotesDraft = notes
+    }
+
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {
         guard canEnqueueProcessing(sessionID: candidate.id) else { return }
         do {
             let queued = try await sessionManager.queueProcessing(
                 sessionID: candidate.id, kind: .recovery, configuration: processingConfiguration
             )
+            beginProcessingHandoff()
             removeRecoveryCandidate(id: candidate.id)
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            await acceptProcessingHandoff(queued)
         } catch { lastError = localized(error) }
     }
 
@@ -1094,6 +1223,7 @@ final class AppState: ObservableObject {
         do {
             try transition(to: .idle)
             lastError = nil
+            captureStartedAt = nil
             updateCaptureDiagnostics(.empty)
             resetProcessingProgress()
             isStoppingForLowStorage = false
@@ -1102,6 +1232,30 @@ final class AppState: ObservableObject {
         } catch {
             setFailure(error)
         }
+    }
+
+    func meetingNotesTimestampLinePrefix(at instant: Date = Date()) -> String? {
+        guard let currentSession else { return nil }
+        guard let startedAt = captureStartedAt ?? currentSession.metadata.startedAt else {
+            return nil
+        }
+        let elapsed = max(0, Int(instant.timeIntervalSince(startedAt)))
+        let timestamp = String(
+            format: "%02d:%02d:%02d",
+            elapsed / 3_600,
+            (elapsed % 3_600) / 60,
+            elapsed % 60
+        )
+        return "- [\(timestamp)] "
+    }
+
+    private func captureStart(from diagnostics: CaptureSessionDiagnostics) -> Date {
+        [
+            diagnostics.systemAudio.startedAt,
+            diagnostics.microphone.startedAt,
+        ]
+        .compactMap { $0 }
+        .min() ?? Date()
     }
 
     func openRecordingsFolder() {
@@ -2094,7 +2248,7 @@ final class AppState: ObservableObject {
             recoveryCandidates = result.candidates
             recoveryIssues = result.issues
             for candidate in result.candidates {
-                try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+                await logRecoveryDetectionIfNeeded(candidate)
             }
             if !result.issues.isEmpty, lastError == nil {
                 lastError = localized(.recoveryIssues)
@@ -2106,6 +2260,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func logRecoveryDetectionIfNeeded(_ candidate: SessionRecoveryCandidate) async {
+        guard (try? await sessionManager.recordRecoveryDetection(id: candidate.id)) == true else { return }
+        try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+    }
+
     private func removeRecoveryCandidate(id: String) {
         recoveryCandidates.removeAll { $0.id == id }
     }
@@ -2113,6 +2272,7 @@ final class AppState: ObservableObject {
     private func refreshRecoveryCandidate(id: String) async {
         do {
             if let candidate = try await sessionManager.recoveryCandidate(id: id) {
+                await logRecoveryDetectionIfNeeded(candidate)
                 if let index = recoveryCandidates.firstIndex(where: { $0.id == id }) {
                     recoveryCandidates[index] = candidate
                 } else {
@@ -2189,6 +2349,7 @@ final class AppState: ObservableObject {
         let monitoringConfiguration = captureMonitoringConfiguration
 
         captureMonitorTask = Task { [weak self] in
+            var ownershipRefreshFailureCount = 0
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: monitoringConfiguration.interval)
@@ -2237,6 +2398,27 @@ final class AppState: ObservableObject {
                 }
 
                 self.storageCheckTick += 1
+                let ownershipFrequency = max(1, monitoringConfiguration.ownershipRefreshEveryTicks)
+                if ownershipRefreshFailureCount > 0 || self.storageCheckTick.isMultiple(of: ownershipFrequency) {
+                    do {
+                        // Retry on the next tick because the marker may have been
+                        // removed. Bookkeeping failures must never interrupt capture.
+                        if ownershipRefreshFailureCount > 0 {
+                            try await self.sessionManager.reclaimRecordingOwnership()
+                        } else {
+                            try await self.sessionManager.refreshRecordingOwnership()
+                        }
+                        ownershipRefreshFailureCount = 0
+                    } catch {
+                        guard !Task.isCancelled, self.status == .recording,
+                              self.currentSession?.metadata.id == captureID else { break }
+                        ownershipRefreshFailureCount += 1
+                        let maximumFailures = max(1, monitoringConfiguration.maximumOwnershipRefreshFailures)
+                        if ownershipRefreshFailureCount == maximumFailures {
+                            self.lastError = self.localized(.recordingOwnershipUpdateFailed(self.localized(error)))
+                        }
+                    }
+                }
                 let storageFrequency = max(
                     1,
                     monitoringConfiguration.storageCheckEveryTicks

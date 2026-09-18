@@ -17,6 +17,153 @@ final class SessionRecoveryTests: XCTestCase {
         root = nil
     }
 
+    func testDetectionPersistsOnceAcrossScansAndManagerInstances() async throws {
+        let session = try makeSession(id: "detected", status: .recording)
+        try Data("audio".utf8).write(to: session.systemAudioURL)
+        let manager = SessionManager(recordingsRoot: root)
+        let detectedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let initial = try await manager.scanForRecovery()
+        XCTAssertEqual(initial.candidates.map(\.id), [session.metadata.id])
+        let recorded = try await manager.recordRecoveryDetection(id: session.metadata.id, now: detectedAt)
+        XCTAssertTrue(recorded)
+        let persistedData = try Data(contentsOf: session.manifestURL)
+        let persisted = try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: persistedData)
+        XCTAssertNil(persisted.recovery)
+        XCTAssertEqual(persisted.recoveryDetectedAt, detectedAt)
+        XCTAssertEqual(persisted.status, session.metadata.status)
+
+        let restarted = SessionManager(recordingsRoot: root)
+        let rescanned = try await restarted.scanForRecovery()
+        XCTAssertEqual(rescanned.candidates.map(\.id), [session.metadata.id])
+        XCTAssertEqual(rescanned.candidates.first?.reason, initial.candidates.first?.reason)
+        let repeated = try await restarted.recordRecoveryDetection(
+            id: session.metadata.id, now: detectedAt.addingTimeInterval(60)
+        )
+        XCTAssertFalse(repeated)
+        XCTAssertEqual(try Data(contentsOf: session.manifestURL), persistedData)
+    }
+
+    func testFailedRecoveryStartsAnotherDetectionEpisodeWithoutChangingAttemptHistory() async throws {
+        let session = try makeSession(id: "redetected", status: .recording)
+        try Data("audio".utf8).write(to: session.systemAudioURL)
+        let manager = SessionManager(recordingsRoot: root)
+        let firstDate = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = try await manager.recordRecoveryDetection(id: session.metadata.id, now: firstDate)
+        let active = try await manager.beginRecovery(id: session.metadata.id, now: firstDate.addingTimeInterval(10))
+        XCTAssertEqual(active.metadata.recovery?.attemptCount, 1)
+        XCTAssertEqual(active.metadata.recovery?.detectedAt, firstDate)
+        let failed = try await manager.failSession(reason: "Recovery failed", now: firstDate.addingTimeInterval(20))
+        let secondDate = firstDate.addingTimeInterval(60)
+        let recorded = try await manager.recordRecoveryDetection(id: session.metadata.id, now: secondDate)
+        XCTAssertTrue(recorded)
+        let repeated = try await manager.recordRecoveryDetection(id: session.metadata.id)
+        XCTAssertFalse(repeated)
+        let candidate = try await manager.recoveryCandidate(id: session.metadata.id)
+        let recovery = try XCTUnwrap(candidate?.session.metadata.recovery)
+        XCTAssertEqual(recovery.status, .failed)
+        XCTAssertEqual(recovery.originalStatus, .recording)
+        XCTAssertEqual(recovery.attemptCount, 1)
+        XCTAssertEqual(recovery, failed.metadata.recovery)
+        XCTAssertEqual(candidate?.session.metadata.recoveryDetectedAt, secondDate)
+        XCTAssertEqual(recovery.startedAt, failed.metadata.recovery?.startedAt)
+        XCTAssertEqual(recovery.completedAt, failed.metadata.recovery?.completedAt)
+        XCTAssertEqual(recovery.failureReason, "Recovery failed")
+        let retried = try await manager.beginRecovery(id: session.metadata.id)
+        XCTAssertEqual(retried.metadata.recovery?.originalStatus, .recording)
+        XCTAssertEqual(retried.metadata.recovery?.attemptCount, 2)
+        _ = try await manager.failSession(reason: "Cleanup")
+        _ = try await manager.recordRecoveryDetection(id: session.metadata.id)
+        let closed = try await manager.closeRecovery(id: session.metadata.id)
+        XCTAssertEqual(closed.metadata.recovery?.originalStatus, .recording)
+        XCTAssertEqual(closed.metadata.recovery?.attemptCount, 2)
+    }
+
+    func testOnlyAFailedAttemptAfterDetectionStartsAnotherEpisode() async throws {
+        let detectedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let cases: [(String, SessionRecoveryStatus, Date?, Bool)] = [
+            ("earlier", .failed, detectedAt.addingTimeInterval(-1), false),
+            ("equal", .failed, detectedAt, false),
+            ("later", .failed, detectedAt.addingTimeInterval(1), true),
+            ("missing", .failed, nil, false),
+            ("in-progress", .inProgress, detectedAt.addingTimeInterval(1), false)
+        ]
+        let manager = SessionManager(recordingsRoot: root)
+        for (id, status, completedAt, expected) in cases {
+            let session = try makeSession(metadata: SessionMetadata(
+                id: id, title: id, status: .failed, createdAt: detectedAt,
+                recovery: SessionRecoveryMetadata(
+                    status: status, originalStatus: .recording, detectedAt: detectedAt,
+                    startedAt: nil, completedAt: completedAt, attemptCount: 1, failureReason: nil
+                ),
+                recoveryDetectedAt: detectedAt
+            ))
+            try Data("audio".utf8).write(to: session.systemAudioURL)
+            let now = detectedAt.addingTimeInterval(60)
+            let recorded = try await manager.recordRecoveryDetection(id: id, now: now)
+            XCTAssertEqual(recorded, expected, id)
+            let persisted = try SessionJSONCoder.makeDecoder().decode(
+                SessionMetadata.self, from: Data(contentsOf: session.manifestURL)
+            )
+            XCTAssertEqual(persisted.recovery, session.metadata.recovery, id)
+            XCTAssertEqual(persisted.recoveryDetectedAt, expected ? now : detectedAt, id)
+            let repeated = try await manager.recordRecoveryDetection(id: id, now: now.addingTimeInterval(60))
+            XCTAssertFalse(repeated, id)
+        }
+    }
+
+    func testTerminalRecoveryStatusesSuppressOtherwiseRecoverableSessions() async throws {
+        let manager = SessionManager(recordingsRoot: root)
+        for status in [SessionRecoveryStatus.closed, .completed] {
+            let session = try makeSession(metadata: SessionMetadata(
+                id: status.rawValue, title: status.rawValue, status: .recording, createdAt: Date(),
+                recovery: SessionRecoveryMetadata(
+                    status: status, originalStatus: .recording, detectedAt: Date(),
+                    startedAt: nil, completedAt: Date(), attemptCount: 1, failureReason: nil
+                )
+            ))
+            try Data("audio".utf8).write(to: session.systemAudioURL)
+            let original = try Data(contentsOf: session.manifestURL)
+            let scan = try await manager.scanForRecovery()
+            XCTAssertTrue(scan.candidates.isEmpty)
+            let recorded = try await manager.recordRecoveryDetection(id: session.metadata.id)
+            XCTAssertFalse(recorded)
+            XCTAssertEqual(try Data(contentsOf: session.manifestURL), original)
+        }
+    }
+
+    func testDetectionEncodingRemainsReadableByLegacyRecoveryDecoder() throws {
+        var metadata = SessionMetadata(id: "compatibility", title: "Compatibility", status: .recording, createdAt: Date())
+        let legacyData = try SessionJSONCoder.makeEncoder().encode(metadata)
+        let withoutDetection = try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: legacyData)
+        XCTAssertNil(withoutDetection.recovery)
+        XCTAssertNil(withoutDetection.recoveryDetectedAt)
+
+        metadata.recoveryDetectedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let data = try SessionJSONCoder.makeEncoder().encode(metadata)
+        let legacy = try SessionJSONCoder.makeDecoder().decode(LegacyRecoveryManifest.self, from: data)
+        XCTAssertEqual(legacy.schemaVersion, 16)
+        XCTAssertNil(legacy.recovery)
+        let decoded = try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: data)
+        XCTAssertNil(decoded.recovery)
+        XCTAssertEqual(decoded.recoveryDetectedAt, metadata.recoveryDetectedAt)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(object["recovery"])
+        XCTAssertNotNil(object["recoveryDetectedAt"])
+
+        for status in [SessionRecoveryStatus.inProgress, .failed, .closed, .completed] {
+            metadata.recovery = SessionRecoveryMetadata(
+                status: status, originalStatus: .recording,
+                detectedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                startedAt: nil, completedAt: nil, attemptCount: 1, failureReason: nil
+            )
+            let existing = try SessionJSONCoder.makeEncoder().encode(metadata)
+            let roundTrip = try SessionJSONCoder.makeDecoder().decode(SessionMetadata.self, from: existing)
+            XCTAssertEqual(roundTrip.recovery, metadata.recovery)
+            let legacy = try SessionJSONCoder.makeDecoder().decode(LegacyRecoveryManifest.self, from: existing)
+            XCTAssertEqual(legacy.recovery?.status.rawValue, status.rawValue)
+        }
+    }
+
     func testScannerFindsInterruptedAndFailedSessionsButNotCompletedSession() throws {
         let interrupted = try makeSession(id: "interrupted", status: .recording)
         try Data("audio".utf8).write(to: interrupted.systemAudioURL)
@@ -99,10 +246,12 @@ final class SessionRecoveryTests: XCTestCase {
         )
         let startedAt = Date(timeIntervalSince1970: 1_700_000_100)
 
+        _ = try await manager.recordRecoveryDetection(id: "recover-me", now: startedAt.addingTimeInterval(-10))
         let active = try await manager.beginRecovery(id: "recover-me", now: startedAt)
 
         XCTAssertEqual(active.metadata.recovery?.status, .inProgress)
         XCTAssertEqual(active.metadata.recovery?.originalStatus, .recording)
+        XCTAssertEqual(active.metadata.recovery?.detectedAt, startedAt.addingTimeInterval(-10))
         XCTAssertEqual(active.metadata.recovery?.attemptCount, 1)
         let completed = try await manager.stopSession(
             now: startedAt.addingTimeInterval(10),
@@ -125,6 +274,8 @@ final class SessionRecoveryTests: XCTestCase {
         )
         XCTAssertEqual(completed.metadata.status, .recorded)
         XCTAssertEqual(completed.metadata.recovery?.status, .completed)
+        let detectedAgain = try await manager.recordRecoveryDetection(id: "recover-me")
+        XCTAssertFalse(detectedAgain)
         XCTAssertNotNil(completed.metadata.recovery?.completedAt)
         XCTAssertTrue(FileManager.default.fileExists(atPath: original.systemAudioURL.path))
         let remainingCandidates = try await manager.scanForRecovery().candidates
@@ -140,10 +291,15 @@ final class SessionRecoveryTests: XCTestCase {
             storageGuard: StorageGuard(provider: RecoveryCapacityProvider(), minimumBytes: 1)
         )
 
+        _ = try await manager.recordRecoveryDetection(id: "close-me")
         let closed = try await manager.closeRecovery(id: "close-me")
+        XCTAssertEqual(closed.metadata.recovery?.originalStatus, .recording)
+        XCTAssertEqual(closed.metadata.recovery?.attemptCount, 0)
 
         XCTAssertEqual(closed.metadata.status, .failed)
         XCTAssertEqual(closed.metadata.recovery?.status, .closed)
+        let detectedAgain = try await manager.recordRecoveryDetection(id: "close-me")
+        XCTAssertFalse(detectedAgain)
         XCTAssertEqual(try Data(contentsOf: session.systemAudioURL), audio)
         let remainingCandidates = try await manager.scanForRecovery().candidates
         XCTAssertTrue(remainingCandidates.isEmpty)
@@ -539,4 +695,24 @@ final class SessionRecoveryTests: XCTestCase {
 
 private struct RecoveryCapacityProvider: StorageCapacityProviding {
     func availableCapacity(at url: URL) throws -> Int64 { 2_000_000_000 }
+}
+
+// These mirror the synthesized decoder shipped before detection was persisted.
+private struct LegacyRecoveryManifest: Decodable {
+    let schemaVersion: Int
+    let recovery: LegacyRecoveryMetadata?
+}
+
+private struct LegacyRecoveryMetadata: Decodable {
+    enum Status: String, Decodable {
+        case inProgress, completed, failed, closed
+    }
+
+    let status: Status
+    let originalStatus: RecordingSessionStatus
+    let detectedAt: Date
+    let startedAt: Date?
+    let completedAt: Date?
+    let attemptCount: Int
+    let failureReason: String?
 }

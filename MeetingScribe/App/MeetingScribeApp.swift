@@ -21,15 +21,21 @@ struct MeetingScribeApp: App {
     @StateObject private var windowCoordinator: AppWindowCoordinator
 
     init() {
+        let launchEnvironment = AppLaunchEnvironment()
         let notifier = ProcessingNotificationService()
-        notifier.installDelegate()
+        if !launchEnvironment.isUnitTestHost {
+            notifier.installDelegate()
+        }
         let appState = AppState(processingNotifier: notifier)
         _appState = StateObject(wrappedValue: appState)
         _windowCoordinator = StateObject(
-            wrappedValue: AppWindowCoordinator(appState: appState)
+            wrappedValue: AppWindowCoordinator(appState: appState, launchEnvironment: launchEnvironment)
         )
-        Task { @MainActor in
-            await appState.prepareStorage()
+        // XCTest needs the host's run loop, but must not recover or clean up real recordings.
+        if !launchEnvironment.isUnitTestHost {
+            Task { @MainActor in
+                await appState.prepareStorage()
+            }
         }
     }
 
@@ -64,7 +70,7 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
     private var onboardingWindow: NSWindow?
     private var renderedStatusIcon: (state: MenuBarIconState, colorScheme: ColorScheme)?
 
-    init(appState: AppState) {
+    init(appState: AppState, launchEnvironment: AppLaunchEnvironment) {
         self.appState = appState
         super.init()
 
@@ -126,8 +132,10 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
             }
         }
 
-        DispatchQueue.main.async { [weak self] in
-            self?.installStatusItem()
+        if !launchEnvironment.isUnitTestHost {
+            DispatchQueue.main.async { [weak self] in
+                self?.installStatusItem()
+            }
         }
     }
 
