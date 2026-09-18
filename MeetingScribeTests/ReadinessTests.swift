@@ -185,7 +185,7 @@ final class ReadinessTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.check(.notifications)?.status, .ready)
-        XCTAssertEqual(snapshot.check(.notifications)?.action, .none)
+        XCTAssertEqual(snapshot.check(.notifications)?.action, ReadinessAction.none)
         XCTAssertEqual(
             snapshot.check(.notifications)?.detail,
             .optionalFeature(isEnabled: true, permission: .granted)
