@@ -460,8 +460,8 @@ final class OnboardingTests: XCTestCase {
             .appendingPathComponent("MeetingScribeOnboardingTests-\(UUID().uuidString)", isDirectory: true)
     }
 
-    /// The last step's only action used to be "Finish without test", so after
-    /// a successful setup test there was no button that read as finishing.
+    /// The setup test now runs from the readiness overview, and finishing the
+    /// guide afterwards still has to persist the completion.
     func testSetupCanBeFinishedAfterTheSetupTest() async throws {
         let fixture = try makeOnboardingTestFixture()
         defer { fixture.cleanup() }
@@ -478,22 +478,12 @@ final class OnboardingTests: XCTestCase {
         await waitForOnboardingTestCompletion(appState)
         XCTAssertEqual(appState.onboardingTestPhase, .completed)
         XCTAssertNotNil(appState.onboardingTestResult)
-        XCTAssertFalse(appState.onboardingTestPhase.isRunning)
 
         appState.completeOnboarding()
 
         XCTAssertTrue(appState.onboardingState.isCompleted)
         XCTAssertFalse(appState.shouldShowOnboardingInvitation)
         XCTAssertFalse(OnboardingStore(defaults: fixture.defaults).shouldOpenOnLaunch)
-    }
-
-    func testSetupCannotBeFinishedWhileTheSetupTestIsStillRunning() {
-        XCTAssertTrue(OnboardingTestPhase.starting.isRunning)
-        XCTAssertTrue(OnboardingTestPhase.recording.isRunning)
-        XCTAssertTrue(OnboardingTestPhase.processing.isRunning)
-        XCTAssertFalse(OnboardingTestPhase.idle.isRunning)
-        XCTAssertFalse(OnboardingTestPhase.completed.isRunning)
-        XCTAssertFalse(OnboardingTestPhase.failed.isRunning)
     }
 
     /// The onboarding window opens at 780x580. Before the step body became

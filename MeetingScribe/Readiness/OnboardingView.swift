@@ -76,16 +76,11 @@ struct OnboardingView: View {
                 Spacer()
 
                 if appState.onboardingStep == .review {
-                    // Naming the last action after the test the user skipped
-                    // hid it from anyone who had just run that test.
-                    Button(appState.onboardingTestResult == nil
-                        ? "Finish without test"
-                        : "Finish setup") {
+                    Button("Finish setup") {
                         appState.completeOnboarding()
                         closeAction()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(appState.onboardingTestPhase.isRunning)
                 } else {
                     Button("Continue") {
                         appState.advanceOnboarding()
@@ -257,7 +252,17 @@ struct OnboardingView: View {
                 openSettingsAction: openSettingsAction
             )
 
-            SetupTestView(appState: appState)
+            HStack(alignment: .firstTextBaseline) {
+                Text("Permission is not proof that audio is arriving. The ten-second setup test lives in Readiness.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open readiness settings") {
+                    appState.selectedSettingsSection = "readiness"
+                    openSettingsAction()
+                }
+                .controlSize(.small)
+            }
         }
     }
 

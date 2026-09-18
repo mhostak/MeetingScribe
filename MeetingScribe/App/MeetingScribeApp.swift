@@ -334,9 +334,6 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
     }
 
     private func closeOnboarding() {
-        Task { @MainActor [weak self] in
-            await self?.appState.stopOnboardingTest()
-        }
         onboardingWindow?.orderOut(nil)
     }
 

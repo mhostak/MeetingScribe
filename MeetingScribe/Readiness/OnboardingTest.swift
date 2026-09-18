@@ -17,15 +17,6 @@ enum OnboardingTestPhase: Equatable, Sendable {
     case processing
     case completed
     case failed
-
-    /// True while the setup test still owns the recorder, so the guide must
-    /// not be finished and closed underneath it.
-    var isRunning: Bool {
-        switch self {
-        case .starting, .recording, .processing: return true
-        case .idle, .completed, .failed: return false
-        }
-    }
 }
 
 struct OnboardingTestTrackResult: Equatable, Identifiable, Sendable {
