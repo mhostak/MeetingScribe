@@ -227,7 +227,8 @@ Vedľajší nález, nesúvisí s A1: `.build/checkouts/FluidAudio` v hlavnom pra
 550 duplikátov typu `Nazov 2.swift`, takže `swift test` s predvoleným scratch path padne na
 `duplicate symbols`. Rovnaká príčina rozbila aj ad-hoc podpis testovacieho bundlu po skopírovaní
 `.derivedData/swiftpm` do iného worktree. Adresár je v `.gitignore` a projekt používa vlastný
-scratch path, takže na build to nemá vplyv. Pravdepodobná príčina je synchronizácia `~/Documents`.
+scratch path, takže na build to nemá vplyv. Príčina je potvrdená nižšie: synchronizovaný
+priečinok.
 
 ## Výsledok implementácie (18. 9. 2026)
 
@@ -368,7 +369,39 @@ ktorý ich vytvorí bez explicitného roota, teda pracuje nad skutočnými dáta
 
 Invariant je odteraz krytý testom, takže budúca zmena pole nezahodí potichu.
 
+### Onboarding test relácia (overené 18. 9. 2026)
+
+Test pripravenosti prebehol na podpísanom builde `f959ea7`. Vznikla relácia
+`MeetingScribe Setup Test` s 10 sekundami záznamu, prepis dobehol.
+
+| Kontrola | Zistenie |
+|---|---|
+| `notes.md` v testovacej relácii | neexistuje |
+| Pole `notes` v manifeste | chýba |
+| Editor poznámok v popoveri počas testu | nezobrazil sa |
+| Rozpísaný draft po teste | zostal nedotknutý |
+
+Testovacia relácia teda poznámky nevytvára ani nespotrebuje draft.
+
+Vymazanie poznámok používateľ overil na krátkej relácii, `notes.md` zmizol aj badge.
+
 ### Čo zostáva neoverené
 
-Onboarding test relácia. Vymazanie poznámok používateľ overil 18. 9. 2026 na krátkej relácii,
-`notes.md` zmizol aj badge.
+Opravená značka ⏱ v spustenej aplikácii. Onboarding test ju nepokrýva, lebo v testovacej relácii sa
+editor zámerne nezobrazuje. Stačí na to nahrávka na dvadsať sekúnd: kliknúť ⏱ hneď po štarte
+a porovnať vloženú značku s `captureStarted` v `processing.log`.
+
+### Prostredie: `~/Documents` je synchronizovaný iCloudom
+
+Potvrdené počas overovania, `brctl status` ukázal build artefakty v stave `needs-sync-up`. Repozitár
+leží v synchronizovanom priečinku a nesie gigabajty odvodených dát, takže sync engine ich neustále
+nahráva. Následky, na ktoré sa pri tejto práci narazilo:
+
+- desaťsekundový záznam sa prepisoval štyri minúty, lebo stroj bol saturovaný,
+- konfliktné kópie typu `Nazov 2.swift` v `.build/checkouts`, ktoré rozbijú `swift test`
+  s predvoleným scratch path,
+- zlyhanie ad-hoc podpisu testovacieho bundlu na `resource fork, Finder information, or similar
+  detritus not allowed` po skopírovaní scratch adresára.
+
+Odvodené dáta a pracovné worktrees patria mimo synchronizovaný priečinok. Na integritu manifestu to
+vplyv nemá, nahrávky sú v `~/Library/Application Support`, ktorý sa nesynchronizuje.
