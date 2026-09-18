@@ -75,16 +75,20 @@ struct OnboardingView: View {
 
                 Spacer()
 
-                Button("Continue") {
-                    appState.advanceOnboarding()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(appState.onboardingStep == .review)
-
                 if appState.onboardingStep == .review {
-                    Button("Finish without test") {
+                    // Naming the last action after the test the user skipped
+                    // hid it from anyone who had just run that test.
+                    Button(appState.onboardingTestResult == nil
+                        ? "Finish without test"
+                        : "Finish setup") {
                         appState.completeOnboarding()
                         closeAction()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appState.onboardingTestPhase.isRunning)
+                } else {
+                    Button("Continue") {
+                        appState.advanceOnboarding()
                     }
                     .buttonStyle(.borderedProminent)
                 }
