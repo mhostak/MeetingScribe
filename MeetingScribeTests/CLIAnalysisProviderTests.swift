@@ -434,18 +434,54 @@ final class CLIAnalysisProviderTests: XCTestCase {
         } catch is CancellationError {}
     }
 
+    func testProductionRunnerReportsExitCodeWhenToolExitsWithoutReadingStdin() async throws {
+        let fixture = try makeExecutableFixture(script: """
+        #!/bin/sh
+        echo 'fake-cli: unrecognized arguments' >&2
+        exit 64
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let provider = CLIAnalysisProvider(
+            tool: .claude,
+            executableURL: fixture.executable,
+            runner: AnalysisProcessRunner(terminationGracePeriod: 0.05),
+            requestTimeout: .seconds(10)
+        )
+
+        do {
+            // The prompt exceeds the pipe buffer, so the tool exiting without
+            // draining stdin always breaks the write the runner is still doing.
+            _ = try await provider.analyze(makeRequest(
+                userNotes: nil,
+                content: String(repeating: "[00:00:01] [segment-1] Other: Meeting text\n", count: 8_000)
+            ))
+            XCTFail("Expected the tool's own failure to surface.")
+        } catch let error as AnalysisError {
+            guard case let .processFailed(tool, exitCode, message) = error else {
+                XCTFail("Expected processFailed, got \(error).")
+                return
+            }
+            XCTAssertEqual(tool, .claude)
+            XCTAssertEqual(exitCode, 64)
+            XCTAssertTrue(message.contains("stderr"), message)
+        }
+    }
+
     private func makeRequest() -> AnalysisRequest {
         makeRequest(userNotes: nil)
     }
 
-    private func makeRequest(userNotes: String?) -> AnalysisRequest {
+    private func makeRequest(
+        userNotes: String?,
+        content: String = "[00:00:01] [segment-1] Other: Meeting text"
+    ) -> AnalysisRequest {
         AnalysisRequest(
             mode: .transcript,
             meetingTitle: "Test",
             recordingID: "recording-1",
             preferredLanguage: .czech,
             userPrompt: "Vytvor vlastnú štruktúru.",
-            content: "[00:00:01] [segment-1] Other: Meeting text",
+            content: content,
             userNotes: userNotes
         )
     }
