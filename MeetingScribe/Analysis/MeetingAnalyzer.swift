@@ -23,13 +23,16 @@ struct MeetingAnalyzer: Sendable {
     func analyze(
         session: SessionMetadata,
         transcript: MergedTranscript,
-        userPrompt: String = AnalysisPrompt.defaultTemplate
+        userPrompt: String = AnalysisPrompt.defaultTemplate,
+        userNotes: String? = nil
     ) async throws -> MeetingAnalysisRun {
         try Task.checkCancellation()
+        let notesSection = AnalysisPrompt.userNotesSection(for: userNotes)
         let chunks = try transcriptChunks(
             from: transcript.segments,
             participantNames: participantNamesForAnalysis(from: session),
-            eventDescription: eventDescriptionForAnalysis(from: session)
+            eventDescription: eventDescriptionForAnalysis(from: session),
+            notesSectionLength: notesSection?.count ?? 0
         )
         guard !chunks.isEmpty else {
             return MeetingAnalysisRun(
@@ -51,7 +54,8 @@ struct MeetingAnalyzer: Sendable {
                         recordingID: session.id,
                         preferredLanguage: session.resolvedOutputLanguage,
                         userPrompt: userPrompt,
-                        content: chunk
+                        content: chunk,
+                        userNotes: userNotes
                     )
                 )
             )
@@ -61,7 +65,10 @@ struct MeetingAnalyzer: Sendable {
 
         while partials.count > 1 {
             try Task.checkCancellation()
-            let groups = try consolidationGroups(from: partials)
+            let groups = try consolidationGroups(
+                from: partials,
+                notesSectionLength: notesSection?.count ?? 0
+            )
             guard groups.count < partials.count else {
                 throw AnalysisError.transcriptChunkTooLarge
             }
@@ -82,7 +89,8 @@ struct MeetingAnalyzer: Sendable {
                             recordingID: session.id,
                             preferredLanguage: session.resolvedOutputLanguage,
                             userPrompt: userPrompt,
-                            content: content
+                            content: content,
+                            userNotes: userNotes
                         )
                     )
                 )
@@ -103,13 +111,14 @@ struct MeetingAnalyzer: Sendable {
     private func transcriptChunks(
         from segments: [TranscriptSegment],
         participantNames: [String],
-        eventDescription: String?
+        eventDescription: String?,
+        notesSectionLength: Int
     ) throws -> [String] {
         let context = analysisContext(
             participantNames: participantNames,
             eventDescription: eventDescription
         )
-        let contentLimit = maxInputCharacters - context.count - 1
+        let contentLimit = maxInputCharacters - context.count - 1 - notesSectionLength
         guard contentLimit >= 1 else { throw AnalysisError.transcriptChunkTooLarge }
 
         let lines = try segments.flatMap { segment in
@@ -274,18 +283,21 @@ struct MeetingAnalyzer: Sendable {
     }
 
     private func consolidationGroups(
-        from analyses: [AnalysisMarkdown]
+        from analyses: [AnalysisMarkdown],
+        notesSectionLength: Int
     ) throws -> [[AnalysisMarkdown]] {
+        let contentLimit = maxInputCharacters - notesSectionLength
+        guard contentLimit >= 1 else { throw AnalysisError.transcriptChunkTooLarge }
         var groups: [[AnalysisMarkdown]] = []
         var current: [AnalysisMarkdown] = []
         var currentLength = 2
 
         for analysis in analyses {
             let length = try encodedAnalyses([analysis]).count
-            guard length <= maxInputCharacters else {
+            guard length <= contentLimit else {
                 throw AnalysisError.transcriptChunkTooLarge
             }
-            if !current.isEmpty, currentLength + length > maxInputCharacters {
+            if !current.isEmpty, currentLength + length > contentLimit {
                 groups.append(current)
                 current = []
                 currentLength = 2

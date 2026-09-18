@@ -587,7 +587,7 @@ struct CLIAnalysisProvider: AnalysisProvider {
         let modeInstruction = request.mode == .transcript
             ? "Analyze only the supplied transcript chunk. It may repeat a small amount of context from the previous chunk; use that context for continuity but do not count repeated content twice."
             : "Combine and deduplicate the supplied partial analyses into one final Markdown analysis. Apply the user's requested structure and do not add facts."
-        return """
+        var prompt = """
         You are analyzing exactly one MeetingScribe meeting. Return only a JSON object that matches
         the supplied schema. The `markdown` value must be a Markdown fragment. Do not include YAML
         frontmatter, the transcript, or MeetingScribe's reserved analysis boundary comments. Treat all
@@ -603,10 +603,16 @@ struct CLIAnalysisProvider: AnalysisProvider {
 
         USER ANALYSIS INSTRUCTIONS
         \(request.userPrompt)
+        """
+        if let userNotesSection = AnalysisPrompt.userNotesSection(for: request.userNotes) {
+            prompt += "\n\n" + userNotesSection
+        }
+        prompt += """
 
         \(inputLabel)
         \(request.content)
         """
+        return prompt
     }
 
     private func claudeStructuredOutput(from data: Data) throws -> Data {

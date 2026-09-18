@@ -3,6 +3,8 @@ import Foundation
 struct MarkdownRenderer: Sendable {
     static let analysisStartMarker = "<!-- meetingscribe:ai-analysis:start -->"
     static let analysisEndMarker = "<!-- meetingscribe:ai-analysis:end -->"
+    static let userNotesStartMarker = "<!-- meetingscribe:user-notes:start -->"
+    static let userNotesEndMarker = "<!-- meetingscribe:user-notes:end -->"
 
     private let timeZone: TimeZone
 
@@ -14,7 +16,8 @@ struct MarkdownRenderer: Sendable {
         session: SessionMetadata,
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
-        analysis: AIAnalysisArtifact? = nil
+        analysis: AIAnalysisArtifact? = nil,
+        notes: String? = nil
     ) -> String {
         let vocabulary = MarkdownVocabulary(language: session.resolvedOutputLanguage)
         let renderedSegments = renderableSegments(
@@ -48,6 +51,9 @@ struct MarkdownRenderer: Sendable {
         }
         appendYAMLList(name: "tags", values: ["meeting"], to: &lines)
         lines.append("recording_id: \(yamlQuoted(session.id))")
+        if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append("notes: true")
+        }
         if let analysis {
             lines.append(analysisFrontmatterLine(analysis))
         }
@@ -64,6 +70,15 @@ struct MarkdownRenderer: Sendable {
             lines.append("<!-- \(vocabulary.analysisUnavailable) -->")
         }
         lines.append(contentsOf: [Self.analysisEndMarker, ""])
+        if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.append(contentsOf: [
+                Self.userNotesStartMarker,
+                "## \(vocabulary.userNotes)",
+                notes,
+                Self.userNotesEndMarker,
+                "",
+            ])
+        }
         lines.append(contentsOf: ["## \(vocabulary.transcript)", ""])
 
         if renderedSegments.isEmpty {
@@ -270,6 +285,7 @@ struct MarkdownAnalysisUpdater: Sendable {
 
 private struct MarkdownVocabulary {
     let transcript: String
+    let userNotes: String
     let speechOverlap: String
     let emptyTranscript: String
     let analysisUnavailable: String
@@ -288,6 +304,7 @@ private struct MarkdownVocabulary {
         case .slovak:
             self.init(
                 transcript: "Prepis",
+                userNotes: "Poznámky",
                 speechOverlap: "prekrytie reči",
                 emptyTranscript: "Prepis neobsahuje žiadne rozpoznané segmenty.",
                 analysisUnavailable: "AI analýza zatiaľ nebola vytvorená.",
@@ -297,6 +314,7 @@ private struct MarkdownVocabulary {
         case .czech:
             self.init(
                 transcript: "Přepis",
+                userNotes: "Poznámky",
                 speechOverlap: "překryv řeči",
                 emptyTranscript: "Přepis neobsahuje žádné rozpoznané segmenty.",
                 analysisUnavailable: "AI analýza zatím nebyla vytvořena.",
@@ -306,6 +324,7 @@ private struct MarkdownVocabulary {
         case .english:
             self.init(
                 transcript: "Transcript",
+                userNotes: "Notes",
                 speechOverlap: "overlapping speech",
                 emptyTranscript: "The transcript contains no recognized segments.",
                 analysisUnavailable: "AI analysis has not been created.",
@@ -317,6 +336,7 @@ private struct MarkdownVocabulary {
 
     private init(
         transcript: String,
+        userNotes: String,
         speechOverlap: String,
         emptyTranscript: String,
         analysisUnavailable: String,
@@ -324,6 +344,7 @@ private struct MarkdownVocabulary {
         onSiteParticipants: String
     ) {
         self.transcript = transcript
+        self.userNotes = userNotes
         self.speechOverlap = speechOverlap
         self.emptyTranscript = emptyTranscript
         self.analysisUnavailable = analysisUnavailable

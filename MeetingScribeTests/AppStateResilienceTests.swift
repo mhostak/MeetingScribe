@@ -1440,6 +1440,10 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         await delegate.loadRecoveredArtifacts(from: session)
     }
 
+    func loadUserNotes(from session: RecordingSession) async -> String? {
+        await delegate.loadUserNotes(from: session)
+    }
+
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {
         try await delegate.persistAnalysis(analysis, to: url)
     }
@@ -1449,6 +1453,7 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         analysis: AIAnalysisArtifact?,
+        notes: String?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         gate.block()
@@ -1457,6 +1462,7 @@ private actor BlockingExportProcessingFileService: ProcessingFileServicing {
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
             analysis: analysis,
+            notes: notes,
             to: directoryURL
         )
     }
@@ -1920,8 +1926,9 @@ private actor NotificationFailingTranscriber: SessionTranscribing {
 
 private actor NotificationFailingExporter: ProcessingFileServicing {
     func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts? { nil }
+    func loadUserNotes(from session: RecordingSession) async -> String? { nil }
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
-    func exportMarkdown(session: SessionMetadata, transcript: MergedTranscript, utteranceTranscript: ContinuousUtteranceTranscript?, analysis: AIAnalysisArtifact?, to directoryURL: URL) async throws -> MarkdownExportResult {
+    func exportMarkdown(session: SessionMetadata, transcript: MergedTranscript, utteranceTranscript: ContinuousUtteranceTranscript?, analysis: AIAnalysisArtifact?, notes: String?, to directoryURL: URL) async throws -> MarkdownExportResult {
         throw CocoaError(.fileWriteNoPermission)
     }
 }
