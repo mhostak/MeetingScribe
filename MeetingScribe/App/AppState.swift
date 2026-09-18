@@ -1029,19 +1029,27 @@ final class AppState: ObservableObject {
         }
     }
 
-    func updateMeetingNotes(_ text: String) async {
+    @discardableResult
+    func updateMeetingNotes(_ text: String) async -> Bool {
         meetingNotesDraft = text
         guard let activeSession = currentSession,
               !isOnboardingTestSession(activeSession) else {
-            return
+            return false
         }
 
         do {
             let updatedSession = try await sessionManager.updateActiveSessionNotes(text)
             currentSession = updatedSession
+            return true
         } catch {
             lastError = localized(error)
+            return false
         }
+    }
+
+    var isCurrentSessionOnboardingTest: Bool {
+        guard let currentSession else { return false }
+        return isOnboardingTestSession(currentSession)
     }
 
     func flushMeetingNotes() async {

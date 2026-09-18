@@ -300,7 +300,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Audio stays local. The transcript and selected meeting metadata may be sent to the provider used by the selected CLI tool.")
+                Group {
+                    Text("Audio stays local. The transcript and selected meeting metadata may be sent to the provider used by the selected CLI tool.")
+                    Text("When AI analysis is enabled, the meeting notes are sent to the selected CLI provider together with the transcript.")
+                }
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

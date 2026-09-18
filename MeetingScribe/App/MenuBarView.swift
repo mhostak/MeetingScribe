@@ -7,8 +7,11 @@ struct MenuBarView: View {
     let openRecordingsAction: () -> Void
     let openCalendarPickerAction: () -> Void
     let openOnboardingAction: () -> Void
+    @AppStorage("meetingNotesDisclosureIsExpanded") private var isMeetingNotesExpanded = false
     @State private var isEditingMeetingTitle = false
     @State private var meetingTitleDraft = ""
+    @State private var meetingNotesSaveState: MeetingNotesSaveState?
+    @State private var meetingNotesSaveTask: Task<Void, Never>?
     @FocusState private var isMeetingTitleFocused: Bool
 
     init(
@@ -53,6 +56,8 @@ struct MenuBarView: View {
         .environment(\.locale, appState.selectedAppLanguage.locale)
         .onChange(of: appState.currentSession?.metadata.id) {
             cancelMeetingTitleEditing()
+            meetingNotesSaveTask?.cancel()
+            meetingNotesSaveState = nil
         }
     }
 
@@ -184,6 +189,8 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 12) {
             meetingTitleAndCalendarControl
 
+            meetingNotesDisclosure
+
             Button {
                 Task { await appState.startRecording() }
             } label: {
@@ -241,8 +248,32 @@ struct MenuBarView: View {
                     ?? .systemAndMicrophone
             )
 
+            if canShowMeetingNotesEditor {
+                MeetingNotesEditor(
+                    text: $appState.meetingNotesDraft,
+                    isTimestampVisible: true,
+                    saveState: meetingNotesSaveState,
+                    insertTimestamp: insertMeetingNotesTimestamp,
+                    locale: appState.selectedAppLanguage.locale
+                )
+                .onChange(of: appState.meetingNotesDraft) { _, _ in
+                    scheduleMeetingNotesSave()
+                }
+                .onDisappear {
+                    Task { @MainActor in
+                        await saveMeetingNotesImmediately()
+                    }
+                }
+                .task {
+                    await appState.loadMeetingNotesFromDisk()
+                }
+            }
+
             Button {
-                Task { await appState.stopRecording() }
+                Task { @MainActor in
+                    await saveMeetingNotesImmediately()
+                    await appState.stopRecording()
+                }
             } label: {
                 Label("Stop recording", systemImage: "stop.fill")
                     .frame(maxWidth: .infinity)
@@ -256,6 +287,81 @@ struct MenuBarView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    private var meetingNotesDisclosure: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation {
+                    isMeetingNotesExpanded.toggle()
+                }
+            } label: {
+                HStack {
+                    Label("Meeting notes", systemImage: "note.text")
+                    Spacer()
+                    Image(systemName: isMeetingNotesExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isMeetingNotesExpanded {
+                MeetingNotesEditor(
+                    text: $appState.meetingNotesDraft,
+                    isTimestampVisible: false,
+                    saveState: nil,
+                    insertTimestamp: {},
+                    locale: appState.selectedAppLanguage.locale
+                )
+            }
+        }
+    }
+
+    private var canShowMeetingNotesEditor: Bool {
+        !appState.isCurrentSessionOnboardingTest
+    }
+
+    private func scheduleMeetingNotesSave() {
+        meetingNotesSaveTask?.cancel()
+        meetingNotesSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            meetingNotesSaveState = .saving
+            await persistMeetingNotes()
+        }
+    }
+
+    private func saveMeetingNotesImmediately() async {
+        meetingNotesSaveTask?.cancel()
+        meetingNotesSaveTask = nil
+        await persistMeetingNotes()
+    }
+
+    private func persistMeetingNotes() async {
+        let didPersistNotes = await appState.updateMeetingNotes(appState.meetingNotesDraft)
+        if didPersistNotes {
+            meetingNotesSaveState = .saved(Date())
+        } else {
+            meetingNotesSaveState = .failed
+        }
+    }
+
+    private func insertMeetingNotesTimestamp() {
+        guard let startedAt = appState.currentSession?.metadata.startedAt else { return }
+        let elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+        let timestamp = String(
+            format: "%02d:%02d:%02d",
+            elapsed / 3_600,
+            (elapsed % 3_600) / 60,
+            elapsed % 60
+        )
+        if !appState.meetingNotesDraft.isEmpty && !appState.meetingNotesDraft.hasSuffix("\n") {
+            appState.meetingNotesDraft += "\n"
+        }
+        appState.meetingNotesDraft += "- [\(timestamp)] "
+        scheduleMeetingNotesSave()
     }
 
     private var recordingTitleEditor: some View {
@@ -844,6 +950,81 @@ private struct RecordingDurationView: View {
             .foregroundStyle(.red)
             .contentTransition(.numericText())
         }
+    }
+}
+
+private enum MeetingNotesSaveState {
+    case saving
+    case saved(Date)
+    case failed
+}
+
+private struct MeetingNotesEditor: View {
+    @Binding var text: String
+    let isTimestampVisible: Bool
+    let saveState: MeetingNotesSaveState?
+    let insertTimestamp: () -> Void
+    let locale: Locale
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Notes")
+                    .font(.subheadline.weight(.semibold))
+
+                if isTimestampVisible {
+                    Button(action: insertTimestamp) {
+                        Image(systemName: "timer")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Insert note timestamp")
+                    .accessibilityLabel("Insert note timestamp")
+                }
+
+                Spacer()
+
+                if let saveState {
+                    saveStateLabel(saveState)
+                }
+            }
+
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(height: 120)
+                .frame(maxWidth: .infinity)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    @ViewBuilder
+    private func saveStateLabel(_ state: MeetingNotesSaveState) -> some View {
+        switch state {
+        case .saving:
+            Text("Saving…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .saved(date):
+            Text("Saved \(savedTime(date))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .failed:
+            Text("Saving failed — text stays in the editor")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func savedTime(_ date: Date) -> String {
+        date.formatted(
+            Date.FormatStyle(
+                date: .omitted,
+                time: .shortened,
+                locale: locale
+            )
+        )
     }
 }
 
