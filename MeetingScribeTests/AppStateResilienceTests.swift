@@ -1022,6 +1022,46 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(finalRunCount, runsAfterAvailabilityCheck)
     }
 
+    func testRecoveryScansLogOncePerDetectionEpisode() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let directory = recordingsRoot.appendingPathComponent("pending-recovery", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let metadata = SessionMetadata(
+            id: "pending-recovery", title: "Pending recovery", status: .recording, createdAt: Date()
+        )
+        let session = RecordingSession(metadata: metadata, directoryURL: directory)
+        try SessionJSONCoder.makeEncoder().encode(metadata).write(to: session.manifestURL, options: .atomic)
+        try Data("audio".utf8).write(to: session.systemAudioURL)
+        let manager = makeSessionManager(root: recordingsRoot)
+
+        // A fresh app instance also proves deduplication survives an app restart.
+        for expectedCount in [1, 1, 2, 2] {
+            if expectedCount == 2,
+               try decodeMetadata(at: session.manifestURL).recovery == nil {
+                // Keep the failure strictly later at the manifest's whole-second precision.
+                var detected = try decodeMetadata(at: session.manifestURL)
+                detected.recoveryDetectedAt = Date(timeIntervalSince1970: 1_700_000_000)
+                try SessionJSONCoder.makeEncoder().encode(detected).write(to: session.manifestURL, options: .atomic)
+                _ = try await manager.beginRecovery(id: metadata.id)
+                _ = try await manager.failSession(reason: "Failed recovery attempt")
+            }
+            let appState = makeAppState(
+                sessionManager: manager,
+                fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                    modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+                ),
+                defaults: fixture.defaults
+            )
+            await appState.prepareStorage()
+            XCTAssertEqual(appState.recoveryCandidates.map(\.id), [metadata.id])
+            let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+            let detections = log.split(separator: "\n").filter { $0.contains(#""event":"recoveryDetected""#) }
+            XCTAssertEqual(detections.count, expectedCount)
+        }
+    }
+
     func testAppStateRecoversInterruptedSessionFromMergedTranscriptEndToEnd() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -1201,6 +1241,57 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(stopCount, 1)
         XCTAssertEqual(appState.status, .idle)
         XCTAssertFalse(appState.lastError?.contains("Invalid state transition") == true)
+    }
+
+    func testOwnershipFailuresReportNonFatalErrorAndReclaimWithoutStoppingCapture() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let modelsRoot = fixture.root.appendingPathComponent("Models", isDirectory: true)
+        let systemCapture = ResilienceCaptureService()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: modelsRoot,
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(
+                interval: .milliseconds(5),
+                ownershipRefreshEveryTicks: 10,
+                storageCheckEveryTicks: 1_000,
+                maximumOwnershipRefreshFailures: 3
+            ),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        let markerURL = session.directoryURL.appendingPathComponent(RecordingOwnership.markerFileName)
+        // A directory at the marker path prevents both refresh and reclaim,
+        // without relying on permissions that differ between test runners.
+        try FileManager.default.removeItem(at: markerURL)
+        try FileManager.default.createDirectory(at: markerURL, withIntermediateDirectories: false)
+        try Data("obstruction".utf8).write(to: markerURL.appendingPathComponent("child"))
+        let ownershipErrorPrefix = appState.localized(.recordingOwnershipUpdateFailed(""))
+        try await waitUntil { appState.lastError?.hasPrefix(ownershipErrorPrefix) == true }
+        XCTAssertEqual(appState.status, .recording)
+        let stopCount = await systemCapture.stopCount()
+        XCTAssertEqual(stopCount, 0)
+
+        try FileManager.default.removeItem(at: markerURL)
+        try await waitUntil {
+            (try? RecordingOwnership().read(in: session.directoryURL)) != nil
+        }
+        XCTAssertEqual(appState.status, .recording)
+        XCTAssertEqual(RecordingOwnership().classification(of: session.directoryURL), .claimedByThisProcess)
+        await appState.stopRecording()
+        await appState.waitForProcessing()
     }
 
     func testRequiredSystemCaptureFailureTriggersSafeAutomaticStop() async throws {

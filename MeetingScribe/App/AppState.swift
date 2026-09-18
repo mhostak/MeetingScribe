@@ -11,9 +11,13 @@ struct CaptureMonitoringConfiguration: Sendable {
     // Storage checks retain their previous five-second cadence, and a stalled
     // source still needs roughly three seconds of consecutive confirmation.
     var interval: Duration = .milliseconds(200)
+    // Refresh every 15 seconds, well inside the 90-second ownership expiry,
+    // so occasional delayed monitor ticks do not expose a live capture to recovery.
+    var ownershipRefreshEveryTicks = 75
     var storageCheckEveryTicks = 25
     var stalledSystemAudioCheckCount = 15
     var maximumStorageCheckFailures = 3
+    var maximumOwnershipRefreshFailures = 3
 }
 
 @MainActor
@@ -2172,7 +2176,7 @@ final class AppState: ObservableObject {
             recoveryCandidates = result.candidates
             recoveryIssues = result.issues
             for candidate in result.candidates {
-                try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+                await logRecoveryDetectionIfNeeded(candidate)
             }
             if !result.issues.isEmpty, lastError == nil {
                 lastError = localized(.recoveryIssues)
@@ -2184,6 +2188,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func logRecoveryDetectionIfNeeded(_ candidate: SessionRecoveryCandidate) async {
+        guard (try? await sessionManager.recordRecoveryDetection(id: candidate.id)) == true else { return }
+        try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+    }
+
     private func removeRecoveryCandidate(id: String) {
         recoveryCandidates.removeAll { $0.id == id }
     }
@@ -2191,6 +2200,7 @@ final class AppState: ObservableObject {
     private func refreshRecoveryCandidate(id: String) async {
         do {
             if let candidate = try await sessionManager.recoveryCandidate(id: id) {
+                await logRecoveryDetectionIfNeeded(candidate)
                 if let index = recoveryCandidates.firstIndex(where: { $0.id == id }) {
                     recoveryCandidates[index] = candidate
                 } else {
@@ -2263,6 +2273,7 @@ final class AppState: ObservableObject {
         let monitoringConfiguration = captureMonitoringConfiguration
 
         captureMonitorTask = Task { [weak self] in
+            var ownershipRefreshFailureCount = 0
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: monitoringConfiguration.interval)
@@ -2311,6 +2322,27 @@ final class AppState: ObservableObject {
                 }
 
                 self.storageCheckTick += 1
+                let ownershipFrequency = max(1, monitoringConfiguration.ownershipRefreshEveryTicks)
+                if ownershipRefreshFailureCount > 0 || self.storageCheckTick.isMultiple(of: ownershipFrequency) {
+                    do {
+                        // Retry on the next tick because the marker may have been
+                        // removed. Bookkeeping failures must never interrupt capture.
+                        if ownershipRefreshFailureCount > 0 {
+                            try await self.sessionManager.reclaimRecordingOwnership()
+                        } else {
+                            try await self.sessionManager.refreshRecordingOwnership()
+                        }
+                        ownershipRefreshFailureCount = 0
+                    } catch {
+                        guard !Task.isCancelled, self.status == .recording,
+                              self.currentSession?.metadata.id == captureID else { break }
+                        ownershipRefreshFailureCount += 1
+                        let maximumFailures = max(1, monitoringConfiguration.maximumOwnershipRefreshFailures)
+                        if ownershipRefreshFailureCount == maximumFailures {
+                            self.lastError = self.localized(.recordingOwnershipUpdateFailed(self.localized(error)))
+                        }
+                    }
+                }
                 let storageFrequency = max(
                     1,
                     monitoringConfiguration.storageCheckEveryTicks

@@ -59,8 +59,10 @@ struct SessionRecoveryScanner {
     static let closedIssueMarkerFileName = ".recovery-closed"
 
     private let fileManager: FileManager
+    private let ownership: RecordingOwnership
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, ownership: RecordingOwnership = RecordingOwnership()) {
+        self.ownership = ownership
         self.fileManager = fileManager
     }
 
@@ -79,6 +81,7 @@ struct SessionRecoveryScanner {
             guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
                 continue
             }
+            guard !ownership.classification(of: directory).isLive else { continue }
             let closedIssueMarkerURL = directory.appendingPathComponent(
                 Self.closedIssueMarkerFileName,
                 isDirectory: false
@@ -162,7 +165,8 @@ struct SessionRecoveryScanner {
     ) -> SessionRecoveryCandidate? {
         let root = recordingsRoot.standardizedFileURL
         let directory = root.appendingPathComponent(id, isDirectory: true).standardizedFileURL
-        guard directory.deletingLastPathComponent() == root,
+        guard !ownership.classification(of: directory).isLive,
+              directory.deletingLastPathComponent() == root,
               directory.lastPathComponent == id,
               !fileManager.fileExists(atPath: directory.appendingPathComponent(
                 Self.closedIssueMarkerFileName,
@@ -201,7 +205,8 @@ struct SessionRecoveryScanner {
         let directory = root
             .appendingPathComponent(directoryName, isDirectory: true)
             .standardizedFileURL
-        guard directory.deletingLastPathComponent() == root,
+        guard !ownership.classification(of: directory).isLive,
+              directory.deletingLastPathComponent() == root,
               directory.lastPathComponent == directoryName,
               (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
               !fileManager.fileExists(atPath: directory.appendingPathComponent(
