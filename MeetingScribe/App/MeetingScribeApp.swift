@@ -170,8 +170,7 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
                 appState: appState,
                 openSettingsAction: { [weak self] in self?.openSettings() },
                 openRecordingsAction: { [weak self] in self?.openRecordings() },
-                openCalendarPickerAction: { [weak self] in self?.openCalendarPicker() },
-                openOnboardingAction: { [weak self] in self?.openOnboarding() }
+                openCalendarPickerAction: { [weak self] in self?.openCalendarPicker() }
             )
         )
         menuBarController.sizingOptions = [.preferredContentSize]

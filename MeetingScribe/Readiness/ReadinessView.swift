@@ -42,8 +42,20 @@ struct ReadinessView: View {
             }
 
             ScrollView {
-                ReadinessOverviewView(appState: appState, openSettingsAction: {})
-                    .padding(.bottom, 2)
+                VStack(alignment: .leading, spacing: 14) {
+                    ReadinessOverviewView(appState: appState, openSettingsAction: {})
+
+                    Divider()
+
+                    Text("Setup test")
+                        .font(.headline)
+                    Text("Permission is not proof that audio is arriving from a device. Run the test after changing an input device or a permission.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    SetupTestView(appState: appState)
+                }
+                .padding(.bottom, 2)
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(minHeight: 160, idealHeight: 260, maxHeight: .infinity)

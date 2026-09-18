@@ -533,6 +533,34 @@ final class OnboardingTests: XCTestCase {
         }
     }
 
+    /// The readiness overview now carries the setup test as well, so it has to
+    /// keep a bounded height instead of growing with the eight checks and a
+    /// test result.
+    func testReadinessOverviewStaysInsideASettingsSizedWindow() async throws {
+        let fixture = try makeOnboardingTestFixture()
+        defer { fixture.cleanup() }
+        let appState = makeOnboardingTestAppState(
+            fixture: fixture,
+            capture: OnboardingTestCaptureService(systemActivity: true),
+            finalizer: CountingOnboardingTestFinalizer(),
+            delay: ImmediateOnboardingTestDelay()
+        )
+        await appState.refreshReadiness()
+        XCTAssertEqual(appState.readinessSnapshot?.checks.count, 8)
+
+        let controller = NSHostingController(
+            rootView: ReadinessView(appState: appState, openOnboardingAction: {})
+        )
+        controller.view.frame = NSRect(x: 0, y: 0, width: 900, height: 620)
+        controller.view.layoutSubtreeIfNeeded()
+
+        XCTAssertLessThanOrEqual(
+            controller.view.fittingSize.height,
+            620,
+            "Readiness wants \(controller.view.fittingSize.height)pt."
+        )
+    }
+
     private func makeReadinessService() -> ReadinessService {
         ReadinessService(
             permissionProbe: OnboardingPermissionProbe(),

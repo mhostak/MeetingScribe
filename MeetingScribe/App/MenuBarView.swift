@@ -6,7 +6,6 @@ struct MenuBarView: View {
     let openSettingsAction: () -> Void
     let openRecordingsAction: () -> Void
     let openCalendarPickerAction: () -> Void
-    let openOnboardingAction: () -> Void
     @State private var isEditingMeetingTitle = false
     @State private var meetingTitleDraft = ""
     @FocusState private var isMeetingTitleFocused: Bool
@@ -15,14 +14,12 @@ struct MenuBarView: View {
         appState: AppState,
         openSettingsAction: @escaping () -> Void = {},
         openRecordingsAction: @escaping () -> Void = {},
-        openCalendarPickerAction: @escaping () -> Void = {},
-        openOnboardingAction: @escaping () -> Void = {}
+        openCalendarPickerAction: @escaping () -> Void = {}
     ) {
         self.appState = appState
         self.openSettingsAction = openSettingsAction
         self.openRecordingsAction = openRecordingsAction
         self.openCalendarPickerAction = openCalendarPickerAction
-        self.openOnboardingAction = openOnboardingAction
     }
 
     var body: some View {
@@ -493,8 +490,11 @@ struct MenuBarView: View {
 
                 Spacer()
 
+                // The entry is named after the readiness overview, so it has
+                // to open that and not the first-run guide.
                 Button {
-                    openOnboardingAction()
+                    appState.selectedSettingsSection = "readiness"
+                    openSettingsAction()
                 } label: {
                     Label("Readiness", systemImage: "checkmark.seal")
                 }
