@@ -278,6 +278,278 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertTrue(appState.canEditSessionConfiguration)
     }
 
+    func testPreRecordingNotesDraftStartsSessionAndClearsAfterStop() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        appState.meetingNotesDraft = "Pre-recording agenda"
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+
+        XCTAssertEqual(try String(contentsOf: session.notesURL, encoding: .utf8), "Pre-recording agenda")
+        XCTAssertEqual(appState.currentMeetingNotes, "Pre-recording agenda")
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+
+        XCTAssertEqual(appState.meetingNotesDraft, "")
+        XCTAssertEqual(try String(contentsOf: session.notesURL, encoding: .utf8), "Pre-recording agenda")
+    }
+
+    func testFlushMeetingNotesPersistsLatestTextBeforeStop() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+
+        await appState.updateMeetingNotes("First agenda")
+        await appState.flushMeetingNotes()
+        await appState.updateMeetingNotes("Latest agenda")
+        await appState.flushMeetingNotes()
+
+        XCTAssertEqual(try String(contentsOf: session.notesURL, encoding: .utf8), "Latest agenda")
+        XCTAssertEqual(appState.currentMeetingNotes, "Latest agenda")
+        XCTAssertEqual(appState.meetingNotesDraft, "Latest agenda")
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testFlushMeetingNotesDeletesEmptiedEditorContent() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        appState.meetingNotesDraft = "Remove me"
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        appState.meetingNotesDraft = ""
+
+        await appState.flushMeetingNotes()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.notesURL.path))
+        XCTAssertNil(appState.currentSession?.metadata.notes)
+        XCTAssertNil(try decodeMetadata(at: session.manifestURL).notes)
+        XCTAssertEqual(appState.currentMeetingNotes, "")
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testFailedNotesWriteKeepsDraftAndSetsError() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        try FileManager.default.createDirectory(
+            at: session.notesURL,
+            withIntermediateDirectories: false
+        )
+
+        await appState.updateMeetingNotes("Preserved agenda")
+
+        XCTAssertEqual(appState.meetingNotesDraft, "Preserved agenda")
+        XCTAssertEqual(appState.currentMeetingNotes, "Preserved agenda")
+        XCTAssertNotNil(appState.lastError)
+    }
+
+    func testCurrentMeetingNotesReturnsDraftWithoutDiskAccess() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        appState.meetingNotesDraft = "Editor draft"
+        try "Different disk content".write(to: session.notesURL, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(appState.currentMeetingNotes, "Editor draft")
+    }
+
+    func testLoadMeetingNotesFromDiskRespectsExistingDraft() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        await appState.updateMeetingNotes("Persisted agenda")
+        appState.meetingNotesDraft = ""
+
+        await appState.loadMeetingNotesFromDisk()
+
+        XCTAssertEqual(appState.meetingNotesDraft, "Persisted agenda")
+
+        appState.meetingNotesDraft = "Local draft"
+        try "Different disk content".write(to: session.notesURL, atomically: true, encoding: .utf8)
+
+        await appState.loadMeetingNotesFromDisk()
+
+        XCTAssertEqual(appState.meetingNotesDraft, "Local draft")
+    }
+
+    func testUpdateMeetingNotesDoesNotLogPerSave() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+
+        await appState.updateMeetingNotes("First")
+        await appState.updateMeetingNotes("Second")
+        await appState.updateMeetingNotes("Third")
+        await appState.flushMeetingNotes()
+
+        let log = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+        XCTAssertEqual(log.components(separatedBy: #""event":"noteSaved""#).count - 1, 1)
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testOnboardingTestSessionIgnoresNotesAndPreservesDraft() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        appState.meetingNotesDraft = "Preserved agenda"
+        await appState.startOnboardingTest()
+        let session = try XCTUnwrap(appState.currentSession)
+
+        XCTAssertNil(session.metadata.notes)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: session.notesURL.path))
+        XCTAssertEqual(appState.meetingNotesDraft, "Preserved agenda")
+
+        await appState.stopOnboardingTest()
+        await appState.waitForProcessing()
+    }
+
     func testPrepareStorageRunsInitializationOnlyOnce() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

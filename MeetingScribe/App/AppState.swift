@@ -102,6 +102,7 @@ final class AppState: ObservableObject {
     @Published var customAnalysisModel = ""
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
+    @Published var meetingNotesDraft = ""
     @Published var automaticallyDeleteSourceCAF = false
     @Published var audioRetentionPolicy: AudioRetentionPolicy = .keepForever
     @Published var selectedAppLanguage: AppLanguage = .system
@@ -666,6 +667,7 @@ final class AppState: ObservableObject {
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
                 calendarEvent: isOnboardingTest ? nil : pendingCalendarEvent,
+                notes: isOnboardingTest ? nil : meetingNotesDraft,
                 analysisConfiguration: isOnboardingTest ? nil : currentAnalysisConfiguration()
             )
             currentSession = session
@@ -675,6 +677,13 @@ final class AppState: ObservableObject {
                 pendingCalendarEvent = nil
             }
             try? await processingLogger.log(.sessionCreated, for: session)
+            if let notes = session.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: session,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
 
             do {
                 let diagnostics = try await captureCoordinator.start(for: session)
@@ -740,8 +749,9 @@ final class AppState: ObservableObject {
             .flatMap { sessionID in
                 onboardingTestSessionID == sessionID ? sessionID : nil
             }
+        await flushMeetingNotes()
         do {
-            if let stoppedOnboardingTestSessionID {
+            if stoppedOnboardingTestSessionID != nil {
                 onboardingTestTimer?.cancel()
                 onboardingTestTimer = nil
                 onboardingTestPhase = .processing
@@ -766,6 +776,7 @@ final class AppState: ObservableObject {
             currentSession = nil
             if stoppedOnboardingTestSessionID == nil {
                 meetingTitle = ""
+                meetingNotesDraft = ""
                 pendingCalendarEvent = nil
                 calendarEventCandidates = []
             }
@@ -1016,6 +1027,74 @@ final class AppState: ObservableObject {
         } catch {
             lastError = "The meeting title could not be updated: \(error.localizedDescription)"
         }
+    }
+
+    func updateMeetingNotes(_ text: String) async {
+        meetingNotesDraft = text
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession) else {
+            return
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(text)
+            currentSession = updatedSession
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    func flushMeetingNotes() async {
+        guard let currentSession,
+              !isOnboardingTestSession(currentSession) else {
+            return
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(meetingNotesDraft)
+            self.currentSession = updatedSession
+            if let notes = updatedSession.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: updatedSession,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    var currentMeetingNotes: String {
+        meetingNotesDraft
+    }
+
+    func loadMeetingNotesFromDisk() async {
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession),
+              activeSession.metadata.notes != nil,
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+
+        let sessionID = activeSession.metadata.id
+        let notesURL = activeSession.notesURL
+        let notes: String
+        do {
+            notes = try await Task.detached(priority: .utility) {
+                try String(contentsOf: notesURL, encoding: .utf8)
+            }.value
+        } catch {
+            return
+        }
+
+        guard let currentSession,
+              currentSession.metadata.id == sessionID,
+              !isOnboardingTestSession(currentSession),
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+        meetingNotesDraft = notes
     }
 
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {

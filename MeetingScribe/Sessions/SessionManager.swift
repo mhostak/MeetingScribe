@@ -40,6 +40,7 @@ actor SessionManager {
         outputLanguage: OutputLanguage = .slovak,
         outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        notes: String? = nil,
         analysisConfiguration: SessionAnalysisConfiguration? = nil,
         now: Date = Date()
     ) throws -> RecordingSession {
@@ -68,9 +69,20 @@ actor SessionManager {
             captureMode: .systemAndMicrophone,
             analysisConfiguration: analysisConfiguration
         )
-        let session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
+        var session = RecordingSession(metadata: metadata, directoryURL: directoryURL)
 
         try persist(session)
+        if let notes {
+            let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedNotes.isEmpty {
+                try Data(notes.utf8).write(to: session.notesURL, options: .atomic)
+                session.metadata.notes = SessionNotesMetadata(
+                    updatedAt: now,
+                    characterCount: notes.count
+                )
+                try persist(session)
+            }
+        }
         activeSession = session
         return session
     }
@@ -424,6 +436,29 @@ actor SessionManager {
         }
 
         session.metadata.title = normalizedTitle
+        try persist(session)
+        activeSession = session
+        return session
+    }
+
+    func updateActiveSessionNotes(_ text: String) throws -> RecordingSession {
+        guard var session = activeSession else {
+            throw SessionManagerError.noActiveSession
+        }
+
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedText.isEmpty {
+            if fileManager.fileExists(atPath: session.notesURL.path) {
+                try fileManager.removeItem(at: session.notesURL)
+            }
+            session.metadata.notes = nil
+        } else {
+            try Data(text.utf8).write(to: session.notesURL, options: .atomic)
+            session.metadata.notes = SessionNotesMetadata(
+                updatedAt: Date(),
+                characterCount: text.count
+            )
+        }
         try persist(session)
         activeSession = session
         return session

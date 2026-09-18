@@ -67,6 +67,33 @@ final class ProcessingLoggerTests: XCTestCase {
         XCTAssertTrue(content.contains(#""microphoneSkippedDurationSeconds":"2800.0""#))
     }
 
+    func testNoteLogContainsCharacterCountWithoutNoteText() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MeetingScribeLoggerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let session = RecordingSession(
+            metadata: SessionMetadata(
+                id: "session-notes",
+                title: "Notes meeting",
+                status: .recording,
+                createdAt: Date()
+            ),
+            directoryURL: root
+        )
+
+        try await ProcessingLogger().log(
+            .noteSaved,
+            for: session,
+            attributes: [.characterCount(27)]
+        )
+
+        let content = try String(contentsOf: session.processingLogURL, encoding: .utf8)
+        XCTAssertTrue(content.contains(#""event":"noteSaved""#))
+        XCTAssertTrue(content.contains(#""characterCount":"27""#))
+        XCTAssertFalse(content.contains("Private meeting note"))
+    }
+
     func testShortTitleDoesNotCorruptUnrelatedDiagnosticValues() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeLoggerTests-\(UUID().uuidString)", isDirectory: true)

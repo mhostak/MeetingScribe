@@ -175,6 +175,36 @@ final class SessionCatalogTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(snapshot.entries.first).hasAnalysis)
     }
 
+    func testDetectsWhetherNotesFileExists() async throws {
+        let withNotes = try writeCompletedSession(
+            id: "with-notes",
+            title: "With notes",
+            startedAt: Date(timeIntervalSince1970: 100),
+            markdownURL: root.appendingPathComponent("with-notes.md")
+        )
+        let withEmptyNotes = try writeCompletedSession(
+            id: "empty-notes",
+            title: "Empty notes",
+            startedAt: Date(timeIntervalSince1970: 100),
+            markdownURL: root.appendingPathComponent("empty-notes.md")
+        )
+        try writeCompletedSession(
+            id: "without-notes",
+            title: "Without notes",
+            startedAt: Date(timeIntervalSince1970: 100),
+            markdownURL: root.appendingPathComponent("without-notes.md")
+        )
+        try Data("meeting notes".utf8).write(to: withNotes.appendingPathComponent("notes.md"))
+        try Data().write(to: withEmptyNotes.appendingPathComponent("notes.md"))
+
+        let snapshot = try await SessionCatalog(recordingsRoot: root).load()
+        let entries = snapshot.entries
+
+        XCTAssertTrue(try XCTUnwrap(entries.first { $0.id == "with-notes" }).hasNotes)
+        XCTAssertFalse(try XCTUnwrap(entries.first { $0.id == "empty-notes" }).hasNotes)
+        XCTAssertFalse(try XCTUnwrap(entries.first { $0.id == "without-notes" }).hasNotes)
+    }
+
     func testCatalogMarksIntentionallyPurgedAudioAsRemoved() async throws {
         let markdownURL = root.appendingPathComponent("purged.md")
         try Data("markdown".utf8).write(to: markdownURL)

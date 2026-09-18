@@ -297,6 +297,12 @@ struct SessionOutputMetadata: Codable, Equatable, Sendable {
     var failureReason: String?
 }
 
+struct SessionNotesMetadata: Codable, Equatable, Sendable {
+    var fileName: String = "notes.md"
+    var updatedAt: Date
+    var characterCount: Int
+}
+
 struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     let schemaVersion: Int
     let id: String
@@ -309,6 +315,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
     var outputLanguage: OutputLanguage?
     var outputFileNameTemplate: String?
     var calendarEvent: CalendarEventSnapshot?
+    var notes: SessionNotesMetadata?
     var captureMode: CaptureMode?
     var audioFiles: SessionAudioFiles
     var transcriptFiles: SessionTranscriptFiles?
@@ -339,6 +346,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         outputLanguage: OutputLanguage? = .slovak,
         outputFileNameTemplate: String? = MarkdownFileNameTemplate.defaultValue,
         calendarEvent: CalendarEventSnapshot? = nil,
+        notes: SessionNotesMetadata? = nil,
         captureMode: CaptureMode? = .systemAndMicrophone,
         audioFiles: SessionAudioFiles = SessionAudioFiles(),
         transcriptFiles: SessionTranscriptFiles? = SessionTranscriptFiles(),
@@ -367,6 +375,7 @@ struct SessionMetadata: Codable, Equatable, Identifiable, Sendable {
         self.outputLanguage = outputLanguage
         self.outputFileNameTemplate = outputFileNameTemplate
         self.calendarEvent = calendarEvent
+        self.notes = notes
         self.captureMode = captureMode
         self.audioFiles = audioFiles
         self.transcriptFiles = transcriptFiles
