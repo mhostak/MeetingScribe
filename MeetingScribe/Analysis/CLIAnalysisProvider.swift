@@ -126,18 +126,26 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 try inputPipe.fileHandleForWriting.write(contentsOf: command.standardInput)
                 try inputPipe.fileHandleForWriting.close()
             } catch {
-                controller.terminateAfterInputFailure(process)
-                process.waitUntilExit()
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
-                controller.detach(process)
-                if controller.isTerminationRequested {
-                    throw CancellationError()
+                // A tool that rejects its arguments or is signed out exits before
+                // draining stdin, which breaks this pipe. That is the tool's own
+                // failure, so close the writer and let the normal result path
+                // report its exit code and stderr instead of a launch failure.
+                if Self.isBrokenPipe(error), !controller.isTerminationRequested {
+                    try? inputPipe.fileHandleForWriting.close()
+                } else {
+                    controller.terminateAfterInputFailure(process)
+                    process.waitUntilExit()
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    controller.detach(process)
+                    if controller.isTerminationRequested {
+                        throw CancellationError()
+                    }
+                    throw AnalysisError.processLaunchFailed(
+                        tool: tool,
+                        message: error.localizedDescription
+                    )
                 }
-                throw AnalysisError.processLaunchFailed(
-                    tool: tool,
-                    message: error.localizedDescription
-                )
             }
 
             process.waitUntilExit()
@@ -153,6 +161,19 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 standardError: errors.value
             )
         }.value
+    }
+
+    /// `F_SETNOSIGPIPE` turns a broken pipe into a thrown error whose POSIX
+    /// cause is wrapped in an opaque Cocoa write error, so inspect the chain.
+    private static func isBrokenPipe(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let candidate = current {
+            if candidate.domain == NSPOSIXErrorDomain, candidate.code == Int(EPIPE) {
+                return true
+            }
+            current = candidate.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return false
     }
 }
 
