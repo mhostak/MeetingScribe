@@ -283,6 +283,10 @@ final class CLIAnalysisProviderTests: XCTestCase {
     func testProductionRunnerExecutesFakeCodexWithoutShellWrapping() async throws {
         let fixture = try makeExecutableFixture(script: """
         #!/bin/sh
+        # Consume the prompt the way the real CLI does. Exiting without
+        # draining stdin lets the runner's write race the child's exit, which
+        # fails with EPIPE on a loaded machine instead of testing anything.
+        /bin/cat > /dev/null
         if [ "$1" = "--version" ]; then
           printf 'fake-codex 1.0'
           exit 0
@@ -302,7 +306,9 @@ final class CLIAnalysisProviderTests: XCTestCase {
             tool: .codex,
             executableURL: fixture.executable,
             runner: AnalysisProcessRunner(),
-            requestTimeout: .seconds(5)
+            // Generous: this test asserts arguments and output, never latency.
+            // A tight budget only turns runner contention into a false failure.
+            requestTimeout: .seconds(60)
         )
 
         let response = try await provider.analyze(makeRequest())
@@ -315,6 +321,10 @@ final class CLIAnalysisProviderTests: XCTestCase {
     func testProductionRunnerExecutesClaudeWithRequiredSafetyArguments() async throws {
         let fixture = try makeExecutableFixture(script: """
         #!/bin/sh
+        # Consume the prompt the way the real CLI does. Exiting without
+        # draining stdin lets the runner's write race the child's exit, which
+        # fails with EPIPE on a loaded machine instead of testing anything.
+        /bin/cat > /dev/null
         saw_print=0
         saw_input=0
         saw_output=0
@@ -354,7 +364,9 @@ final class CLIAnalysisProviderTests: XCTestCase {
             executableURL: fixture.executable,
             model: "sonnet-test",
             runner: AnalysisProcessRunner(),
-            requestTimeout: .seconds(5)
+            // Generous: this test asserts arguments and output, never latency.
+            // A tight budget only turns runner contention into a false failure.
+            requestTimeout: .seconds(60)
         )
 
         let response = try await provider.analyze(makeRequest())

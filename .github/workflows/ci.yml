@@ -1,14 +1,21 @@
 name: CI
 
 on:
+  # Branch pushes are covered by the pull_request event. Limiting push to the
+  # default branch keeps a commit on a branch with an open PR from starting two
+  # concurrent runs that compete for the same runner.
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # head_ref is the source branch on a pull_request and empty otherwise, so a
+  # branch groups under one key instead of splitting between refs/heads/<branch>
+  # and refs/pull/<n>/merge.
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
