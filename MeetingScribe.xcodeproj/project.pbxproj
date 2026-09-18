@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		000000000000000000000101 /* MeetingScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000201 /* MeetingScribeApp.swift */; };
+		B17DEC910F41495E932ABD02 /* AppLaunchEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DEC910F41495E932ABD01 /* AppLaunchEnvironment.swift */; };
 		000000000000000000000102 /* AppStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000202 /* AppStatus.swift */; };
 		000000000000000000000103 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000203 /* AppState.swift */; };
 		000000000000000000000104 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000204 /* MenuBarView.swift */; };
@@ -63,6 +64,7 @@
 		000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000263 /* LongSessionStabilityTests.swift */; };
 		000000000000000000000163 /* ProcessingFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000266 /* ProcessingFileService.swift */; };
 		000000000000000000000164 /* AudioClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000267 /* AudioClockTests.swift */; };
+		B17DEC910F41495E932ABD04 /* AppLaunchEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B17DEC910F41495E932ABD03 /* AppLaunchEnvironmentTests.swift */; };
 		000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */; };
 		000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000269 /* ProcessingFileServiceTests.swift */; };
 		000000000000000000000168 /* ApplicationSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000271 /* ApplicationSettings.swift */; };
@@ -120,6 +122,7 @@
 
 /* Begin PBXFileReference section */
 		000000000000000000000201 /* MeetingScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingScribeApp.swift; sourceTree = "<group>"; };
+		B17DEC910F41495E932ABD01 /* AppLaunchEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchEnvironment.swift; sourceTree = "<group>"; };
 		000000000000000000000202 /* AppStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStatus.swift; sourceTree = "<group>"; };
 		000000000000000000000203 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		000000000000000000000204 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -179,6 +182,7 @@
 		000000000000000000000265 /* MeetingScribe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MeetingScribe.entitlements; sourceTree = "<group>"; };
 		000000000000000000000266 /* ProcessingFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileService.swift; sourceTree = "<group>"; };
 		000000000000000000000267 /* AudioClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioClockTests.swift; sourceTree = "<group>"; };
+		B17DEC910F41495E932ABD03 /* AppLaunchEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchEnvironmentTests.swift; sourceTree = "<group>"; };
 		000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCaptureRecoveryTests.swift; sourceTree = "<group>"; };
 		000000000000000000000269 /* ProcessingFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessingFileServiceTests.swift; sourceTree = "<group>"; };
 		000000000000000000000271 /* ApplicationSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApplicationSettings.swift; sourceTree = "<group>"; };
@@ -281,6 +285,7 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000201 /* MeetingScribeApp.swift */,
+				B17DEC910F41495E932ABD01 /* AppLaunchEnvironment.swift */,
 				000000000000000000000202 /* AppStatus.swift */,
 				000000000000000000000203 /* AppState.swift */,
 				000000000000000000000271 /* ApplicationSettings.swift */,
@@ -345,6 +350,7 @@
 				000000000000000000000289 /* FluidAudioTranscriptionServiceTests.swift */,
 				000000000000000000000287 /* FluidAudioModelManagerTests.swift */,
 				000000000000000000000267 /* AudioClockTests.swift */,
+				B17DEC910F41495E932ABD03 /* AppLaunchEnvironmentTests.swift */,
 				000000000000000000000268 /* MicrophoneCaptureRecoveryTests.swift */,
 				000000000000000000000269 /* ProcessingFileServiceTests.swift */,
 				000000000000000000000263 /* LongSessionStabilityTests.swift */,
@@ -611,6 +617,7 @@
 				000000000000000000000114 /* CaptureCoordinator.swift in Sources */,
 				000000000000000000000118 /* MicrophoneCapture.swift in Sources */,
 				000000000000000000000101 /* MeetingScribeApp.swift in Sources */,
+				B17DEC910F41495E932ABD02 /* AppLaunchEnvironment.swift in Sources */,
 				000000000000000000000102 /* AppStatus.swift in Sources */,
 				000000000000000000000103 /* AppState.swift in Sources */,
 				000000000000000000000168 /* ApplicationSettings.swift in Sources */,
@@ -641,6 +648,7 @@
 				000000000000000000000184 /* FluidAudioModelManagerTests.swift in Sources */,
 				000000000000000000000175 /* SessionCatalogTests.swift in Sources */,
 				000000000000000000000164 /* AudioClockTests.swift in Sources */,
+				B17DEC910F41495E932ABD04 /* AppLaunchEnvironmentTests.swift in Sources */,
 				000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */,
 				000000000000000000000166 /* ProcessingFileServiceTests.swift in Sources */,
 				000000000000000000000161 /* LongSessionStabilityTests.swift in Sources */,
