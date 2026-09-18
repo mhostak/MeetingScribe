@@ -89,4 +89,11 @@ struct RecordingSession: Equatable, Sendable {
             isDirectory: false
         )
     }
+
+    var notesURL: URL {
+        directoryURL.appendingPathComponent(
+            metadata.notes?.fileName ?? "notes.md",
+            isDirectory: false
+        )
+    }
 }

@@ -50,6 +50,7 @@ final class AppState: ObservableObject {
     static let onboardingTestSessionTitle = "MeetingScribe Setup Test"
     @Published private(set) var status: AppStatus = .idle
     @Published private(set) var currentSession: RecordingSession?
+    @Published private(set) var captureStartedAt: Date?
     @Published private(set) var lastCompletedSession: RecordingSession?
     @Published private(set) var lastError: String?
     let captureDiagnosticsModel = CaptureDiagnosticsModel()
@@ -102,6 +103,7 @@ final class AppState: ObservableObject {
     @Published var customAnalysisModel = ""
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
+    @Published var meetingNotesDraft = ""
     @Published var automaticallyDeleteSourceCAF = false
     @Published var audioRetentionPolicy: AudioRetentionPolicy = .keepForever
     @Published var selectedAppLanguage: AppLanguage = .system
@@ -654,6 +656,7 @@ final class AppState: ObservableObject {
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
+            captureStartedAt = nil
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
             storageCheckTick = 0
@@ -666,6 +669,7 @@ final class AppState: ObservableObject {
                 outputLanguage: selectedOutputLanguage,
                 outputFileNameTemplate: markdownFileNameTemplate,
                 calendarEvent: isOnboardingTest ? nil : pendingCalendarEvent,
+                notes: isOnboardingTest ? nil : meetingNotesDraft,
                 analysisConfiguration: isOnboardingTest ? nil : currentAnalysisConfiguration()
             )
             currentSession = session
@@ -675,10 +679,18 @@ final class AppState: ObservableObject {
                 pendingCalendarEvent = nil
             }
             try? await processingLogger.log(.sessionCreated, for: session)
+            if let notes = session.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: session,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
 
             do {
                 let diagnostics = try await captureCoordinator.start(for: session)
                 updateCaptureDiagnostics(diagnostics)
+                captureStartedAt = captureStart(from: diagnostics)
                 if isOnboardingTest {
                     onboardingTestStartedAt = diagnostics.systemAudio.startedAt ?? Date()
                 }
@@ -691,6 +703,7 @@ final class AppState: ObservableObject {
                     microphoneAudio: diagnostics.microphone.sessionMetadata
                 )
                 currentSession = nil
+                captureStartedAt = nil
                 lastCompletedSession = failedSession
                 updateCaptureDiagnostics(diagnostics)
                 if isOnboardingTest {
@@ -740,8 +753,9 @@ final class AppState: ObservableObject {
             .flatMap { sessionID in
                 onboardingTestSessionID == sessionID ? sessionID : nil
             }
+        await flushMeetingNotes()
         do {
-            if let stoppedOnboardingTestSessionID {
+            if stoppedOnboardingTestSessionID != nil {
                 onboardingTestTimer?.cancel()
                 onboardingTestTimer = nil
                 onboardingTestPhase = .processing
@@ -751,6 +765,7 @@ final class AppState: ObservableObject {
                 let stoppedAt = Date()
                 stopCaptureMonitoring()
                 let diagnostics = await captureCoordinator.stop()
+                captureStartedAt = nil
                 updateCaptureDiagnostics(diagnostics)
                 pendingCaptureHandoff = (session.metadata.id,
                     max(stoppedAt, session.metadata.startedAt ?? stoppedAt), diagnostics)
@@ -764,8 +779,10 @@ final class AppState: ObservableObject {
             )
             pendingCaptureHandoff = nil
             currentSession = nil
+            captureStartedAt = nil
             if stoppedOnboardingTestSessionID == nil {
                 meetingTitle = ""
+                meetingNotesDraft = ""
                 pendingCalendarEvent = nil
                 calendarEventCandidates = []
             }
@@ -1018,6 +1035,82 @@ final class AppState: ObservableObject {
         }
     }
 
+    @discardableResult
+    func updateMeetingNotes(_ text: String) async -> Bool {
+        meetingNotesDraft = text
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession) else {
+            return false
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(text)
+            currentSession = updatedSession
+            return true
+        } catch {
+            lastError = localized(error)
+            return false
+        }
+    }
+
+    var isCurrentSessionOnboardingTest: Bool {
+        guard let currentSession else { return false }
+        return isOnboardingTestSession(currentSession)
+    }
+
+    func flushMeetingNotes() async {
+        guard let currentSession,
+              !isOnboardingTestSession(currentSession) else {
+            return
+        }
+
+        do {
+            let updatedSession = try await sessionManager.updateActiveSessionNotes(meetingNotesDraft)
+            self.currentSession = updatedSession
+            if let notes = updatedSession.metadata.notes {
+                try? await processingLogger.log(
+                    .noteSaved,
+                    for: updatedSession,
+                    attributes: [.characterCount(notes.characterCount)]
+                )
+            }
+        } catch {
+            lastError = localized(error)
+        }
+    }
+
+    var currentMeetingNotes: String {
+        meetingNotesDraft
+    }
+
+    func loadMeetingNotesFromDisk() async {
+        guard let activeSession = currentSession,
+              !isOnboardingTestSession(activeSession),
+              activeSession.metadata.notes != nil,
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+
+        let sessionID = activeSession.metadata.id
+        let notesURL = activeSession.notesURL
+        let notes: String
+        do {
+            notes = try await Task.detached(priority: .utility) {
+                try String(contentsOf: notesURL, encoding: .utf8)
+            }.value
+        } catch {
+            return
+        }
+
+        guard let currentSession,
+              currentSession.metadata.id == sessionID,
+              !isOnboardingTestSession(currentSession),
+              meetingNotesDraft.isEmpty else {
+            return
+        }
+        meetingNotesDraft = notes
+    }
+
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {
         guard canEnqueueProcessing(sessionID: candidate.id) else { return }
         do {
@@ -1087,6 +1180,7 @@ final class AppState: ObservableObject {
         do {
             try transition(to: .idle)
             lastError = nil
+            captureStartedAt = nil
             updateCaptureDiagnostics(.empty)
             resetProcessingProgress()
             isStoppingForLowStorage = false
@@ -1095,6 +1189,30 @@ final class AppState: ObservableObject {
         } catch {
             setFailure(error)
         }
+    }
+
+    func meetingNotesTimestampLinePrefix(at instant: Date = Date()) -> String? {
+        guard let currentSession else { return nil }
+        guard let startedAt = captureStartedAt ?? currentSession.metadata.startedAt else {
+            return nil
+        }
+        let elapsed = max(0, Int(instant.timeIntervalSince(startedAt)))
+        let timestamp = String(
+            format: "%02d:%02d:%02d",
+            elapsed / 3_600,
+            (elapsed % 3_600) / 60,
+            elapsed % 60
+        )
+        return "- [\(timestamp)] "
+    }
+
+    private func captureStart(from diagnostics: CaptureSessionDiagnostics) -> Date {
+        [
+            diagnostics.systemAudio.startedAt,
+            diagnostics.microphone.startedAt,
+        ]
+        .compactMap { $0 }
+        .min() ?? Date()
     }
 
     func openRecordingsFolder() {

@@ -708,6 +708,8 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
         nil
     }
 
+    func loadUserNotes(from session: RecordingSession) async -> String? { nil }
+
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
 
     func exportMarkdown(
@@ -715,6 +717,7 @@ private actor RevisionProcessingFileService: ProcessingFileServicing {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         analysis: AIAnalysisArtifact?,
+        notes: String?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         if failExport { throw CocoaError(.fileWriteNoPermission) }

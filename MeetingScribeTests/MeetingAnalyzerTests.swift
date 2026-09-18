@@ -51,6 +51,114 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertFalse(requests[0].content.contains("segment-000000"))
     }
 
+    func testUserNotesAreAttachedToEveryRequest() async throws {
+        let provider = MockAnalysisProvider()
+        let segments = (0..<4).map { index in
+            TranscriptSegment(
+                id: String(format: "segment-%06d", index),
+                source: .system,
+                speaker: "Other",
+                start: Double(index * 10),
+                end: Double(index * 10 + 5),
+                language: "sk",
+                text: String(repeating: "slovo ", count: 110),
+                confidence: nil
+            )
+        }
+
+        _ = try await MeetingAnalyzer(
+            provider: provider,
+            maxInputCharacters: 1_000
+        ).analyze(
+            session: makeSession(),
+            transcript: makeTranscript(segments: segments),
+            userNotes: "First note"
+        )
+
+        let requests = await provider.requests
+        XCTAssertTrue(requests.contains { $0.mode == .transcript })
+        XCTAssertTrue(requests.contains { $0.mode == .consolidation })
+        XCTAssertTrue(requests.allSatisfy { $0.userNotes == "First note" })
+    }
+
+    func testWithoutUserNotesNoRequestContainsNotes() async throws {
+        let provider = MockAnalysisProvider()
+        let transcript = makeTranscript(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Text meetingu",
+                confidence: nil
+            ),
+        ])
+
+        _ = try await MeetingAnalyzer(provider: provider).analyze(
+            session: makeSession(),
+            transcript: transcript
+        )
+
+        let requests = await provider.requests
+        XCTAssertTrue(requests.allSatisfy { $0.userNotes == nil })
+    }
+
+    func testLongUserNotesAreTruncatedWithMarker() {
+        let notes = String(repeating: "a", count: AnalysisPrompt.maximumUserNotesCharacters + 7)
+        let truncated = AnalysisPrompt.truncateUserNotes(notes)
+
+        XCTAssertTrue(truncated.hasPrefix(String(repeating: "a", count: 20_000)))
+        XCTAssertTrue(
+            truncated.hasSuffix(
+                "\n[notes truncated: 7 more characters; "
+                    + "the full notes are exported to Markdown]"
+            )
+        )
+        let multibyteNotes = String(
+            repeating: "é",
+            count: AnalysisPrompt.maximumUserNotesCharacters + 1
+        )
+        XCTAssertTrue(
+            AnalysisPrompt.truncateUserNotes(multibyteNotes)
+                .hasPrefix(String(repeating: "é", count: 20_000))
+        )
+    }
+
+    func testUserNotesReservationWithoutContentRoomThrows() async throws {
+        let provider = MockAnalysisProvider()
+        let transcript = makeTranscript(segments: [
+            TranscriptSegment(
+                id: "segment-1",
+                source: .system,
+                speaker: "Other",
+                start: 0,
+                end: 1,
+                language: "sk",
+                text: "Text meetingu",
+                confidence: nil
+            ),
+        ])
+
+        do {
+            _ = try await MeetingAnalyzer(
+                provider: provider,
+                maxInputCharacters: 1_000
+            ).analyze(
+                session: makeSession(),
+                transcript: transcript,
+                userNotes: String(repeating: "n", count: 1_000)
+            )
+            XCTFail("Expected notes reservation to leave no content room.")
+        } catch {
+            XCTAssertEqual(error as? AnalysisError, .transcriptChunkTooLarge)
+        }
+
+        let requests = await provider.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
     func testSessionOutputLanguageIsUsedForEveryAnalysisRequest() async throws {
         let provider = MockAnalysisProvider()
         let transcript = makeTranscript(segments: [

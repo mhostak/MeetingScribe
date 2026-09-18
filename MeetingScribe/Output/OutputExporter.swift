@@ -25,6 +25,7 @@ struct OutputExporter: Sendable {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript? = nil,
         analysis: AIAnalysisArtifact? = nil,
+        notes: String? = nil,
         to directoryURL: URL
     ) throws -> MarkdownExportResult {
         var isDirectory: ObjCBool = false
@@ -46,7 +47,8 @@ struct OutputExporter: Sendable {
             session: session,
             transcript: transcript,
             utteranceTranscript: utteranceTranscript,
-            analysis: analysis
+            analysis: analysis,
+            notes: notes
         )
         guard let data = markdown.data(using: .utf8) else {
             throw OutputExportError.couldNotEncodeMarkdown

@@ -91,6 +91,38 @@ final class ProcessingFileServiceTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Background I/O transcript"))
         XCTAssertTrue(markdown.contains("Background I/O summary"))
     }
+
+    func testExportMarkdownPassesNotesToRenderer() async throws {
+        let metadata = SessionMetadata(
+            id: "processing-notes",
+            title: "Processing notes",
+            status: .recorded,
+            createdAt: Date(),
+            outputLanguage: .english
+        )
+        let transcript = MergedTranscript(
+            sessionID: metadata.id,
+            title: metadata.title,
+            completedAt: Date(),
+            tracks: [],
+            segments: []
+        )
+        let service = ProcessingFileService()
+
+        let export = try await service.exportMarkdown(
+            session: metadata,
+            transcript: transcript,
+            utteranceTranscript: nil,
+            analysis: nil,
+            notes: "First note",
+            to: FileManager.default.temporaryDirectory
+        )
+
+        let markdown = try String(contentsOf: export.fileURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains(MarkdownRenderer.userNotesStartMarker))
+        XCTAssertTrue(markdown.contains("## Notes\nFirst note"))
+        XCTAssertTrue(markdown.contains(MarkdownRenderer.userNotesEndMarker))
+    }
 }
 
 private actor CanonicalProcessingFileService: ProcessingFileServicing {
@@ -100,6 +132,8 @@ private actor CanonicalProcessingFileService: ProcessingFileServicing {
         nil
     }
 
+    func loadUserNotes(from session: RecordingSession) async -> String? { nil }
+
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws {}
 
     func exportMarkdown(
@@ -107,6 +141,7 @@ private actor CanonicalProcessingFileService: ProcessingFileServicing {
         transcript: MergedTranscript,
         utteranceTranscript: ContinuousUtteranceTranscript?,
         analysis: AIAnalysisArtifact?,
+        notes: String?,
         to directoryURL: URL
     ) async throws -> MarkdownExportResult {
         exportCalls += 1

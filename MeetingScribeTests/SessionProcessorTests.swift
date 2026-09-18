@@ -16,6 +16,147 @@ final class SessionProcessorTests: XCTestCase {
         try? FileManager.default.removeItem(at: root)
     }
 
+    func testCLIAnalysisServiceAddsNotesExactlyOnceWithoutPlaceholder() async throws {
+        let session = makeSession()
+        try "First note".write(
+            to: session.directoryURL.appendingPathComponent("notes.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let runner = RecordingCLICommandRunner()
+
+        _ = try await CLIAnalysisService(runner: runner).analyze(
+            session: session,
+            transcript: makeTranscript(),
+            configuration: SessionAnalysisConfiguration(
+                tool: .codex,
+                executablePath: "/bin/echo",
+                model: nil,
+                prompt: "Prompt"
+            )
+        )
+
+        let prompt = try await runner.analysisPrompt()
+        XCTAssertEqual(prompt.components(separatedBy: "First note").count - 1, 1)
+        XCTAssertTrue(prompt.contains("USER NOTES (written by the recording user during the meeting)"))
+    }
+
+    func testCLIAnalysisServiceRendersPlaceholderNotesWithoutAutomaticSection() async throws {
+        let session = makeSession()
+        try "First note".write(
+            to: session.directoryURL.appendingPathComponent("notes.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let runner = RecordingCLICommandRunner()
+
+        _ = try await CLIAnalysisService(runner: runner).analyze(
+            session: session,
+            transcript: makeTranscript(),
+            configuration: SessionAnalysisConfiguration(
+                tool: .codex,
+                executablePath: "/bin/echo",
+                model: nil,
+                prompt: "Prompt: {{user_notes}}"
+            )
+        )
+
+        let prompt = try await runner.analysisPrompt()
+        XCTAssertEqual(prompt.components(separatedBy: "First note").count - 1, 1)
+        XCTAssertTrue(prompt.contains("Prompt: First note"))
+        XCTAssertFalse(prompt.contains("USER NOTES (written by the recording user during the meeting)"))
+    }
+
+    func testAnalysisTruncatesLongNotesButMarkdownExportKeepsThemComplete() async throws {
+        let session = makeSession()
+        let notes = String(
+            repeating: "n",
+            count: AnalysisPrompt.maximumUserNotesCharacters
+        ) + "END"
+        try Data(notes.utf8).write(
+            to: session.directoryURL.appendingPathComponent("notes.md"),
+            options: .atomic
+        )
+        let runner = RecordingCLICommandRunner()
+
+        _ = try await CLIAnalysisService(runner: runner).analyze(
+            session: session,
+            transcript: makeTranscript(),
+            configuration: SessionAnalysisConfiguration(
+                tool: .codex,
+                executablePath: "/bin/echo",
+                model: nil,
+                prompt: "Prompt"
+            )
+        )
+
+        let analysisPrompt = try await runner.analysisPrompt()
+        XCTAssertTrue(
+            analysisPrompt.contains(
+                "[notes truncated: 3 more characters; "
+                    + "the full notes are exported to Markdown]"
+            )
+        )
+        XCTAssertFalse(analysisPrompt.contains(notes))
+
+        let files = ProcessingFileService()
+        let loadedNotes = await files.loadUserNotes(from: session)
+        XCTAssertEqual(loadedNotes, notes)
+        let export = try await files.exportMarkdown(
+            session: session.metadata,
+            transcript: makeTranscript(),
+            utteranceTranscript: nil,
+            analysis: nil,
+            notes: loadedNotes,
+            to: session.directoryURL
+        )
+        let markdown = try String(contentsOf: export.fileURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains(notes))
+        XCTAssertFalse(
+            markdown.contains("[notes truncated: 3 more characters;")
+        )
+    }
+
+    func testInvalidUserNotesAreTreatedAsAbsentForAnalysisAndExport() async throws {
+        let session = makeSession()
+        try Data([0x41, 0xFF, 0x42]).write(
+            to: session.directoryURL.appendingPathComponent("notes.md"),
+            options: .atomic
+        )
+        let runner = RecordingCLICommandRunner()
+
+        _ = try await CLIAnalysisService(runner: runner).analyze(
+            session: session,
+            transcript: makeTranscript(),
+            configuration: SessionAnalysisConfiguration(
+                tool: .codex,
+                executablePath: "/bin/echo",
+                model: nil,
+                prompt: "Prompt"
+            )
+        )
+
+        let analysisPrompt = try await runner.analysisPrompt()
+        XCTAssertFalse(
+            analysisPrompt.contains("USER NOTES (written by the recording user during the meeting)")
+        )
+
+        let files = ProcessingFileService()
+        let loadedNotes = await files.loadUserNotes(from: session)
+        XCTAssertNil(loadedNotes)
+        let export = try await files.exportMarkdown(
+            session: session.metadata,
+            transcript: makeTranscript(),
+            utteranceTranscript: nil,
+            analysis: nil,
+            notes: loadedNotes,
+            to: session.directoryURL
+        )
+        let markdown = try String(contentsOf: export.fileURL, encoding: .utf8)
+        XCTAssertFalse(markdown.contains(MarkdownRenderer.userNotesStartMarker))
+        XCTAssertFalse(markdown.contains("notes: true"))
+    }
+
     func testRecoveryReusesTranscriptWithoutAudioOrModel() async throws {
         let session = makeSession()
         let files = FakeFiles(recovered: recoveredArtifacts())
@@ -300,14 +441,59 @@ private struct FakeAnalyzer: SessionAnalyzing {
     }
 }
 
+private actor RecordingCLICommandRunner: AnalysisCommandRunning {
+    private var analysisPromptData: Data?
+
+    func run(
+        _ command: AnalysisCommand,
+        tool: AnalysisTool
+    ) async throws -> AnalysisCommandResult {
+        if command.arguments == ["--version"] {
+            return AnalysisCommandResult(
+                exitCode: 0,
+                standardOutput: Data("test-cli 1.0".utf8),
+                standardError: Data()
+            )
+        }
+
+        analysisPromptData = command.standardInput
+        let response = try JSONEncoder().encode(AnalysisMarkdown(markdown: "## Summary"))
+        if tool == .codex,
+           let index = command.arguments.firstIndex(of: "--output-last-message"),
+           command.arguments.indices.contains(index + 1) {
+            try response.write(
+                to: URL(fileURLWithPath: command.arguments[index + 1]),
+                options: .atomic
+            )
+        }
+        return AnalysisCommandResult(
+            exitCode: 0,
+            standardOutput: response,
+            standardError: Data()
+        )
+    }
+
+    func analysisPrompt() throws -> String {
+        guard let analysisPromptData else {
+            throw NSError(
+                domain: "SessionProcessorTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "No analysis command was recorded."]
+            )
+        }
+        return String(decoding: analysisPromptData, as: UTF8.self)
+    }
+}
+
 private actor FakeFiles: ProcessingFileServicing {
     private let recovered: RecoveredProcessingArtifacts?
     private var exports = 0
     private var analyses = 0
     init(recovered: RecoveredProcessingArtifacts? = nil) { self.recovered = recovered }
     func loadRecoveredArtifacts(from session: RecordingSession) async -> RecoveredProcessingArtifacts? { recovered }
+    func loadUserNotes(from session: RecordingSession) async -> String? { nil }
     func persistAnalysis(_ analysis: AIAnalysisArtifact, to url: URL) async throws { analyses += 1 }
-    func exportMarkdown(session: SessionMetadata, transcript: MergedTranscript, utteranceTranscript: ContinuousUtteranceTranscript?, analysis: AIAnalysisArtifact?, to directoryURL: URL) async throws -> MarkdownExportResult {
+    func exportMarkdown(session: SessionMetadata, transcript: MergedTranscript, utteranceTranscript: ContinuousUtteranceTranscript?, analysis: AIAnalysisArtifact?, notes: String?, to directoryURL: URL) async throws -> MarkdownExportResult {
         exports += 1
         return MarkdownExportResult(fileURL: directoryURL.appendingPathComponent("meeting.md"), exportedAt: Date())
     }
