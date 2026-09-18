@@ -241,6 +241,115 @@ final class SessionManagerTests: XCTestCase {
         XCTAssertNil(try decodeMetadata(at: started.manifestURL).notes)
     }
 
+    func testProcessingRecoveryAndCleanupPreserveSessionNotes() async throws {
+        let manager = makeManager()
+        let started = try await manager.startSession(
+            title: "Notes lifecycle",
+            notes: "Agenda and decisions",
+            now: Date(timeIntervalSince1970: 1_725_876_600)
+        )
+        let expectedNotes = try XCTUnwrap(started.metadata.notes)
+
+        func assertPersistedNotes() throws {
+            XCTAssertEqual(try decodeMetadata(at: started.manifestURL).notes, expectedNotes)
+        }
+
+        try assertPersistedNotes()
+        try Data(repeating: 1, count: 32).write(to: started.systemAudioURL)
+        let inProgressScan = try await manager.scanForRecovery()
+        XCTAssertTrue(inProgressScan.candidates.isEmpty)
+        try assertPersistedNotes()
+
+        let queued = try await manager.finishCaptureAndQueue(
+            expectedSessionID: started.metadata.id,
+            endedAt: started.metadata.startedAt ?? Date(timeIntervalSince1970: 1_725_876_660),
+            diagnostics: makeDiagnostics(),
+            configuration: ProcessingJobConfiguration(
+                outputDirectoryURL: nil,
+                automaticallyDeleteSourceCAF: false
+            )
+        )
+        let job = try XCTUnwrap(queued.metadata.processing)
+        try assertPersistedNotes()
+
+        _ = try await manager.updateProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            patch: ProcessingJobPatch(state: .running, stage: .transcribing, checkpoint: .transcribing)
+        )
+        try assertPersistedNotes()
+
+        let transcription = SessionTranscriptionMetadata(
+            status: .completed,
+            model: "test-model",
+            systemSegmentCount: 1,
+            microphoneSegmentCount: 1,
+            warnings: [],
+            failureReason: nil
+        )
+        _ = try await manager.updateProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            patch: ProcessingJobPatch(stage: .analyzing, checkpoint: .analyzing),
+            artifactMetadata: ProcessingArtifactMetadata(transcription: transcription)
+        )
+        try assertPersistedNotes()
+
+        try Data(repeating: 2, count: 32).write(to: started.microphoneAudioURL)
+        try TranscriptJSONCoder.makeEncoder()
+            .encode(MergedTranscript(
+                sessionID: started.metadata.id,
+                title: started.metadata.title,
+                completedAt: Date(timeIntervalSince1970: 1_725_876_700),
+                tracks: [],
+                segments: []
+            ))
+            .write(to: started.mergedTranscriptURL, options: .atomic)
+        let markdownURL = started.directoryURL.appendingPathComponent("meeting.md")
+        try Data("# Meeting".utf8).write(to: markdownURL)
+        let output = SessionOutputMetadata(
+            status: .completed,
+            markdownFileName: markdownURL.lastPathComponent,
+            markdownPath: markdownURL.path,
+            exportedAt: Date(timeIntervalSince1970: 1_725_876_800),
+            failureReason: nil
+        )
+        _ = try await manager.completeProcessing(
+            sessionID: started.metadata.id,
+            jobID: job.jobID,
+            attemptID: job.attemptID,
+            artifactMetadata: ProcessingArtifactMetadata(
+                transcription: transcription,
+                output: output
+            )
+        )
+        try assertPersistedNotes()
+
+        let cleanupService = RecordingAudioCleanupService(recordingsRoot: temporaryRoot)
+        let cleanupPlan = try await cleanupService.scan()
+        XCTAssertEqual(cleanupPlan.candidates.map(\.id), [started.metadata.id])
+        try assertPersistedNotes()
+
+        _ = try await cleanupService.execute(cleanupPlan, trigger: .manual)
+        try assertPersistedNotes()
+
+        var interruptedCleanup = try decodeMetadata(at: started.manifestURL)
+        interruptedCleanup.recordingAudioRetention?.cleanupStatus = .inProgress
+        interruptedCleanup.recordingAudioRetention?.deletedFiles = []
+        interruptedCleanup.recordingAudioRetention?.reclaimedBytes = 0
+        try SessionJSONCoder.makeEncoder().encode(interruptedCleanup)
+            .write(to: started.manifestURL, options: .atomic)
+
+        _ = try await cleanupService.scan()
+        try assertPersistedNotes()
+        XCTAssertEqual(
+            try decodeMetadata(at: started.manifestURL).recordingAudioRetention?.cleanupStatus,
+            .purged
+        )
+    }
+
     func testManifestWithoutNotesKeyStillDecodes() async throws {
         let manager = makeManager()
         let started = try await manager.startSession(title: "Legacy notes")
