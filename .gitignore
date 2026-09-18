@@ -6,3 +6,8 @@ xcuserdata/
 .build/
 .swiftpm/
 Config/Signing.local.xcconfig
+dist/
+.claude/settings.local.json
+.claude/build-queue/
+scripts/__pycache__/
+.worktrees/
