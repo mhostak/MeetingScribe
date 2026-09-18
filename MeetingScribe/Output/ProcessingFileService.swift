@@ -124,10 +124,7 @@ actor ProcessingFileService: ProcessingFileServicing {
     }
 
     func loadUserNotes(from session: RecordingSession) async -> String? {
-        let notesURL = session.directoryURL.appendingPathComponent(
-            "notes.md",
-            isDirectory: false
-        )
+        let notesURL = session.notesURL
         guard fileManager.fileExists(atPath: notesURL.path),
               let notesData = try? Data(contentsOf: notesURL),
               let notes = String(data: notesData, encoding: .utf8),
