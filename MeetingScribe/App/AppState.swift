@@ -50,6 +50,7 @@ final class AppState: ObservableObject {
     static let onboardingTestSessionTitle = "MeetingScribe Setup Test"
     @Published private(set) var status: AppStatus = .idle
     @Published private(set) var currentSession: RecordingSession?
+    @Published private(set) var captureStartedAt: Date?
     @Published private(set) var lastCompletedSession: RecordingSession?
     @Published private(set) var lastError: String?
     let captureDiagnosticsModel = CaptureDiagnosticsModel()
@@ -655,6 +656,7 @@ final class AppState: ObservableObject {
             try transition(to: .preparing)
             lastError = nil
             lastMarkdownURL = nil
+            captureStartedAt = nil
             isStoppingForLowStorage = false
             isStoppingForCaptureFailure = false
             storageCheckTick = 0
@@ -688,6 +690,7 @@ final class AppState: ObservableObject {
             do {
                 let diagnostics = try await captureCoordinator.start(for: session)
                 updateCaptureDiagnostics(diagnostics)
+                captureStartedAt = captureStart(from: diagnostics)
                 if isOnboardingTest {
                     onboardingTestStartedAt = diagnostics.systemAudio.startedAt ?? Date()
                 }
@@ -700,6 +703,7 @@ final class AppState: ObservableObject {
                     microphoneAudio: diagnostics.microphone.sessionMetadata
                 )
                 currentSession = nil
+                captureStartedAt = nil
                 lastCompletedSession = failedSession
                 updateCaptureDiagnostics(diagnostics)
                 if isOnboardingTest {
@@ -761,6 +765,7 @@ final class AppState: ObservableObject {
                 let stoppedAt = Date()
                 stopCaptureMonitoring()
                 let diagnostics = await captureCoordinator.stop()
+                captureStartedAt = nil
                 updateCaptureDiagnostics(diagnostics)
                 pendingCaptureHandoff = (session.metadata.id,
                     max(stoppedAt, session.metadata.startedAt ?? stoppedAt), diagnostics)
@@ -774,6 +779,7 @@ final class AppState: ObservableObject {
             )
             pendingCaptureHandoff = nil
             currentSession = nil
+            captureStartedAt = nil
             if stoppedOnboardingTestSessionID == nil {
                 meetingTitle = ""
                 meetingNotesDraft = ""
@@ -1174,6 +1180,7 @@ final class AppState: ObservableObject {
         do {
             try transition(to: .idle)
             lastError = nil
+            captureStartedAt = nil
             updateCaptureDiagnostics(.empty)
             resetProcessingProgress()
             isStoppingForLowStorage = false
@@ -1182,6 +1189,30 @@ final class AppState: ObservableObject {
         } catch {
             setFailure(error)
         }
+    }
+
+    func meetingNotesTimestampLinePrefix(at instant: Date = Date()) -> String? {
+        guard let currentSession else { return nil }
+        guard let startedAt = captureStartedAt ?? currentSession.metadata.startedAt else {
+            return nil
+        }
+        let elapsed = max(0, Int(instant.timeIntervalSince(startedAt)))
+        let timestamp = String(
+            format: "%02d:%02d:%02d",
+            elapsed / 3_600,
+            (elapsed % 3_600) / 60,
+            elapsed % 60
+        )
+        return "- [\(timestamp)] "
+    }
+
+    private func captureStart(from diagnostics: CaptureSessionDiagnostics) -> Date {
+        [
+            diagnostics.systemAudio.startedAt,
+            diagnostics.microphone.startedAt,
+        ]
+        .compactMap { $0 }
+        .min() ?? Date()
     }
 
     func openRecordingsFolder() {

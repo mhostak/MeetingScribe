@@ -312,6 +312,148 @@ final class AppStateResilienceTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: session.notesURL, encoding: .utf8), "Pre-recording agenda")
     }
 
+    func testCaptureStartIsRecordedAfterSuccessfulStart() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let captureStartedAt = Date().addingTimeInterval(4)
+        let capture = ResilienceCaptureService(startedAt: captureStartedAt)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: capture,
+                microphoneCapture: capture
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        let recordedCaptureStart = try XCTUnwrap(appState.captureStartedAt)
+
+        XCTAssertEqual(appState.captureStartedAt, captureStartedAt)
+        XCTAssertGreaterThanOrEqual(recordedCaptureStart, session.metadata.startedAt ?? .distantPast)
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testMeetingNotesTimestampIsMeasuredFromCaptureStart() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let captureStartedAt = Date().addingTimeInterval(4)
+        let capture = ResilienceCaptureService(startedAt: captureStartedAt)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: capture,
+                microphoneCapture: capture
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        await appState.startRecording()
+        try XCTUnwrap(appState.currentSession)
+
+        XCTAssertEqual(
+            appState.meetingNotesTimestampLinePrefix(at: captureStartedAt.addingTimeInterval(30)),
+            "- [00:00:30] "
+        )
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testMeetingNotesTimestampFallsBackToSessionStartBeforeCaptureStartCompletes() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let systemCapture = SuspendedResilienceCaptureService()
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: systemCapture,
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+
+        XCTAssertNil(appState.meetingNotesTimestampLinePrefix())
+        let startTask = Task { await appState.startRecording() }
+        await systemCapture.waitUntilStarted()
+        let session = try XCTUnwrap(appState.currentSession)
+        let sessionStartedAt = try XCTUnwrap(session.metadata.startedAt)
+
+        XCTAssertEqual(
+            appState.meetingNotesTimestampLinePrefix(at: sessionStartedAt),
+            "- [00:00:00] "
+        )
+
+        await systemCapture.releaseStart()
+        await startTask.value
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
+    func testCaptureStartDoesNotSurviveIntoFollowingSession() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let firstCaptureStartedAt = Date().addingTimeInterval(4)
+        let secondCaptureStartedAt = firstCaptureStartedAt.addingTimeInterval(60)
+        let capture = ResilienceCaptureService(startedAt: firstCaptureStartedAt)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: capture,
+                microphoneCapture: capture
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+
+        await appState.startRecording()
+        XCTAssertEqual(appState.captureStartedAt, firstCaptureStartedAt)
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+        XCTAssertNil(appState.captureStartedAt)
+
+        await capture.setStartedAt(secondCaptureStartedAt)
+        await appState.startRecording()
+        XCTAssertEqual(appState.captureStartedAt, secondCaptureStartedAt)
+
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+    }
+
     func testFlushMeetingNotesPersistsLatestTextBeforeStop() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -1720,13 +1862,18 @@ private actor ResilienceCaptureService: AudioCaptureService {
     private var current = AudioCaptureDiagnostics.empty
     private var starts = 0
     private var stops = 0
+    private var startedAtOverride: Date?
+
+    init(startedAt: Date? = nil) {
+        self.startedAtOverride = startedAt
+    }
 
     func start(outputURL: URL) async throws {
         starts += 1
         try Data("preserved mock audio".utf8).write(to: outputURL, options: .atomic)
         current = AudioCaptureDiagnostics(
             fileName: outputURL.lastPathComponent,
-            startedAt: Date()
+            startedAt: startedAtOverride ?? Date()
         )
         current.registerBuffer(
             frameCount: 4_800,
@@ -1750,6 +1897,10 @@ private actor ResilienceCaptureService: AudioCaptureService {
 
     func stall() {
         current.lastBufferReceivedAt = Date().addingTimeInterval(-20)
+    }
+
+    func setStartedAt(_ startedAt: Date?) {
+        startedAtOverride = startedAt
     }
 
     func resumeBuffers() {

@@ -349,18 +349,11 @@ struct MenuBarView: View {
     }
 
     private func insertMeetingNotesTimestamp() {
-        guard let startedAt = appState.currentSession?.metadata.startedAt else { return }
-        let elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
-        let timestamp = String(
-            format: "%02d:%02d:%02d",
-            elapsed / 3_600,
-            (elapsed % 3_600) / 60,
-            elapsed % 60
-        )
+        guard let timestamp = appState.meetingNotesTimestampLinePrefix() else { return }
         if !appState.meetingNotesDraft.isEmpty && !appState.meetingNotesDraft.hasSuffix("\n") {
             appState.meetingNotesDraft += "\n"
         }
-        appState.meetingNotesDraft += "- [\(timestamp)] "
+        appState.meetingNotesDraft += timestamp
         scheduleMeetingNotesSave()
     }
 
