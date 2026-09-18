@@ -165,6 +165,8 @@ final class AppState: ObservableObject {
     private var usesDetectedAnalysisExecutable = true
     @Published private(set) var processingJobs: [RecordingSession] = []
     @Published private(set) var processingQueueStatus = ProcessingQueueStatus.idle
+    @Published private var processingHandoffCount = 0
+    private var processingHandoffWaiters: [CheckedContinuation<Void, Never>] = []
     private var queueIsObserved = false
     private let resourceMonitoringEnabled: Bool
     private var resourceMonitorTask: Task<Void, Never>?
@@ -312,7 +314,7 @@ final class AppState: ObservableObject {
     )
 
     var hasPendingProcessing: Bool {
-        processingJobs.contains { session in
+        processingHandoffCount > 0 || processingJobs.contains { session in
             guard let job = session.metadata.processing else { return false }
             return job.state != .completed && job.state != .failed
         }
@@ -404,8 +406,35 @@ final class AppState: ObservableObject {
         ))
     }
 
+    private func waitForProcessingHandoffs() async {
+        while processingHandoffCount > 0 {
+            await withCheckedContinuation { processingHandoffWaiters.append($0) }
+        }
+    }
+
+    private func beginProcessingHandoff() {
+        processingHandoffCount += 1
+    }
+
+    private func acceptProcessingHandoff(_ session: RecordingSession) async {
+        defer {
+            processingHandoffCount -= 1
+            if processingHandoffCount == 0 {
+                let waiters = processingHandoffWaiters
+                processingHandoffWaiters.removeAll()
+                for waiter in waiters { waiter.resume() }
+            }
+        }
+        await observeProcessingQueue()
+        await processingQueue.accept(session)
+    }
+
     func waitForProcessing() async {
-        await processingQueue.waitUntilSettled()
+        repeat {
+            // Durable work may not have reached the queue yet.
+            await waitForProcessingHandoffs()
+            await processingQueue.waitUntilSettled()
+        } while processingHandoffCount > 0
     }
 
     func retryProcessing(_ session: RecordingSession) async {
@@ -421,13 +450,14 @@ final class AppState: ObservableObject {
                 sessionID: session.metadata.id, kind: job?.kind ?? .recovery,
                 configuration: job?.configuration ?? processingConfiguration
             )
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            beginProcessingHandoff()
+            await acceptProcessingHandoff(queued)
         } catch { lastError = localized(error) }
     }
 
     func prepareForTermination() async -> Bool {
         if status == .recording { await stopRecording() }
+        await waitForProcessingHandoffs()
         guard currentSession == nil, status != .preparing, status != .stopping else { return false }
         resourceMonitorTask?.cancel()
         memoryPressureSource?.cancel()
@@ -600,8 +630,8 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .retranscribe, configuration: processingConfiguration
         )
-        await observeProcessingQueue()
-        await processingQueue.accept(queued)
+        beginProcessingHandoff()
+        await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
         guard let revision = result.revision else {
             throw NSError(domain: "MeetingScribe.Processing", code: 1,
@@ -618,8 +648,8 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .reanalyze, configuration: configuration
         )
-        await observeProcessingQueue()
-        await processingQueue.accept(queued)
+        beginProcessingHandoff()
+        await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
         guard result.failedSteps.isEmpty, let path = result.artifacts.output?.markdownPath else {
             throw NSError(domain: "MeetingScribe.Processing", code: 2,
@@ -781,6 +811,9 @@ final class AppState: ObservableObject {
                 expectedSessionID: handoff.sessionID, endedAt: handoff.endedAt,
                 diagnostics: handoff.diagnostics, configuration: processingConfiguration
             )
+            // Begin before clearing the session so observers still see pending work; accept after
+            // publishing idle so the resource governor no longer sees a stopping capture.
+            beginProcessingHandoff()
             pendingCaptureHandoff = nil
             currentSession = nil
             captureStartedAt = nil
@@ -793,8 +826,7 @@ final class AppState: ObservableObject {
             // Capture is now independent of all subsequent processing.
             stateMachine = AppStateMachine()
             status = .idle
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            await acceptProcessingHandoff(queued)
         } catch {
             // Keep the stopped capture and original diagnostics until the durable handoff succeeds.
             lastError = localized(error)
@@ -1121,9 +1153,9 @@ final class AppState: ObservableObject {
             let queued = try await sessionManager.queueProcessing(
                 sessionID: candidate.id, kind: .recovery, configuration: processingConfiguration
             )
+            beginProcessingHandoff()
             removeRecoveryCandidate(id: candidate.id)
-            await observeProcessingQueue()
-            await processingQueue.accept(queued)
+            await acceptProcessingHandoff(queued)
         } catch { lastError = localized(error) }
     }
 

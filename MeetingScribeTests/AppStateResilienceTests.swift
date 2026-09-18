@@ -1294,6 +1294,56 @@ final class AppStateResilienceTests: XCTestCase {
         await appState.waitForProcessing()
     }
 
+    func testStoppedSessionHasPendingProcessingWhenCurrentSessionPublishesNil() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let gate = BlockingFileServiceGate()
+        defer { gate.release() }
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(
+                root: fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+            ),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true),
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            processingFileService: BlockingExportProcessingFileService(gate: gate),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            defaults: fixture.defaults
+        )
+        await appState.prepareStorage()
+        await appState.startRecording()
+        let session = try XCTUnwrap(appState.currentSession)
+        var processingWait: Task<Void, Never>?
+        let observation = appState.$currentSession.dropFirst().sink { currentSession in
+            guard currentSession == nil else { return }
+            // Check synchronously: hopping to a task would let the old handoff catch up.
+            XCTAssertTrue(appState.hasPendingProcessing)
+            processingWait = Task { @MainActor in
+                await appState.waitForProcessing()
+                let persisted = try? self.decodeMetadata(at: session.manifestURL)
+                XCTAssertEqual(persisted?.output?.status, .completed)
+            }
+        }
+        defer { observation.cancel() }
+
+        await appState.stopRecording()
+        let didReachExport = await gate.waitUntilBlocked()
+        XCTAssertTrue(didReachExport)
+        XCTAssertNil(appState.currentSession)
+        XCTAssertEqual(appState.status, .idle)
+        XCTAssertNotNil(processingWait)
+        gate.release()
+        await processingWait?.value
+        await appState.waitForProcessing()
+    }
+
     func testRequiredSystemCaptureFailureTriggersSafeAutomaticStop() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
