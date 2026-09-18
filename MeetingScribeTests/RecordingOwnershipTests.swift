@@ -88,6 +88,8 @@ final class RecordingOwnershipTests: XCTestCase {
         let scan = try await manager.scanForRecovery()
         XCTAssertTrue(scan.candidates.isEmpty)
         XCTAssertTrue(scan.issues.isEmpty)
+        let detectionRecorded = try await manager.recordRecoveryDetection(id: session.metadata.id)
+        XCTAssertFalse(detectionRecorded)
         do {
             _ = try await manager.queueProcessing(
                 sessionID: session.metadata.id,

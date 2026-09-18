@@ -230,7 +230,7 @@ actor SessionManager {
                 session.metadata.recovery = SessionRecoveryMetadata(
                     status: .inProgress,
                     originalStatus: originalStatus,
-                    detectedAt: session.metadata.recovery?.detectedAt ?? now,
+                    detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
                     startedAt: now,
                     completedAt: nil,
                     attemptCount: attempts + 1,
@@ -576,6 +576,23 @@ actor SessionManager {
         )
     }
 
+    func recordRecoveryDetection(id: String, now: Date = Date()) throws -> Bool {
+        // Reload through the candidate gate so stale scans cannot change active,
+        // owned, queued, closed, or completed sessions.
+        guard let candidate = try recoveryCandidate(id: id, now: now) else { return false }
+        var session = candidate.session
+        if let detectedAt = session.metadata.recoveryDetectedAt {
+            guard let recovery = session.metadata.recovery,
+                  recovery.status == .failed,
+                  let failedAt = recovery.completedAt,
+                  failedAt > detectedAt else { return false }
+        }
+
+        session.metadata.recoveryDetectedAt = now
+        try persist(session)
+        return true
+    }
+
     func beginRecovery(id: String, now: Date = Date()) throws -> RecordingSession {
         guard activeSession == nil else {
             throw SessionManagerError.sessionAlreadyActive
@@ -599,7 +616,7 @@ actor SessionManager {
         session.metadata.recovery = SessionRecoveryMetadata(
             status: .inProgress,
             originalStatus: originalStatus,
-            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
             startedAt: now,
             completedAt: nil,
             attemptCount: attempts + 1,
@@ -654,7 +671,7 @@ actor SessionManager {
         session.metadata.recovery = SessionRecoveryMetadata(
             status: .closed,
             originalStatus: originalStatus,
-            detectedAt: session.metadata.recovery?.detectedAt ?? now,
+            detectedAt: session.metadata.recovery?.detectedAt ?? session.metadata.recoveryDetectedAt ?? now,
             startedAt: session.metadata.recovery?.startedAt,
             completedAt: now,
             attemptCount: session.metadata.recovery?.attemptCount ?? 0,

@@ -2176,7 +2176,7 @@ final class AppState: ObservableObject {
             recoveryCandidates = result.candidates
             recoveryIssues = result.issues
             for candidate in result.candidates {
-                try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+                await logRecoveryDetectionIfNeeded(candidate)
             }
             if !result.issues.isEmpty, lastError == nil {
                 lastError = localized(.recoveryIssues)
@@ -2188,6 +2188,11 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func logRecoveryDetectionIfNeeded(_ candidate: SessionRecoveryCandidate) async {
+        guard (try? await sessionManager.recordRecoveryDetection(id: candidate.id)) == true else { return }
+        try? await processingLogger.log(.recoveryDetected, for: candidate.session)
+    }
+
     private func removeRecoveryCandidate(id: String) {
         recoveryCandidates.removeAll { $0.id == id }
     }
@@ -2195,6 +2200,7 @@ final class AppState: ObservableObject {
     private func refreshRecoveryCandidate(id: String) async {
         do {
             if let candidate = try await sessionManager.recoveryCandidate(id: id) {
+                await logRecoveryDetectionIfNeeded(candidate)
                 if let index = recoveryCandidates.firstIndex(where: { $0.id == id }) {
                     recoveryCandidates[index] = candidate
                 } else {
