@@ -174,6 +174,100 @@ final class ReadinessTests: XCTestCase {
         XCTAssertEqual(snapshot.summary, .readyForRecordingAndTranscription)
     }
 
+    func testGrantedNotificationAuthorizationIsReadyRatherThanUnverified() {
+        let evaluator = ReadinessEvaluator()
+        let snapshot = evaluator.evaluate(
+            configuration: ReadinessConfiguration(
+                notifications: ReadinessOptionalFeature(isEnabled: true, authorization: .granted)
+            ),
+            results: readyResults(),
+            checkedAt: Date()
+        )
+
+        XCTAssertEqual(snapshot.check(.notifications)?.status, .ready)
+        XCTAssertEqual(snapshot.check(.notifications)?.action, .none)
+        XCTAssertEqual(
+            snapshot.check(.notifications)?.detail,
+            .optionalFeature(isEnabled: true, permission: .granted)
+        )
+    }
+
+    func testChecksCarryTheConfigurationBehindThem() {
+        let folderURL = URL(fileURLWithPath: "/tmp/MeetingScribe-readiness-detail")
+        let evaluator = ReadinessEvaluator()
+        let snapshot = evaluator.evaluate(
+            configuration: ReadinessConfiguration(
+                outputFolderURL: folderURL,
+                outputFileNameTemplate: "{date} - {title}",
+                transcriptionModelName: "Parakeet TDT 0.6B v3 (int8)",
+                analysisToolName: "Codex",
+                analysisModelName: "gpt-5.6-terra",
+                aiAnalysis: ReadinessOptionalFeature(isEnabled: true)
+            ),
+            results: readyResults(),
+            checkedAt: Date()
+        )
+
+        XCTAssertEqual(
+            snapshot.check(.transcriptionModel)?.detail,
+            .transcriptionModel(name: "Parakeet TDT 0.6B v3 (int8)", state: .ready)
+        )
+        XCTAssertEqual(
+            snapshot.check(.outputDestination)?.detail,
+            .output(folderPath: folderURL.path, template: "{date} - {title}")
+        )
+        XCTAssertEqual(
+            snapshot.check(.aiAnalysis)?.detail,
+            .analysis(
+                tool: "Codex",
+                model: "gpt-5.6-terra",
+                status: .available(path: "codex", version: nil)
+            )
+        )
+        XCTAssertEqual(
+            snapshot.check(.systemAudio)?.detail,
+            .systemAudio(permission: .granted, captureMode: .systemAndMicrophone)
+        )
+        XCTAssertEqual(
+            snapshot.check(.storage)?.detail,
+            .storage(
+                availableBytes: StorageGuard.defaultMinimumBytes,
+                requiredBytes: StorageGuard.defaultMinimumBytes
+            )
+        )
+    }
+
+    func testUnsupportedTemplateDetailNamesTheOffendingTokens() {
+        let evaluator = ReadinessEvaluator()
+        let snapshot = evaluator.evaluate(
+            configuration: ReadinessConfiguration(outputFileNameTemplate: "{bad} {title}"),
+            results: readyResults(),
+            checkedAt: Date()
+        )
+
+        XCTAssertEqual(
+            snapshot.check(.outputDestination)?.detail,
+            .outputTemplateInvalid(tokens: ["{bad}"])
+        )
+    }
+
+    func testReadinessDetailIsLocalizedForEachSupportedLanguage() {
+        let detail = ReadinessDetail.transcriptionModel(name: "Parakeet", state: .missing)
+
+        XCTAssertEqual(
+            AppLocalization.readinessDetail(detail, language: .slovak),
+            "Model: Parakeet · nie je nainštalovaný"
+        )
+        XCTAssertEqual(
+            AppLocalization.readinessDetail(detail, language: .czech),
+            "Model: Parakeet · není nainstalovaný"
+        )
+        XCTAssertEqual(
+            AppLocalization.readinessDetail(detail, language: .english),
+            "Model: Parakeet · not installed"
+        )
+    }
+
     func testOutputProbeCreatesAndRemovesOnlyItsOwnFile() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("MeetingScribeReadinessTests-\(UUID().uuidString)", isDirectory: true)

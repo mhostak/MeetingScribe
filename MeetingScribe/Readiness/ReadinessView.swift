@@ -41,10 +41,15 @@ struct ReadinessView: View {
                     .accessibilityLabel(Text("Readiness check failed"))
             }
 
-            ReadinessOverviewView(appState: appState, openSettingsAction: {})
+            ScrollView {
+                ReadinessOverviewView(appState: appState, openSettingsAction: {})
+                    .padding(.bottom, 2)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(minHeight: 160, idealHeight: 260, maxHeight: .infinity)
         }
         .padding(20)
-        .frame(minWidth: 620, minHeight: 430)
+        .frame(minWidth: 620, minHeight: 360)
         .environment(\.locale, appState.selectedAppLanguage.locale)
         .task { await appState.refreshReadiness() }
         .onChange(of: appState.readinessConfiguration) {
@@ -113,7 +118,7 @@ struct ReadinessOverviewView: View {
                 )
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -140,13 +145,20 @@ private struct ReadinessCheckRow: View {
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
                         .accessibilityLabel(
-                            Text("\(Text(LocalizedStringKey(statusKey))), \(Text(LocalizedStringKey(impactKey)))")
+                            Text("\(Text(LocalizedStringKey(statusKey))), \(Text(verbatim: detailText))")
                         )
                 }
 
-                Text(LocalizedStringKey(impactKey))
+                Text(verbatim: detailText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                if let impactKey {
+                    Text(LocalizedStringKey(impactKey))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
 
                 if let actionTitle = actionTitle {
                     Button(LocalizedStringKey(actionTitle)) {
@@ -195,14 +207,19 @@ private struct ReadinessCheckRow: View {
         }
     }
 
-    private var impactKey: String {
+    private var detailText: String {
+        appState.localized(check.detail)
+    }
+
+    /// Only a consequence the user can act on is worth a line of its own; a
+    /// passing check shows what it is set to instead.
+    private var impactKey: String? {
         switch check.impact {
         case .blocksRecording: return "Blocks recording"
         case .blocksCaptureMode: return "Blocks the selected capture mode"
         case .limitsProcessing: return "Limits later processing"
         case .warning: return "Warning: recording can continue without this track"
-        case .informational: return "Informational"
-        case .none: return "No impact"
+        case .informational, .none: return nil
         }
     }
 

@@ -5,6 +5,7 @@ import CoreGraphics
 import Foundation
 import ServiceManagement
 import UniformTypeIdentifiers
+import UserNotifications
 
 struct CaptureMonitoringConfiguration: Sendable {
     // Five diagnostics snapshots per second keep the live audio meter responsive.
@@ -110,6 +111,7 @@ final class AppState: ObservableObject {
     @Published var minimumStorageBytes = StorageGuard.defaultMinimumBytes
     @Published var calendarIntegrationEnabled = false
     @Published private(set) var notificationsEnabled = false
+    @Published private(set) var notificationAuthorizationStatus: ReadinessPermissionStatus = .unknown
     @Published var selectedSettingsSection = "general"
     @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
 
@@ -587,6 +589,7 @@ final class AppState: ObservableObject {
         if enabled {
             await processingNotifier.requestAuthorization()
         }
+        await refreshNotificationAuthorizationStatus()
     }
 
     func reprocessWithFluidAudio(session: RecordingSession) async throws -> TranscriptionRevisionResult {
@@ -797,6 +800,10 @@ final class AppState: ObservableObject {
     }
 
     var onboardingTestAudioDestinationURL: URL {
+        sessionManager.recordingsRoot
+    }
+
+    var recordingsRootURL: URL {
         sessionManager.recordingsRoot
     }
 
@@ -1127,12 +1134,20 @@ final class AppState: ObservableObject {
             captureMode: .systemAndMicrophone,
             outputFolderURL: outputFolderURL,
             outputFileNameTemplate: markdownFileNameTemplate,
+            transcriptionModelName: fluidAudioASRDescriptor.displayName,
+            analysisToolName: selectedAnalysisTool.displayName,
+            analysisModelName: selectedAnalysisModel.resolvedModel(
+                customModel: customAnalysisModel
+            ),
             aiAnalysis: ReadinessOptionalFeature(isEnabled: aiAnalysisEnabled),
             calendar: ReadinessOptionalFeature(
                 isEnabled: calendarIntegrationEnabled,
                 authorization: readinessPermissionStatus(for: calendarAuthorizationStatus)
             ),
-            notifications: ReadinessOptionalFeature(isEnabled: notificationsEnabled)
+            notifications: ReadinessOptionalFeature(
+                isEnabled: notificationsEnabled,
+                authorization: notificationAuthorizationStatus
+            )
         )
     }
 
@@ -1153,6 +1168,7 @@ final class AppState: ObservableObject {
         isRefreshingReadiness = true
         defer { isRefreshingReadiness = false }
 
+        await refreshNotificationAuthorizationStatus()
         do {
             readinessSnapshot = try await readinessService.refresh(readinessConfiguration)
             readinessError = nil
@@ -1294,6 +1310,30 @@ final class AppState: ObservableObject {
             return true
         default:
             return false
+        }
+    }
+
+    /// Reads the notification permission without requesting it. The opt-in alone
+    /// says nothing about delivery, so readiness would otherwise stay unverified
+    /// even after the user granted the permission.
+    func refreshNotificationAuthorizationStatus() async {
+        guard notificationsEnabled else {
+            notificationAuthorizationStatus = .unknown
+            return
+        }
+        notificationAuthorizationStatus = readinessPermissionStatus(
+            for: await processingNotifier.authorizationStatus()
+        )
+    }
+
+    private func readinessPermissionStatus(
+        for status: UNAuthorizationStatus
+    ) -> ReadinessPermissionStatus {
+        switch status {
+        case .authorized, .provisional, .ephemeral: return .granted
+        case .denied: return .denied
+        case .notDetermined: return .notDetermined
+        @unknown default: return .unknown
         }
     }
 
@@ -2110,6 +2150,10 @@ final class AppState: ObservableObject {
 
     func localized(_ message: AppUserMessage) -> String {
         AppLocalization.message(message, language: selectedAppLanguage)
+    }
+
+    func localized(_ detail: ReadinessDetail) -> String {
+        AppLocalization.readinessDetail(detail, language: selectedAppLanguage)
     }
 
     private func localized(_ error: Error) -> String {

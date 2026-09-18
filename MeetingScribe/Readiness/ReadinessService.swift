@@ -39,6 +39,22 @@ enum ReadinessAction: Equatable, Sendable {
     case none
 }
 
+/// The current configuration behind a readiness check, so a row can state what
+/// is actually set instead of only whether it passed. The values stay raw and
+/// unformatted; `AppLocalization.readinessDetail` turns them into user text.
+enum ReadinessDetail: Equatable, Sendable {
+    case systemAudio(permission: ReadinessPermissionStatus, captureMode: CaptureMode)
+    case microphone(permission: ReadinessPermissionStatus)
+    case storage(availableBytes: Int64, requiredBytes: Int64)
+    case storageUnavailable
+    case transcriptionModel(name: String, state: ReadinessModelProbeResult)
+    case output(folderPath: String?, template: String)
+    case outputTemplateInvalid(tokens: [String])
+    case analysisDisabled
+    case analysis(tool: String, model: String?, status: AnalysisToolStatus)
+    case optionalFeature(isEnabled: Bool, permission: ReadinessPermissionStatus)
+}
+
 struct ReadinessCheck: Equatable, Identifiable, Sendable {
     enum ID: String, CaseIterable, Equatable, Sendable {
         case systemAudio
@@ -56,13 +72,22 @@ struct ReadinessCheck: Equatable, Identifiable, Sendable {
     let localizationKey: String
     let impact: ReadinessImpact
     let action: ReadinessAction
+    let detail: ReadinessDetail
 
-    init(id: ID, status: ReadinessStatus, localizationKey: String, impact: ReadinessImpact, action: ReadinessAction) {
+    init(
+        id: ID,
+        status: ReadinessStatus,
+        localizationKey: String,
+        impact: ReadinessImpact,
+        action: ReadinessAction,
+        detail: ReadinessDetail
+    ) {
         self.id = id
         self.status = status
         self.localizationKey = localizationKey
         self.impact = impact
         self.action = action
+        self.detail = detail
     }
 }
 
@@ -105,6 +130,10 @@ struct ReadinessConfiguration: Equatable, Sendable {
     let captureMode: CaptureMode
     let outputFolderURL: URL?
     let outputFileNameTemplate: String
+    let transcriptionModelName: String
+    let analysisToolName: String
+    /// `nil` means the selected tool picks its own model.
+    let analysisModelName: String?
     let aiAnalysis: ReadinessOptionalFeature
     let calendar: ReadinessOptionalFeature
     let notifications: ReadinessOptionalFeature
@@ -113,6 +142,9 @@ struct ReadinessConfiguration: Equatable, Sendable {
         captureMode: CaptureMode = .systemAndMicrophone,
         outputFolderURL: URL? = nil,
         outputFileNameTemplate: String = MarkdownFileNameTemplate.defaultValue,
+        transcriptionModelName: String = FluidAudioModelDescriptor.parakeetV3.displayName,
+        analysisToolName: String = AnalysisTool.codex.displayName,
+        analysisModelName: String? = nil,
         aiAnalysis: ReadinessOptionalFeature = ReadinessOptionalFeature(isEnabled: false),
         calendar: ReadinessOptionalFeature = ReadinessOptionalFeature(isEnabled: false),
         notifications: ReadinessOptionalFeature = ReadinessOptionalFeature(isEnabled: false)
@@ -120,6 +152,9 @@ struct ReadinessConfiguration: Equatable, Sendable {
         self.captureMode = captureMode
         self.outputFolderURL = outputFolderURL
         self.outputFileNameTemplate = outputFileNameTemplate
+        self.transcriptionModelName = transcriptionModelName
+        self.analysisToolName = analysisToolName
+        self.analysisModelName = analysisModelName
         self.aiAnalysis = aiAnalysis
         self.calendar = calendar
         self.notifications = notifications
@@ -162,7 +197,10 @@ struct ReadinessEvaluator: Sendable {
             systemAudioCheck(configuration: configuration, status: results.systemAudioPermission),
             microphoneCheck(configuration: configuration, status: results.microphonePermission),
             storageCheck(results.storage),
-            transcriptionModelCheck(results.transcriptionModel),
+            transcriptionModelCheck(
+                configuration: configuration,
+                result: results.transcriptionModel
+            ),
             outputCheck(
                 configuration: configuration,
                 result: results.outputDestination
@@ -195,6 +233,10 @@ struct ReadinessEvaluator: Sendable {
         configuration: ReadinessConfiguration,
         status: ReadinessPermissionStatus
     ) -> ReadinessCheck {
+        let detail = ReadinessDetail.systemAudio(
+            permission: status,
+            captureMode: configuration.captureMode
+        )
         switch status {
         case .granted:
             return ReadinessCheck(
@@ -202,7 +244,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: "readiness.check.systemAudio",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .denied:
             return ReadinessCheck(
@@ -212,7 +255,8 @@ struct ReadinessEvaluator: Sendable {
                 impact: configuration.captureMode == .systemAndMicrophone
                     ? .blocksCaptureMode(.systemAndMicrophone)
                     : .none,
-                action: .openSystemAudioSettings
+                action: .openSystemAudioSettings,
+                detail: detail
             )
         case .notDetermined:
             return ReadinessCheck(
@@ -222,7 +266,8 @@ struct ReadinessEvaluator: Sendable {
                 impact: configuration.captureMode == .systemAndMicrophone
                     ? .blocksCaptureMode(.systemAndMicrophone)
                     : .none,
-                action: .requestSystemAudioPermission
+                action: .requestSystemAudioPermission,
+                detail: detail
             )
         case .restricted, .unknown:
             return ReadinessCheck(
@@ -232,7 +277,8 @@ struct ReadinessEvaluator: Sendable {
                 impact: configuration.captureMode == .systemAndMicrophone
                     ? .blocksCaptureMode(.systemAndMicrophone)
                     : .none,
-                action: .openSystemAudioSettings
+                action: .openSystemAudioSettings,
+                detail: detail
             )
         }
     }
@@ -251,6 +297,7 @@ struct ReadinessEvaluator: Sendable {
             impact = .blocksCaptureMode(.microphoneOnly)
             action = .connectMicrophoneInput
         }
+        let detail = ReadinessDetail.microphone(permission: status)
         switch status {
         case .granted:
             return ReadinessCheck(
@@ -258,7 +305,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: "readiness.check.microphone",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .denied, .restricted:
             return ReadinessCheck(
@@ -266,7 +314,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.microphone",
                 impact: impact,
-                action: action
+                action: action,
+                detail: detail
             )
         case .notDetermined, .unknown:
             return ReadinessCheck(
@@ -274,7 +323,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .unverified,
                 localizationKey: "readiness.check.microphone",
                 impact: impact,
-                action: action
+                action: action,
+                detail: detail
             )
         }
     }
@@ -282,13 +332,18 @@ struct ReadinessEvaluator: Sendable {
     private func storageCheck(_ result: ReadinessStorageProbeResult) -> ReadinessCheck {
         switch result {
         case let .available(status):
+            let detail = ReadinessDetail.storage(
+                availableBytes: status.availableBytes,
+                requiredBytes: status.requiredBytes
+            )
             if status.hasSufficientCapacity {
                 return ReadinessCheck(
                     id: .storage,
                     status: .ready,
                     localizationKey: "readiness.check.storage",
                     impact: .none,
-                    action: .none
+                    action: .none,
+                    detail: detail
                 )
             }
             return ReadinessCheck(
@@ -296,7 +351,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.storage",
                 impact: .blocksRecording,
-                action: .freeStorageSpace
+                action: .freeStorageSpace,
+                detail: detail
             )
         case .unavailable:
             return ReadinessCheck(
@@ -304,12 +360,20 @@ struct ReadinessEvaluator: Sendable {
                 status: .unverified,
                 localizationKey: "readiness.check.storage",
                 impact: .blocksRecording,
-                action: .fixStorageAccess
+                action: .fixStorageAccess,
+                detail: .storageUnavailable
             )
         }
     }
 
-    private func transcriptionModelCheck(_ result: ReadinessModelProbeResult) -> ReadinessCheck {
+    private func transcriptionModelCheck(
+        configuration: ReadinessConfiguration,
+        result: ReadinessModelProbeResult
+    ) -> ReadinessCheck {
+        let detail = ReadinessDetail.transcriptionModel(
+            name: configuration.transcriptionModelName,
+            state: result
+        )
         switch result {
         case .ready:
             return ReadinessCheck(
@@ -317,7 +381,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: "readiness.check.transcriptionModel",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .missing:
             return ReadinessCheck(
@@ -325,7 +390,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.transcriptionModel",
                 impact: .limitsProcessing,
-                action: .downloadTranscriptionModel
+                action: .downloadTranscriptionModel,
+                detail: detail
             )
         case .invalid:
             return ReadinessCheck(
@@ -333,7 +399,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.transcriptionModel",
                 impact: .limitsProcessing,
-                action: .repairTranscriptionModel
+                action: .repairTranscriptionModel,
+                detail: detail
             )
         case .unavailable:
             return ReadinessCheck(
@@ -341,7 +408,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .unverified,
                 localizationKey: "readiness.check.transcriptionModel",
                 impact: .limitsProcessing,
-                action: .importTranscriptionModel
+                action: .importTranscriptionModel,
+                detail: detail
             )
         }
     }
@@ -350,24 +418,31 @@ struct ReadinessEvaluator: Sendable {
         configuration: ReadinessConfiguration,
         result: ReadinessOutputProbeResult
     ) -> ReadinessCheck {
-        if !MarkdownFileNameTemplate.unsupportedTokens(
+        let unsupportedTokens = MarkdownFileNameTemplate.unsupportedTokens(
             in: configuration.outputFileNameTemplate
-        ).isEmpty {
+        )
+        if !unsupportedTokens.isEmpty {
             return ReadinessCheck(
                 id: .outputDestination,
                 status: .needsAttention,
                 localizationKey: "readiness.check.outputDestination",
                 impact: .limitsProcessing,
-                action: .fixOutputFileNameTemplate
+                action: .fixOutputFileNameTemplate,
+                detail: .outputTemplateInvalid(tokens: unsupportedTokens)
             )
         }
+        let detail = ReadinessDetail.output(
+            folderPath: configuration.outputFolderURL?.path,
+            template: configuration.outputFileNameTemplate
+        )
         guard configuration.outputFolderURL != nil else {
             return ReadinessCheck(
                 id: .outputDestination,
                 status: .ready,
                 localizationKey: "readiness.check.outputDestination",
                 impact: .none,
-                action: .useSessionFolder
+                action: .useSessionFolder,
+                detail: detail
             )
         }
         switch result {
@@ -377,7 +452,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: "readiness.check.outputDestination",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .failed:
             return ReadinessCheck(
@@ -385,7 +461,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.outputDestination",
                 impact: .limitsProcessing,
-                action: .chooseOutputFolder
+                action: .chooseOutputFolder,
+                detail: detail
             )
         }
     }
@@ -400,9 +477,15 @@ struct ReadinessEvaluator: Sendable {
                 status: .optional,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: .analysisDisabled
             )
         }
+        let detail = ReadinessDetail.analysis(
+            tool: configuration.analysisToolName,
+            model: configuration.analysisModelName,
+            status: analysisToolStatus
+        )
         switch analysisToolStatus {
         case .available:
             return ReadinessCheck(
@@ -410,7 +493,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .unknown:
             return ReadinessCheck(
@@ -418,7 +502,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .unverified,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .limitsProcessing,
-                action: .openAISettings
+                action: .openAISettings,
+                detail: detail
             )
         case .unavailable:
             return ReadinessCheck(
@@ -426,7 +511,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .limitsProcessing,
-                action: .openAISettings
+                action: .openAISettings,
+                detail: detail
             )
         case .authenticationRequired:
             return ReadinessCheck(
@@ -434,7 +520,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .limitsProcessing,
-                action: .openAISettings
+                action: .openAISettings,
+                detail: detail
             )
         case .failed:
             return ReadinessCheck(
@@ -442,7 +529,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: "readiness.check.aiAnalysis",
                 impact: .limitsProcessing,
-                action: .openAISettings
+                action: .openAISettings,
+                detail: detail
             )
         }
     }
@@ -455,13 +543,18 @@ struct ReadinessEvaluator: Sendable {
         let localizationKey = id == .calendar
             ? "readiness.check.calendar"
             : "readiness.check.notifications"
+        let detail = ReadinessDetail.optionalFeature(
+            isEnabled: feature.isEnabled,
+            permission: feature.authorization
+        )
         guard feature.isEnabled else {
             return ReadinessCheck(
                 id: id,
                 status: .optional,
                 localizationKey: localizationKey,
                 impact: .none,
-                action: .none
+                action: .none,
+                detail: detail
             )
         }
         switch feature.authorization {
@@ -471,7 +564,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .ready,
                 localizationKey: localizationKey,
                 impact: .informational,
-                action: .none
+                action: .none,
+                detail: detail
             )
         case .denied, .restricted:
             return ReadinessCheck(
@@ -479,7 +573,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .needsAttention,
                 localizationKey: localizationKey,
                 impact: .informational,
-                action: openSettingsAction
+                action: openSettingsAction,
+                detail: detail
             )
         case .notDetermined, .unknown:
             return ReadinessCheck(
@@ -487,7 +582,8 @@ struct ReadinessEvaluator: Sendable {
                 status: .unverified,
                 localizationKey: localizationKey,
                 impact: .informational,
-                action: openSettingsAction
+                action: openSettingsAction,
+                detail: detail
             )
         }
     }

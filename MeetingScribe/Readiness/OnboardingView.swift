@@ -43,19 +43,29 @@ struct OnboardingView: View {
 
             Divider()
 
-            Group {
-                switch appState.onboardingStep {
-                case .welcome:
-                    welcomeStep
-                case .audioPermissions:
-                    audioPermissionsStep
-                case .transcriptionAndOutput:
-                    transcriptionAndOutputStep
-                case .review:
-                    reviewStep
+            // A step can be taller than the window — the readiness list alone
+            // needs roughly 950pt — so only the step body scrolls. The step
+            // indicator and the navigation buttons stay reachable at any size.
+            ScrollView {
+                Group {
+                    switch appState.onboardingStep {
+                    case .welcome:
+                        welcomeStep
+                    case .audioPermissions:
+                        audioPermissionsStep
+                    case .transcriptionAndOutput:
+                        transcriptionAndOutputStep
+                    case .review:
+                        reviewStep
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.bottom, 2)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
+            .scrollBounceBehavior(.basedOnSize)
+            // An ideal height keeps the window's natural size independent of
+            // how tall the current step happens to be.
+            .frame(minHeight: 160, idealHeight: 260, maxHeight: .infinity)
 
             HStack {
                 Button("Back") {
@@ -81,7 +91,7 @@ struct OnboardingView: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 760, minHeight: 560)
+        .frame(minWidth: 720, minHeight: 420)
         .environment(\.locale, appState.selectedAppLanguage.locale)
         .task { await appState.refreshReadiness() }
         .onReceive(NotificationCenter.default.publisher(

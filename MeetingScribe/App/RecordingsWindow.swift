@@ -235,6 +235,17 @@ private struct RecordingAudioStorageView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Recordings folder")
+                        .font(.caption.weight(.semibold))
+                    Text(verbatim: appState.recordingsRootURL.path)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+
                 HStack {
                     Button {
                         Task { await appState.refreshRecordingAudioCleanupPlan() }
@@ -245,6 +256,12 @@ private struct RecordingAudioStorageView: View {
                         appState.isScanningRecordingAudio
                             || appState.isCleaningRecordingAudio
                     )
+
+                    Button {
+                        appState.openRecordingsFolder()
+                    } label: {
+                        Label("Open recordings folder", systemImage: "folder")
+                    }
 
                     Spacer()
 
