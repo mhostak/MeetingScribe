@@ -189,6 +189,44 @@ final class SessionProcessorTests: XCTestCase {
         XCTAssertTrue(hadCheckpoint)
     }
 
+    func testInterruptedFirstAttemptReusesItsTranscriptInsteadOfTranscribingAgain() async throws {
+        // Killed between writing transcript.json and persisting the
+        // checkpoint that records it: the manifest still says nothing about
+        // transcription, and the resumed job is still `.initial`, not a
+        // recovery. Re-running ASR here costs minutes for a result that is
+        // already on disk and already validated against this recording's id.
+        var session = makeSession()
+        XCTAssertNil(session.metadata.transcription)
+        session.metadata.audioFinalization = nil
+
+        let files = FakeFiles(recovered: recoveredArtifacts())
+        let finalizer = FakeFinalizer(error: TestError.unexpectedCall)
+        let resolver = FakeResolver(error: TestError.unexpectedCall)
+        let transcriber = FakeTranscriber()
+        let processor = SessionProcessor(
+            audioFinalizer: finalizer,
+            transcriber: transcriber,
+            modelResolver: resolver,
+            analyzer: FakeAnalyzer(),
+            processingFiles: files,
+            audioSourceCleaner: FakeCleaner(),
+            revisionService: FakeRevisionService()
+        )
+
+        let result = try await processor.process(
+            context(session, kind: .initial),
+            onEvent: { _ in }
+        )
+
+        let finalizerCalls = await finalizer.callCount()
+        let resolverCalls = await resolver.callCount()
+        XCTAssertEqual(finalizerCalls, 0, "audio must not be finalized again")
+        XCTAssertEqual(resolverCalls, 0, "the ASR model must not be loaded again")
+        XCTAssertEqual(result.artifacts.transcription?.status, .completed)
+        let exports = await files.exportCount()
+        XCTAssertEqual(exports, 1)
+    }
+
     func testRetryExportsAgainWhenAnalysisWasNewlyGenerated() async throws {
         var session = makeSession()
         session.metadata.transcription = SessionTranscriptionMetadata(
