@@ -105,6 +105,17 @@ actor ProcessingQueue {
         schedule()
     }
 
+    /// Drops a settled job whose recording no longer exists on disk. Without
+    /// this the queue keeps republishing the deleted session, so a failed job
+    /// would keep asking the menu bar for attention forever. A job that can
+    /// still run is left alone; the caller refuses to delete in that case.
+    func forget(sessionID: String) async {
+        guard sessions[sessionID]?.metadata.processing?.state.isTerminal == true else { return }
+        sessions.removeValue(forKey: sessionID)
+        acceptVersions.removeValue(forKey: sessionID)
+        await publish()
+    }
+
     func result(for attemptID: UUID) async throws -> SessionProcessingResult {
         try Task.checkCancellation()
         if let result = results[attemptID] { return try result.get() }

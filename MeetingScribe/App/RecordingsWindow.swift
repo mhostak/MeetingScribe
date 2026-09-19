@@ -25,6 +25,22 @@ struct RecordingsWindow: View {
                     .padding()
             }
 
+            // A deleted row cannot report what survived the delete, so the
+            // window keeps the leftover-note warning visible instead.
+            if !appState.lastSessionDeletionWarnings.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(appState.lastSessionDeletionWarnings, id: \.self) { warning in
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+            }
+
             if model.isLoading && model.snapshot.entries.isEmpty {
                 ProgressView("Loading recordings…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -321,6 +337,8 @@ private struct RecordingSessionRow: View {
     @State private var reprocessingError: String?
     @State private var notesPreview: String?
     @State private var notesFileExists = true
+    @State private var pendingDeletion: SessionDeletionPlan?
+    @State private var isPreparingDeletion = false
 
     private let obsidianService = ObsidianService()
 
@@ -527,6 +545,20 @@ private struct RecordingSessionRow: View {
                 } label: {
                     Label("Show in Finder", systemImage: "folder")
                 }
+
+                Button(role: .destructive) {
+                    prepareDeletion()
+                } label: {
+                    if isPreparingDeletion || appState.deletingSessionID == entry.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "trash")
+                    }
+                }
+                .help("Delete recording")
+                .accessibilityLabel("Delete recording")
+                .disabled(!canDelete)
             }
             .controlSize(.small)
         }
@@ -542,6 +574,22 @@ private struct RecordingSessionRow: View {
             }
         }
         .contextMenu { actionItems }
+        .sheet(item: $pendingDeletion) { plan in
+            SessionDeletionSheet(plan: plan) { deletesExportedMarkdown in
+                do {
+                    reprocessingError = nil
+                    try await appState.deleteSession(
+                        plan,
+                        includingExportedMarkdown: deletesExportedMarkdown
+                    )
+                    pendingDeletion = nil
+                    await reload()
+                } catch {
+                    reprocessingError = appState.errorMessage(for: error)
+                    pendingDeletion = nil
+                }
+            }
+        }
         .task(id: entry.id) {
             await loadNotesPreview()
         }
@@ -652,6 +700,33 @@ private struct RecordingSessionRow: View {
             }
         }
 
+        Divider()
+
+        Button("Delete recording", role: .destructive) {
+            prepareDeletion()
+        }
+        .disabled(!canDelete)
+    }
+
+    private var canDelete: Bool {
+        appState.canDeleteSession(sessionID: entry.id) && !isPreparingDeletion
+    }
+
+    /// The plan is read from disk before the sheet opens, so the confirmation
+    /// names the paths that will really be moved rather than the ones this row
+    /// was rendered from.
+    private func prepareDeletion() {
+        guard canDelete else { return }
+        isPreparingDeletion = true
+        Task {
+            defer { isPreparingDeletion = false }
+            do {
+                reprocessingError = nil
+                pendingDeletion = try await appState.sessionDeletionPlan(for: entry.session)
+            } catch {
+                reprocessingError = appState.errorMessage(for: error)
+            }
+        }
     }
 
     private func toggleAudioProtection() {
@@ -730,6 +805,112 @@ private struct RecordingSessionRow: View {
         case .transcriptReady, .needsModel, .incomplete: return .orange
         case .failed, .interrupted: return .red
         }
+    }
+}
+
+/// Deleting a whole recording is the only overview action that takes the audio,
+/// the transcript and the exported note at once. It gets a sheet rather than a
+/// confirmation dialog because the note lives outside the session folder, so
+/// whether it goes too is a separate decision the user has to be able to make.
+private struct SessionDeletionSheet: View {
+    let plan: SessionDeletionPlan
+    let confirm: (Bool) async -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var deletesExportedMarkdown = true
+    @State private var isDeleting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Delete this recording?", systemImage: "trash")
+                .font(.title2.weight(.semibold))
+
+            Text(verbatim: plan.title)
+                .font(.headline)
+                .lineLimit(2)
+
+            Label(
+                "The whole session folder goes to the Trash: recorded audio, transcript, AI analysis, notes and processing logs.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+
+            pathRow(
+                title: "Session folder",
+                url: plan.directoryURL,
+                bytes: plan.directoryBytes
+            )
+
+            if plan.hasExternalMarkdown, let markdownURL = plan.exportedMarkdownURL {
+                Divider()
+
+                Toggle(
+                    "Also move the exported Markdown note to the Trash",
+                    isOn: $deletesExportedMarkdown
+                )
+
+                pathRow(
+                    title: "Exported note",
+                    url: markdownURL,
+                    bytes: plan.exportedMarkdownBytes
+                )
+                .opacity(deletesExportedMarkdown ? 1 : 0.5)
+            }
+
+            Text("Anything moved to the Trash can be put back in Finder, but MeetingScribe will no longer list this recording.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isDeleting)
+
+                Button(role: .destructive) {
+                    isDeleting = true
+                    Task {
+                        // Dismissal belongs to the caller: it is the same update
+                        // that drops the row this sheet is attached to.
+                        await confirm(plan.hasExternalMarkdown && deletesExportedMarkdown)
+                        isDeleting = false
+                    }
+                } label: {
+                    if isDeleting {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Move to Trash")
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(isDeleting)
+            }
+        }
+        .padding(24)
+        .frame(width: 540)
+    }
+
+    private func pathRow(title: LocalizedStringKey, url: URL, bytes: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                Text(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Text(verbatim: url.path)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(2)
+                .truncationMode(.middle)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

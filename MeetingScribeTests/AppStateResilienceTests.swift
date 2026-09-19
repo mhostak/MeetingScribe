@@ -833,6 +833,67 @@ final class AppStateResilienceTests: XCTestCase {
         )
     }
 
+    func testDeletingARecordingDropsItsFolderAndEveryReferenceToIt() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let recordingsRoot = fixture.root.appendingPathComponent("Recordings", isDirectory: true)
+        let trash = fixture.root.appendingPathComponent("Trash", isDirectory: true)
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            captureCoordinator: CaptureCoordinator(
+                systemAudioCapture: ResilienceCaptureService(),
+                microphoneCapture: ResilienceCaptureService()
+            ),
+            audioFinalizer: ResilienceAudioFinalizer(),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true),
+                isTranscriptionReady: true
+            ),
+            sessionTranscriber: ResilienceSessionTranscriber(),
+            monitoring: CaptureMonitoringConfiguration(interval: .seconds(60)),
+            sessionDeletionService: SessionDeletionService(
+                recordingsRoot: recordingsRoot,
+                moveToTrash: { url in
+                    try FileManager.default.moveItem(
+                        at: url,
+                        to: trash.appendingPathComponent(url.lastPathComponent)
+                    )
+                }
+            ),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+        appState.meetingTitle = "Deletable"
+        await appState.startRecording()
+        let recording = try XCTUnwrap(appState.currentSession)
+        XCTAssertFalse(
+            appState.canDeleteSession(sessionID: recording.metadata.id),
+            "A recording in progress must not be deletable."
+        )
+        await appState.stopRecording()
+        await appState.waitForProcessing()
+
+        let completed = try XCTUnwrap(appState.lastCompletedSession)
+        XCTAssertTrue(appState.processingJobs.contains { $0.metadata.id == completed.metadata.id })
+        XCTAssertTrue(appState.canDeleteSession(sessionID: completed.metadata.id))
+
+        let plan = try await appState.sessionDeletionPlan(for: completed)
+        XCTAssertEqual(plan.title, "Deletable")
+        try await appState.deleteSession(plan, includingExportedMarkdown: true)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: completed.directoryURL.path))
+        XCTAssertNil(appState.deletingSessionID)
+        XCTAssertNil(appState.lastCompletedSession)
+        XCTAssertTrue(appState.lastSessionDeletionWarnings.isEmpty)
+        XCTAssertFalse(
+            appState.processingJobs.contains { $0.metadata.id == completed.metadata.id },
+            "A job for a deleted recording keeps asking the menu bar for attention."
+        )
+        XCTAssertFalse(appState.hasProcessingFailures)
+    }
+
     func testCompletedMeetingUsesSnapshottedCLIPromptAndExportsFreeformMarkdown() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -1659,6 +1720,7 @@ final class AppStateResilienceTests: XCTestCase {
         monitoring: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
         storageStatusProvider: (@Sendable () async throws -> StorageStatus)? = nil,
         analysisCommandRunner: any AnalysisCommandRunning = ResilienceAnalysisCommandRunner(),
+        sessionDeletionService: SessionDeletionService? = nil,
         defaults: UserDefaults,
         processingNotifier: any ProcessingNotifying = ProcessingNotificationService()
     ) -> AppState {
@@ -1681,6 +1743,7 @@ final class AppStateResilienceTests: XCTestCase {
             transcriptionSettingsStore: TranscriptionSettingsStore(defaults: defaults),
             audioRetentionSettingsStore: AudioRetentionSettingsStore(defaults: defaults),
             applicationSettingsStore: applicationSettingsStore,
+            sessionDeletionService: sessionDeletionService,
             captureMonitoringConfiguration: monitoring,
             storageStatusProvider: storageStatusProvider,
             processingNotifier: processingNotifier,

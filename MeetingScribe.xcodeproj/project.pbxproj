@@ -76,9 +76,11 @@
 		000000000000000000000171 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000274 /* Localizable.xcstrings */; };
 		000000000000000000000192 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000294 /* Assets.xcassets */; };
 		000000000000000000000172 /* SessionCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000275 /* SessionCatalog.swift */; };
+		A90300000000000000000001 /* SessionDeletionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90200000000000000000001 /* SessionDeletionService.swift */; };
 		000000000000000000000173 /* RecordingsWindowModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000276 /* RecordingsWindowModel.swift */; };
 		000000000000000000000174 /* RecordingsWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000277 /* RecordingsWindow.swift */; };
 		000000000000000000000175 /* SessionCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000278 /* SessionCatalogTests.swift */; };
+		A90500000000000000000001 /* SessionDeletionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A90400000000000000000001 /* SessionDeletionServiceTests.swift */; };
 		000000000000000000000176 /* CalendarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000279 /* CalendarModels.swift */; };
 		000000000000000000000177 /* CalendarEventService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000280 /* CalendarEventService.swift */; };
 		000000000000000000000178 /* CalendarEventPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000281 /* CalendarEventPickerView.swift */; };
@@ -199,9 +201,11 @@
 		000000000000000000000274 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		000000000000000000000294 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		000000000000000000000275 /* SessionCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalog.swift; sourceTree = "<group>"; };
+		A90200000000000000000001 /* SessionDeletionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDeletionService.swift; sourceTree = "<group>"; };
 		000000000000000000000276 /* RecordingsWindowModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindowModel.swift; sourceTree = "<group>"; };
 		000000000000000000000277 /* RecordingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingsWindow.swift; sourceTree = "<group>"; };
 		000000000000000000000278 /* SessionCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCatalogTests.swift; sourceTree = "<group>"; };
+		A90400000000000000000001 /* SessionDeletionServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDeletionServiceTests.swift; sourceTree = "<group>"; };
 		000000000000000000000279 /* CalendarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarModels.swift; sourceTree = "<group>"; };
 		000000000000000000000280 /* CalendarEventService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventService.swift; sourceTree = "<group>"; };
 		000000000000000000000281 /* CalendarEventPickerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventPickerView.swift; sourceTree = "<group>"; };
@@ -347,6 +351,7 @@
 				000000000000000000000256 /* StorageGuard.swift */,
 				000000000000000000000257 /* ProcessingLogger.swift */,
 				000000000000000000000275 /* SessionCatalog.swift */,
+				A90200000000000000000001 /* SessionDeletionService.swift */,
 			);
 			path = Sessions;
 			sourceTree = "<group>";
@@ -387,6 +392,7 @@
 				000000000000000000000208 /* AppStateMachineTests.swift */,
 				000000000000000000000209 /* SessionManagerTests.swift */,
 				000000000000000000000278 /* SessionCatalogTests.swift */,
+				A90400000000000000000001 /* SessionDeletionServiceTests.swift */,
 				000000000000000000000282 /* CalendarIntegrationTests.swift */,
 				000000000000000000000326 /* OnboardingTests.swift */,
 				000000000000000000000328 /* ReadinessTests.swift */,
@@ -609,6 +615,7 @@
 				000000000000000000000154 /* StorageGuard.swift in Sources */,
 				000000000000000000000155 /* ProcessingLogger.swift in Sources */,
 				000000000000000000000172 /* SessionCatalog.swift in Sources */,
+				A90300000000000000000001 /* SessionDeletionService.swift in Sources */,
 				000000000000000000000145 /* AnalysisModels.swift in Sources */,
 				000000000000000000000146 /* AnalysisProvider.swift in Sources */,
 				000000000000000000000147 /* CLIAnalysisProvider.swift in Sources */,
@@ -663,6 +670,7 @@
 				000000000000000000000187 /* FluidAudioTranscriptionServiceTests.swift in Sources */,
 				000000000000000000000184 /* FluidAudioModelManagerTests.swift in Sources */,
 				000000000000000000000175 /* SessionCatalogTests.swift in Sources */,
+				A90500000000000000000001 /* SessionDeletionServiceTests.swift in Sources */,
 				000000000000000000000164 /* AudioClockTests.swift in Sources */,
 				B17DEC910F41495E932ABD04 /* AppLaunchEnvironmentTests.swift in Sources */,
 				000000000000000000000165 /* MicrophoneCaptureRecoveryTests.swift in Sources */,
