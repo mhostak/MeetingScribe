@@ -291,12 +291,9 @@ enum AnalysisPrompt {
 
 enum AnalysisMarkdownSchema {
     static let maximumMarkdownBytes = 1_000_000
-    static let reservedMarkers = [
-        "<!-- meetingscribe:ai-analysis:start -->",
-        "<!-- meetingscribe:ai-analysis:end -->",
-        "<!-- meetingscribe:user-notes:start -->",
-        "<!-- meetingscribe:user-notes:end -->",
-    ]
+    /// The renderer owns these. Repeating the literals here once meant two
+    /// lists that had to agree, with nothing to notice if they stopped.
+    static let reservedMarkers = MarkdownRenderer.reservedMarkers
 
     static var schema: [String: Any] {
         [
