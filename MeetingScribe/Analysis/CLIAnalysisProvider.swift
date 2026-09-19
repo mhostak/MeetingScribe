@@ -100,12 +100,6 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
             )
             #endif
 
-            outputPipe.fileHandleForReading.readabilityHandler = { handle in
-                output.append(handle.availableData)
-            }
-            errorPipe.fileHandleForReading.readabilityHandler = { handle in
-                errors.append(handle.availableData)
-            }
             controller.attach(process, inputWriter: inputPipe.fileHandleForWriting)
 
             do {
@@ -113,14 +107,21 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 controller.establishOwnedProcessGroup(for: process)
                 controller.terminateIfRequested(process)
             } catch {
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                errorPipe.fileHandleForReading.readabilityHandler = nil
                 controller.detach(process)
                 throw AnalysisError.processLaunchFailed(
                     tool: tool,
                     message: error.localizedDescription
                 )
             }
+
+            // Started only once the child exists, so a launch failure has
+            // nothing to join. Both pipes are drained at the same time: a tool
+            // that fills one while the parent reads only the other would block
+            // forever.
+            let readers = PipeDrain.start([
+                (outputPipe.fileHandleForReading, output),
+                (errorPipe.fileHandleForReading, errors),
+            ])
 
             do {
                 try inputPipe.fileHandleForWriting.write(contentsOf: command.standardInput)
@@ -135,8 +136,7 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
                 } else {
                     controller.terminateAfterInputFailure(process)
                     process.waitUntilExit()
-                    outputPipe.fileHandleForReading.readabilityHandler = nil
-                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    readers.wait()
                     controller.detach(process)
                     if controller.isTerminationRequested {
                         throw CancellationError()
@@ -149,10 +149,10 @@ struct AnalysisProcessRunner: AnalysisCommandRunning {
             }
 
             process.waitUntilExit()
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            errorPipe.fileHandleForReading.readabilityHandler = nil
-            output.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-            errors.append(errorPipe.fileHandleForReading.readDataToEndOfFile())
+            // Every byte is already in the buffers once the readers have seen
+            // EOF; there is deliberately no second read of either descriptor
+            // here.
+            readers.wait()
             controller.detach(process)
 
             return AnalysisCommandResult(
@@ -297,6 +297,49 @@ private final class ProcessController: @unchecked Sendable {
         #else
         process.terminate()
         #endif
+    }
+}
+
+/// Reads each pipe to EOF on its own thread, with exactly one reader per
+/// descriptor.
+///
+/// The previous shape was a `readabilityHandler` plus a
+/// `readDataToEndOfFile()` once the handler had been cleared. Clearing a
+/// handler does not cancel an invocation already dispatched on Foundation's
+/// private IO queue, so for that window two readers were pulling from the
+/// same descriptor. Both appended into the same buffer under its lock, so
+/// nothing was corrupted — but the order of the appends was whatever the
+/// scheduler chose, and captured output could come back reassembled out of
+/// order. It surfaced as a rare CI failure on the one assertion that compares
+/// stdout exactly: a fourteen-byte `--version` string split across two reads.
+///
+/// Reading continues past the buffer's cap. The buffer discards the excess,
+/// but the pipe still has to be drained or the child blocks writing into it.
+private final class PipeDrain: @unchecked Sendable {
+    private let group = DispatchGroup()
+
+    static func start(_ pipes: [(FileHandle, CappedDataBuffer)]) -> PipeDrain {
+        let drain = PipeDrain()
+        for (handle, buffer) in pipes {
+            drain.group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { drain.group.leave() }
+                while true {
+                    let chunk = handle.availableData
+                    // `availableData` blocks until there is something to read
+                    // and returns empty exactly at end of file.
+                    guard !chunk.isEmpty else { return }
+                    buffer.append(chunk)
+                }
+            }
+        }
+        return drain
+    }
+
+    /// Blocks until both pipes have reached end of file, which the child
+    /// reaching exit guarantees.
+    func wait() {
+        group.wait()
     }
 }
 
