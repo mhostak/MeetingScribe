@@ -202,6 +202,11 @@ actor SessionCatalog {
                 return (.needsModel, transcription.failureReason ?? "A transcription model is required.")
             case .completed:
                 break
+            case .unrecognized:
+                // Written by a build that knew a state this one does not.
+                // Treated as unfinished rather than complete, so the
+                // recording stays offered for processing.
+                return (.incomplete, transcription.failureReason)
             }
         }
         if let output = metadata.output, output.status == .failed {

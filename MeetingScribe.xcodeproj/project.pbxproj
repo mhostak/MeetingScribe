@@ -112,6 +112,7 @@
 		000000000000000000000337 /* OnboardingTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000327 /* OnboardingTest.swift */; };
 		000000000000000000000338 /* ReadinessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000328 /* ReadinessTests.swift */; };
 		000000000000000000000339 /* LocalizationCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000329 /* LocalizationCatalogTests.swift */; };
+		00000000000000000000033A /* SessionManifestCompatibilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000032A /* SessionManifestCompatibilityTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -234,6 +235,7 @@
 		000000000000000000000327 /* OnboardingTest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTest.swift; sourceTree = "<group>"; };
 		000000000000000000000328 /* ReadinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessTests.swift; sourceTree = "<group>"; };
 		000000000000000000000329 /* LocalizationCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationCatalogTests.swift; sourceTree = "<group>"; };
+		00000000000000000000032A /* SessionManifestCompatibilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManifestCompatibilityTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -389,6 +391,7 @@
 				000000000000000000000326 /* OnboardingTests.swift */,
 				000000000000000000000328 /* ReadinessTests.swift */,
 				000000000000000000000329 /* LocalizationCatalogTests.swift */,
+				00000000000000000000032A /* SessionManifestCompatibilityTests.swift */,
 			);
 			path = MeetingScribeTests;
 			sourceTree = "<group>";
@@ -690,6 +693,7 @@
 				000000000000000000000336 /* OnboardingTests.swift in Sources */,
 				000000000000000000000338 /* ReadinessTests.swift in Sources */,
 				000000000000000000000339 /* LocalizationCatalogTests.swift in Sources */,
+				00000000000000000000033A /* SessionManifestCompatibilityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

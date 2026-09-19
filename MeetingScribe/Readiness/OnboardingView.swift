@@ -483,7 +483,7 @@ private struct OnboardingTestResultView: View {
                 Label("Transcription not verified — model missing", systemImage: "questionmark.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            case .failed:
+            case .failed, .unrecognized:
                 Label("Transcription failed", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
