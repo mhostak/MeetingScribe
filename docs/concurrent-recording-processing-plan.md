@@ -1,6 +1,10 @@
 # Souběžné nahrávání a transkripce dokončeného záznamu
 
-Implementačný plán pre agentov Tera · 2026-09-16 · stav: pripravené na implementáciu.
+Implementačný plán pre agentov Tera · 2026-09-16 · stav: **implementované a zmergované do `main`**.
+Dodaný kód je v `MeetingScribe/Processing/`; overenie je v
+[docs/evidence/concurrent-recording-processing-integration-2026-09-16.md](evidence/concurrent-recording-processing-integration-2026-09-16.md)
+a [docs/evidence/concurrent-queue-pause-visibility-2026-09-17.md](evidence/concurrent-queue-pause-visibility-2026-09-17.md).
+Plán sa ďalej udržiava ako záznam zámeru, nie ako zoznam úloh.
 
 ## 1. Východiská a cieľ
 

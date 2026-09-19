@@ -25,10 +25,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Verify Xcode 26
+      - name: Verify Xcode 26 or newer
         run: |
+          # README states a minimum, so the gate enforces a minimum. Matching
+          # `^Xcode 26` exactly turned every future runner-image bump into a
+          # red build with nothing actually wrong.
           xcodebuild -version
-          xcodebuild -version | head -n 1 | grep -E '^Xcode 26([.]|$)'
+          version="$(xcodebuild -version | head -n 1 | awk '{print $2}')"
+          major="${version%%.*}"
+          if [ "$major" -lt 26 ]; then
+            echo "Xcode $version is older than the required 26" >&2
+            exit 1
+          fi
       - name: Run SwiftPM tests
         run: swift test --scratch-path .derivedData/swiftpm
 
@@ -38,10 +46,18 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Verify Xcode 26
+      - name: Verify Xcode 26 or newer
         run: |
+          # README states a minimum, so the gate enforces a minimum. Matching
+          # `^Xcode 26` exactly turned every future runner-image bump into a
+          # red build with nothing actually wrong.
           xcodebuild -version
-          xcodebuild -version | head -n 1 | grep -E '^Xcode 26([.]|$)'
+          version="$(xcodebuild -version | head -n 1 | awk '{print $2}')"
+          major="${version%%.*}"
+          if [ "$major" -lt 26 ]; then
+            echo "Xcode $version is older than the required 26" >&2
+            exit 1
+          fi
       - name: Build app and run tests
         run: |
           xcodebuild test \

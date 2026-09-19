@@ -62,7 +62,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) { pendingAudioRetentionPolicy = nil }
         } message: {
-            Text("Transcript and Markdown will stay available, but repeat transcription and speaker editing require the original audio. Failed, incomplete, and protected recordings are never deleted.")
+            Text("Transcript and Markdown will stay available, but repeat transcription requires the original audio. Failed, incomplete, and protected recordings are never deleted.")
         }
         .confirmationDialog(
             "Remove unused legacy models?",

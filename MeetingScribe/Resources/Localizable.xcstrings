@@ -5777,34 +5777,34 @@
         }
       }
     },
-    "Transcript and Markdown remain available. Repeat transcription and speaker editing will no longer be possible for cleaned recordings.": {
+    "Transcript and Markdown remain available. Repeat transcription will no longer be possible for cleaned recordings.": {
       "localizations": {
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Přepis a Markdown zůstanou dostupné. U vyčištěných nahrávek už nebude možné přepis zopakovat ani upravovat mluvčí."
+            "value": "Přepis a Markdown zůstávají dostupné. Opakovaný přepis už u vyčištěných nahrávek nebude možný."
           }
         },
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Prepis a Markdown zostanú dostupné. Pri vyčistených nahrávkach už nebude možné zopakovať prepis ani upravovať rečníkov."
+            "value": "Prepis a Markdown zostávajú dostupné. Opakovaný prepis už pri vyčistených nahrávkach nebude možný."
           }
         }
       }
     },
-    "Transcript and Markdown will stay available, but repeat transcription and speaker editing require the original audio. Failed, incomplete, and protected recordings are never deleted.": {
+    "Transcript and Markdown will stay available, but repeat transcription requires the original audio. Failed, incomplete, and protected recordings are never deleted.": {
       "localizations": {
         "cs": {
           "stringUnit": {
             "state": "translated",
-            "value": "Přepis a Markdown zůstanou dostupné, ale opakovaný přepis a úprava mluvčích vyžadují původní zvuk. Zvuk neúspěšných, nedokončených a chráněných nahrávek se nikdy nemaže."
+            "value": "Přepis a Markdown zůstanou dostupné, ale opakovaný přepis vyžaduje původní zvuk. Zvuk neúspěšných, nedokončených a chráněných nahrávek se nikdy nemaže."
           }
         },
         "sk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Prepis a Markdown zostanú dostupné, ale opakovaný prepis a úprava rečníkov vyžadujú pôvodný zvuk. Zvuk neúspešných, nedokončených a chránených nahrávok sa nikdy neodstraňuje."
+            "value": "Prepis a Markdown zostanú dostupné, ale opakovaný prepis vyžaduje pôvodný zvuk. Zvuk neúspešných, nedokončených a chránených nahrávok sa nikdy neodstraňuje."
           }
         }
       }
