@@ -35,12 +35,21 @@ protocol SessionTranscribing: Sendable {
 
 }
 
-/// Transcribes system and microphone tracks sequentially with one reusable model context.
+/// Transcribes system and microphone tracks sequentially, one at a time.
 ///
-/// The context is retained between the two tracks to avoid loading the model
-/// twice, then released after the complete session on success, failure, or
-/// cancellation. Both full audio sample arrays are therefore never eager in
-/// memory at the same time.
+/// Each track runs in its own short-lived helper process, so the model is
+/// loaded per track and released with the process the moment that track
+/// finishes. A session therefore never holds roughly half a gigabyte of
+/// Core ML weights across the gap between its two tracks — which is exactly
+/// when another recording is most likely to be running.
+///
+/// The obvious objection is the second load, and it was measured: macOS
+/// caches the compiled model outside the process, so only the first load
+/// after an install pays the compilation (about half a minute on an Apple
+/// Silicon Mac). Every load after that is a fraction of a second, against
+/// transcription runs measured in minutes.
+///
+/// Both full audio sample arrays are likewise never resident at once.
 actor SessionTranscriber: SessionTranscribing {
     private let service: any SpeechTranscribing
     private let merger: TranscriptMerger
