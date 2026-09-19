@@ -341,6 +341,108 @@ final class AudioFinalizerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: session.microphoneWorkingAudioURL.path))
     }
 
+    func testASkewedMicrophoneStartDoesNotShiftTheRequiredSystemTrack() async throws {
+        // Capture starts ScreenCaptureKit first and the microphone after it,
+        // so a microphone timestamp 30 seconds earlier is clock skew. Taken
+        // as the origin it gave the required system track a 30-second offset
+        // and moved every system segment that far later in the transcript.
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: "system.caf",
+                    channelCount: 2,
+                    presentationTimestamp: 1_000
+                ),
+                microphone: diagnostics(
+                    fileName: "microphone.caf",
+                    channelCount: 1,
+                    presentationTimestamp: 970
+                )
+            )
+        )
+
+        XCTAssertEqual(metadata.timelineOrigin, 1_000)
+        XCTAssertEqual(metadata.system?.timelineOffsetSeconds, 0)
+        XCTAssertNotNil(metadata.microphone, "the track is still finalized, only its zero is not used")
+        XCTAssertEqual(metadata.microphone?.timelineOffsetSeconds, 0)
+        XCTAssertTrue(metadata.warnings.contains { $0.contains("earlier than system audio") })
+    }
+
+    func testAMicrophoneStartingShortlyBeforeSystemAudioStillSetsTheOrigin() async throws {
+        // Two subsystems reporting the same moment differ by a little, and
+        // the first ScreenCaptureKit buffer arrives on its own schedule. A
+        // small lead is ordinary and must keep working as before.
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: "system.caf",
+                    channelCount: 2,
+                    presentationTimestamp: 1_000
+                ),
+                microphone: diagnostics(
+                    fileName: "microphone.caf",
+                    channelCount: 1,
+                    presentationTimestamp: 998
+                )
+            )
+        )
+
+        XCTAssertEqual(metadata.timelineOrigin, 998)
+        XCTAssertEqual(metadata.system?.timelineOffsetSeconds, 2)
+        XCTAssertEqual(metadata.microphone?.timelineOffsetSeconds, 0)
+        XCTAssertFalse(metadata.warnings.contains { $0.contains("earlier than system audio") })
+    }
+
+    func testAGapInsideATrackIsReportedInsteadOfPassingAsClean() async throws {
+        // Rebuilding the audio engine after a headset reconnects costs
+        // seconds. No silence is inserted and only a start offset is applied,
+        // so the file simply ends up shorter than the wall clock it covers
+        // and everything after the gap sits early against the other track.
+        let session = makeSession()
+        try writeCAF(to: session.systemAudioURL, channelCount: 2, duration: 1)
+        try writeCAF(to: session.microphoneAudioURL, channelCount: 1, duration: 1)
+
+        var interrupted = AudioCaptureDiagnostics(fileName: "microphone.caf", startedAt: Date())
+        interrupted.registerBuffer(
+            frameCount: 48_000, sampleRate: 48_000, channelCount: 1, presentationTimestamp: 100
+        )
+        // The next buffer arrives ten seconds later: the engine was rebuilt.
+        interrupted.registerBuffer(
+            frameCount: 48_000, sampleRate: 48_000, channelCount: 1, presentationTimestamp: 110
+        )
+
+        let metadata = try await AudioFinalizer().finalize(
+            session: session,
+            diagnostics: CaptureSessionDiagnostics(
+                systemAudio: diagnostics(
+                    fileName: "system.caf",
+                    channelCount: 2,
+                    presentationTimestamp: 100
+                ),
+                microphone: interrupted
+            )
+        )
+
+        XCTAssertNotNil(metadata.microphone, "the audio that was captured is still kept")
+        let gap = try XCTUnwrap(metadata.warnings.first { $0.contains("were missed during capture") })
+        XCTAssertTrue(gap.hasPrefix("Microphone covers 11.0 seconds"), gap)
+        XCTAssertTrue(gap.contains("About 10.0 seconds"), gap)
+        XCTAssertFalse(
+            metadata.warnings.contains { $0.hasPrefix("System audio covers") },
+            "an uninterrupted track must not be reported"
+        )
+    }
+
     func testFinalizerRejectsEmptyRequiredSystemTrack() async throws {
         let session = makeSession()
 

@@ -16,6 +16,26 @@ protocol AudioFinalizing: Sendable {
 struct AudioFinalizer: AudioFinalizing {
     static let maximumPlausibleTrackStartDifference: TimeInterval = 60
 
+    /// How far before system audio a microphone start may plausibly fall.
+    ///
+    /// Capture starts ScreenCaptureKit first and the microphone only after it
+    /// returns, so the microphone cannot really begin much earlier. A few
+    /// seconds of apparent lead are ordinary — the two timestamps come from
+    /// different subsystems and the first system buffer arrives on
+    /// ScreenCaptureKit's own delivery schedule — but tens of seconds are
+    /// clock skew.
+    ///
+    /// This matters because the origin is the earliest accepted start. A
+    /// skewed microphone value taken as the origin gives the *required*
+    /// system track a positive offset and shifts every system segment later
+    /// in the merged transcript, which is the opposite of preserving it.
+    static let maximumPlausibleMicrophoneLead: TimeInterval = 5
+
+    /// How much shorter a track may be than the wall clock it spans before
+    /// that is worth telling the user about. Buffer-boundary rounding is
+    /// well under a second; a rebuilt audio engine costs seconds.
+    static let maximumUnreportedTrackGap: TimeInterval = 1
+
     private let converter: WorkingAudioConverter
     private let repairer: PCMRecordingFileRepairer
     private let now: @Sendable () -> Date
@@ -60,12 +80,15 @@ struct AudioFinalizer: AudioFinalizing {
         } ?? false
         let canFinalizeMicrophone = microphoneDiagnostics.bufferCount > 0
             && hasCompatibleMicrophoneTimeline
-        let timelineOrigin = min(
-            systemStart,
-            canFinalizeMicrophone
-                ? microphoneDiagnostics.firstPresentationTimestamp ?? systemStart
-                : systemStart
-        )
+        // An implausible lead does not disqualify the microphone track; it
+        // only disqualifies that timestamp as the session's zero. The track
+        // is still finalized, clamped to the origin by `max(0, …)` below.
+        let microphoneLeadsImplausibly = microphoneStart.map {
+            systemStart - $0 > Self.maximumPlausibleMicrophoneLead
+        } ?? false
+        let timelineOrigin = canFinalizeMicrophone && !microphoneLeadsImplausibly
+            ? min(systemStart, microphoneStart ?? systemStart)
+            : systemStart
 
         let system = try finalizeTrack(
             inputURL: session.systemAudioURL,
@@ -85,6 +108,13 @@ struct AudioFinalizer: AudioFinalizing {
                     startedAt: microphoneStart,
                     timelineOrigin: timelineOrigin
                 )
+                if microphoneLeadsImplausibly {
+                    warnings.append(
+                        "Microphone capture reported a start earlier than system audio, which "
+                            + "capture order makes impossible. System audio kept the session "
+                            + "origin and the microphone track starts at zero."
+                    )
+                }
                 if let failureReason = microphoneDiagnostics.failureReason {
                     warnings.append("Microphone capture ended early: \(failureReason)")
                 }
@@ -113,6 +143,14 @@ struct AudioFinalizer: AudioFinalizing {
                 "Microphone capture dropped \(microphoneDiagnostics.droppedBufferCount) audio buffers because its writer queue was saturated."
             )
         }
+        warnings.append(contentsOf: [
+            gapWarning(trackName: "System audio", diagnostics: systemDiagnostics, finalized: system),
+            gapWarning(
+                trackName: "Microphone",
+                diagnostics: microphoneDiagnostics,
+                finalized: microphone
+            ),
+        ].compactMap { $0 })
 
         return AudioFinalizationMetadata(
             completedAt: now(),
@@ -121,6 +159,37 @@ struct AudioFinalizer: AudioFinalizing {
             microphone: microphone,
             warnings: warnings
         )
+    }
+
+    /// Reports time a track covers but does not contain.
+    ///
+    /// Only one start offset is applied per track and no silence is inserted,
+    /// so a gap that opens *inside* a recording is invisible in the result:
+    /// the file gets shorter while the wall clock it spans does not, and
+    /// every segment after the gap lands that much early against the other
+    /// track. Rebuilding the audio engine after a headset reconnects costs
+    /// exactly this kind of time.
+    ///
+    /// The two numbers needed are already collected. Presentation timestamps
+    /// say how much wall clock the track spans; the finalized file says how
+    /// much audio was written. Naming the difference does not repair the
+    /// alignment, but it stops a drifted transcript from looking clean.
+    private func gapWarning(
+        trackName: String,
+        diagnostics: AudioCaptureDiagnostics,
+        finalized: FinalizedAudioTrackMetadata?
+    ) -> String? {
+        guard let finalized, let captured = diagnostics.capturedDurationSeconds else { return nil }
+        let missing = captured - finalized.durationSeconds
+        guard missing > Self.maximumUnreportedTrackGap else { return nil }
+        return "\(trackName) covers \(formatted(captured)) seconds but contains "
+            + "\(formatted(finalized.durationSeconds)) seconds of audio. About "
+            + "\(formatted(missing)) seconds were missed during capture, so segments after "
+            + "the interruption can be early relative to the other track."
+    }
+
+    private func formatted(_ seconds: TimeInterval) -> String {
+        String(format: "%.1f", seconds)
     }
 
     private func finalizeMicrophoneOnly(
@@ -146,6 +215,13 @@ struct AudioFinalizer: AudioFinalizing {
             warnings.append(
                 "Microphone capture dropped \(diagnostics.droppedBufferCount) audio buffers because its writer queue was saturated."
             )
+        }
+        if let gap = gapWarning(
+            trackName: "Microphone",
+            diagnostics: diagnostics,
+            finalized: microphone
+        ) {
+            warnings.append(gap)
         }
         return AudioFinalizationMetadata(
             completedAt: now(),

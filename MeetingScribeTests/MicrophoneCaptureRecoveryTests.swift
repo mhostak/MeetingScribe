@@ -318,6 +318,76 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
         _ = await capture.stop()
     }
 
+    func testRepeatedRouteChangesDoNotAccumulateBufferPools() async throws {
+        // Each engine rebuild installs a fresh tap with a fresh pool. A long
+        // meeting on Bluetooth can rebuild dozens of times; every retained
+        // pool is eight 8 192-frame buffers held for the rest of the session
+        // and one more lock taken on every buffer written.
+        let notificationCenter = NotificationCenter()
+        let initialEngine = FakeMicrophoneAudioEngine()
+        let engines = EngineBox()
+        let capture = MicrophoneCapture(
+            engine: initialEngine,
+            engineFactory: {
+                let engine = FakeMicrophoneAudioEngine()
+                engines.append(engine)
+                return engine
+            },
+            notificationCenter: notificationCenter,
+            recoveryConfiguration: MicrophoneRecoveryConfiguration(
+                delay: 0,
+                maximumAttempts: 2,
+                minimumBufferCount: 1
+            ),
+            permissionRequester: {}
+        )
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MicrophoneCaptureRecoveryTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await capture.start(outputURL: directory.appendingPathComponent("audio.caf"))
+        XCTAssertEqual(capture.retainedBufferPoolCount, 1)
+
+        // A recovery verifies itself for a second before another can be
+        // scheduled, so rebuilds are driven one at a time and a round that
+        // does not produce one is simply not counted.
+        var currentObject: AnyObject = initialEngine.notificationObject
+        var rebuilds = 0
+        for _ in 0..<4 {
+            let before = engines.count
+            notificationCenter.post(
+                name: .AVAudioEngineConfigurationChange,
+                object: currentObject
+            )
+            guard await settles(until: { engines.count > before }) else { continue }
+            rebuilds += 1
+            let engine = try XCTUnwrap(engines.last)
+            _ = await settles(until: { engine.didEnterStart })
+            currentObject = engine.notificationObject
+            XCTAssertEqual(
+                capture.retainedBufferPoolCount, 1,
+                "after rebuild \(rebuilds) only the current tap's pool is retained"
+            )
+        }
+
+        XCTAssertGreaterThanOrEqual(rebuilds, 2, "the route changes must have rebuilt the engine")
+        XCTAssertEqual(capture.retainedBufferPoolCount, 1)
+        _ = await capture.stop()
+    }
+
+    /// Waits for a condition without failing the test when it never holds.
+    private func settles(
+        attempts: Int = 400,
+        until condition: () -> Bool
+    ) async -> Bool {
+        for _ in 0..<attempts {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return false
+    }
+
     func testStaleRecoveryDoesNotClearRecoveryScheduledForNewCapture() async throws {
         let notificationCenter = NotificationCenter()
         let initialEngine = FakeMicrophoneAudioEngine()
@@ -397,6 +467,18 @@ final class MicrophoneCaptureRecoveryTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("Timed out waiting for microphone engine operation.")
+    }
+}
+
+private final class EngineBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var engines: [FakeMicrophoneAudioEngine] = []
+
+    var count: Int { lock.withLock { engines.count } }
+    var last: FakeMicrophoneAudioEngine? { lock.withLock { engines.last } }
+
+    func append(_ engine: FakeMicrophoneAudioEngine) {
+        lock.withLock { engines.append(engine) }
     }
 }
 

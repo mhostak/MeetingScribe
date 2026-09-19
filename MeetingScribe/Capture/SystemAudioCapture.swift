@@ -16,7 +16,10 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         label: "com.martinhostak.MeetingScribe.system-audio",
         qos: .userInitiated
     )
-    private var state = State()
+    private let publishedDiagnostics = AudioCaptureDiagnosticsBox()
+    private var state = State() {
+        didSet { publishedDiagnostics.publish(state.diagnostics) }
+    }
 
     func start(outputURL: URL) async throws {
         let reservedStart = callbackQueue.sync {
@@ -117,7 +120,10 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
     }
 
     func diagnostics() async -> AudioCaptureDiagnostics {
-        callbackQueue.sync { state.diagnostics }
+        // Polled five times a second for the live meter. Entering the
+        // ScreenCaptureKit delivery queue to read it would make the UI wait
+        // behind a disk write, on a cooperative-concurrency thread.
+        publishedDiagnostics.value
     }
 
     private func preferredDisplay(from displays: [SCDisplay]) -> SCDisplay? {
