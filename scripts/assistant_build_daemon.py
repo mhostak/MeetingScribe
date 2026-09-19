@@ -452,7 +452,11 @@ def job_build_signed(ctx: JobContext) -> None:
             raise JobError(f"no app bundle at {app}")
         ctx.data["app_path"] = str(app)
 
+        # A bundle that builds but fails a signing check is exactly the case
+        # worth inspecting, so the worktree survives that failure too.
+        keep = True
         verify_signature(app, fingerprint, ctx)
+        keep = False
         ctx.data["verified"] = True
         save_state({"last_signed_build": {
             "app_path": str(app),
@@ -544,20 +548,23 @@ def job_install(ctx: JobContext) -> None:
     app = Path(app_path)
 
     commit = state.get("commit", "")
-    main_commits = set()
-    for ref in ("refs/heads/main", "refs/remotes/origin/main"):
-        completed = git(["rev-parse", "--verify", f"{ref}^{{commit}}"])
-        if completed.returncode == 0:
-            main_commits.add(completed.stdout.strip())
-    is_main = commit in main_commits
+    # Only the remote-tracking ref counts. `refs/heads/main` lives in a
+    # repository the requester can write, so a local branch move would satisfy
+    # the guard without the commit ever having been reviewed or pushed.
+    # AGENTS.md ties installation to the commit now at origin/main anyway.
+    completed = git(["rev-parse", "--verify", "refs/remotes/origin/main^{commit}"])
+    origin_main = completed.stdout.strip() if completed.returncode == 0 else ""
+    is_main = bool(commit) and commit == origin_main
     if not is_main and not ALLOW_NONMAIN_INSTALL.exists():
         raise JobError(
-            "the last signed build is not main/origin/main. AGENTS.md authorizes "
-            "automatic installation for main updates only. To allow this one, "
+            "the last signed build is not origin/main. AGENTS.md authorizes "
+            "automatic installation for main updates only. Run `fetch` if "
+            "origin/main is stale. To allow this one, "
             f"create {ALLOW_NONMAIN_INSTALL} and retry."
         )
     ctx.record("install source", True,
-               f"{commit[:10]} ({'main' if is_main else 'non-main, explicitly allowed'})")
+               f"{commit[:10]} "
+               f"({'origin/main' if is_main else 'non-main, explicitly allowed'})")
 
     # Re-verify before touching /Applications, not only after building.
     verify_signature(app, configured_fingerprint(), ctx)
@@ -576,7 +583,16 @@ def job_install(ctx: JobContext) -> None:
 
     staged = INSTALLED_APP.with_name(f"MeetingScribe.app.replacing-{uuid.uuid4().hex[:8]}")
     try:
-        run(["/usr/bin/ditto", str(app), str(staged)], ctx=ctx, timeout=600)
+        # `run` does not check exit codes, so a partial copy would otherwise
+        # reach /Applications and only be caught after the installed bundle had
+        # already been moved away. Both the exit code and the signature of the
+        # staged copy are checked while /Applications is still untouched.
+        copied = run(["/usr/bin/ditto", str(app), str(staged)], ctx=ctx, timeout=600)
+        if copied.returncode != 0:
+            raise JobError(
+                f"copying the signed bundle failed (ditto exit {copied.returncode})"
+            )
+        verify_signature(staged, configured_fingerprint(), ctx)
         if INSTALLED_APP.exists():
             backup = INSTALLED_APP.with_name(
                 f"MeetingScribe.app.previous-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -587,6 +603,11 @@ def job_install(ctx: JobContext) -> None:
     except OSError as error:
         shutil.rmtree(staged, ignore_errors=True)
         raise JobError(f"could not replace {INSTALLED_APP}: {error}") from error
+    except BaseException:
+        # A rejected staged copy must not be left behind next to the installed
+        # app, where the next run's glob would treat it as a real bundle.
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
     ctx.record("installed", True, str(INSTALLED_APP))
 
     verify_signature(INSTALLED_APP, configured_fingerprint(), ctx)
@@ -952,7 +973,11 @@ def handle(path: Path) -> None:
     )
     ctx = JobContext(request=request, request_id=request_id, log_path=log_path)
 
-    if job not in JOB_HANDLERS:
+    # `job` comes straight from the request, so it can be any JSON value. An
+    # unhashable one (a list or an object) would make the membership test raise
+    # before the request is archived, and launchd would restart the daemon into
+    # the same request forever.
+    if not isinstance(job, str) or job not in JOB_HANDLERS:
         write_result(request_id, {
             "id": request_id, "job": job, "status": "rejected",
             "finished_at": now(),
