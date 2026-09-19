@@ -305,6 +305,22 @@
         }
       }
     },
+    "Also move the exported Markdown note to the Trash": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Přesunout do koše i exportovanou poznámku Markdown"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presunúť do koša aj exportovanú poznámku Markdown"
+          }
+        }
+      }
+    },
     "Analysis prompt": {
       "localizations": {
         "cs": {
@@ -365,6 +381,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Anonymný"
+          }
+        }
+      }
+    },
+    "Anything moved to the Trash can be put back in Finder, but MeetingScribe will no longer list this recording.": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cokoli přesunutého do koše lze ve Finderu vrátit zpět, MeetingScribe ale tuto nahrávku už nebude zobrazovat."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Čokoľvek presunuté do koša sa dá vo Finderi vrátiť späť, MeetingScribe však tento záznam už nebude zobrazovať."
           }
         }
       }
@@ -1441,6 +1473,38 @@
         }
       }
     },
+    "Delete recording": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smazat nahrávku"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zmazať záznam"
+          }
+        }
+      }
+    },
+    "Delete this recording?": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smazat tuto nahrávku?"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zmazať tento záznam?"
+          }
+        }
+      }
+    },
     "Denied": {
       "localizations": {
         "cs": {
@@ -1805,6 +1869,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Očakávaný súbor chýba"
+          }
+        }
+      }
+    },
+    "Exported note": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportovaná poznámka"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportovaná poznámka"
           }
         }
       }
@@ -3069,6 +3149,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Stav modelu"
+          }
+        }
+      }
+    },
+    "Move to Trash": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Přesunout do koše"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Presunúť do koša"
           }
         }
       }
@@ -5009,6 +5105,22 @@
         }
       }
     },
+    "Session folder": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Složka záznamu"
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zložka záznamu"
+          }
+        }
+      }
+    },
     "Session settings are locked while recording or processing.": {
       "localizations": {
         "cs": {
@@ -5645,6 +5757,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Test prípravy nie je dostupný, keď je MeetingScribe zaneprázdnený."
+          }
+        }
+      }
+    },
+    "The whole session folder goes to the Trash: recorded audio, transcript, AI analysis, notes and processing logs.": {
+      "localizations": {
+        "cs": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Do koše půjde celá složka záznamu: nahraný zvuk, přepis, AI analýza, poznámky i protokoly zpracování."
+          }
+        },
+        "sk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Do koša pôjde celá zložka záznamu: nahraný zvuk, prepis, AI analýza, poznámky aj protokoly spracovania."
           }
         }
       }

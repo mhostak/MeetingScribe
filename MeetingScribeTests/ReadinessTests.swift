@@ -319,8 +319,9 @@ final class ReadinessTests: XCTestCase {
         )
 
         let first = Task { try await service.refresh(firstConfiguration) }
-        try await Task.sleep(nanoseconds: 20_000_000)
+        await modelProbe.waitUntilFirstCallStarted()
         let second = try await service.refresh(secondConfiguration)
+        await modelProbe.releaseFirstCall()
 
         do {
             _ = try await first.value
@@ -391,13 +392,36 @@ private actor RecordingModelProbe: ReadinessModelProbing {
     }
 }
 
+/// Pins the interleaving the stale-result test is about: the first refresh has
+/// to be inside its model probe when the second one starts. Sleeping only made
+/// that likely, and on a loaded machine the second refresh could take the first
+/// probe call instead, inverting the race the test means to assert.
 private actor RaceModelProbe: ReadinessModelProbing {
     private var callCount = 0
+    private var hasStartedFirstCall = false
+    private var isFirstCallReleased = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func waitUntilFirstCallStarted() async {
+        guard !hasStartedFirstCall else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+
+    func releaseFirstCall() {
+        isFirstCallReleased = true
+        for waiter in releaseWaiters { waiter.resume() }
+        releaseWaiters.removeAll()
+    }
 
     func status() async -> ReadinessModelProbeResult {
         callCount += 1
-        if callCount == 1 {
-            try? await Task.sleep(nanoseconds: 100_000_000)
+        guard callCount == 1 else { return .ready }
+        hasStartedFirstCall = true
+        for waiter in startWaiters { waiter.resume() }
+        startWaiters.removeAll()
+        if !isFirstCallReleased {
+            await withCheckedContinuation { releaseWaiters.append($0) }
         }
         return .ready
     }

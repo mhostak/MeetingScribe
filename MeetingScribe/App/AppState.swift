@@ -112,6 +112,8 @@ final class AppState: ObservableObject {
     @Published private(set) var recordingAudioCleanupError: String?
     @Published private(set) var isScanningRecordingAudio = false
     @Published private(set) var isCleaningRecordingAudio = false
+    @Published private(set) var deletingSessionID: String?
+    @Published private(set) var lastSessionDeletionWarnings: [String] = []
     @Published var selectedTranscriptionLanguage: TranscriptionLanguage = .automatic
     @Published var aiAnalysisEnabled = false
     @Published var selectedAnalysisTool: AnalysisTool = .codex
@@ -158,6 +160,7 @@ final class AppState: ObservableObject {
     private let calendarEventProvider: any CalendarEventProviding
     private let audioSourceCleaner: any AudioSourceCleaning
     private let recordingAudioCleanupService: RecordingAudioCleanupService
+    private let sessionDeletionService: SessionDeletionService
     private let recoveredAudioInspector: RecoveredAudioInspector
     private let processingLogger: ProcessingLogger
     private let processingNotifier: any ProcessingNotifying
@@ -541,6 +544,7 @@ final class AppState: ObservableObject {
         calendarEventProvider: (any CalendarEventProviding)? = nil,
         audioSourceCleaner: any AudioSourceCleaning = AudioSourceCleaner(),
         recordingAudioCleanupService: RecordingAudioCleanupService? = nil,
+        sessionDeletionService: SessionDeletionService? = nil,
         recoveredAudioInspector: RecoveredAudioInspector = RecoveredAudioInspector(),
         processingLogger: ProcessingLogger = ProcessingLogger(),
         captureMonitoringConfiguration: CaptureMonitoringConfiguration = CaptureMonitoringConfiguration(),
@@ -578,6 +582,8 @@ final class AppState: ObservableObject {
         self.audioSourceCleaner = audioSourceCleaner
         self.recordingAudioCleanupService = recordingAudioCleanupService
             ?? RecordingAudioCleanupService(recordingsRoot: sessionManager.recordingsRoot)
+        self.sessionDeletionService = sessionDeletionService
+            ?? SessionDeletionService(recordingsRoot: sessionManager.recordingsRoot)
         self.recoveredAudioInspector = recoveredAudioInspector
         self.processingLogger = processingLogger
         self.processingNotifier = processingNotifier
@@ -1900,6 +1906,77 @@ final class AppState: ObservableObject {
             keepAudio,
             sessionID: session.metadata.id
         )
+        await refreshRecordingAudioCleanupPlan()
+    }
+
+    /// A recording can only be deleted while nothing is reading or writing it:
+    /// no live capture, no pending job, no reprocessing, no audio cleanup.
+    func canDeleteSession(sessionID: String) -> Bool {
+        canEnqueueProcessing(sessionID: sessionID)
+            && deletingSessionID == nil
+            && fluidAudioReprocessingSessionID == nil
+            && aiAnalysisReprocessingSessionID == nil
+            && !isCleaningRecordingAudio
+    }
+
+    /// Resolves what the delete would remove, from disk rather than from the
+    /// overview row, so the confirmation names the paths that will really go.
+    func sessionDeletionPlan(for session: RecordingSession) async throws -> SessionDeletionPlan {
+        guard canDeleteSession(sessionID: session.metadata.id) else {
+            throw SessionDeletionError.sessionIsInUse(session.metadata.id)
+        }
+        return try await sessionDeletionService.plan(for: session.metadata.id)
+    }
+
+    func deleteSession(
+        _ plan: SessionDeletionPlan,
+        includingExportedMarkdown: Bool
+    ) async throws {
+        guard canDeleteSession(sessionID: plan.sessionID) else {
+            throw SessionDeletionError.sessionIsInUse(plan.sessionID)
+        }
+        deletingSessionID = plan.sessionID
+        lastSessionDeletionWarnings = []
+        defer { deletingSessionID = nil }
+
+        let report: SessionDeletionReport
+        if includingExportedMarkdown, plan.hasExternalMarkdown, let outputFolderURL {
+            report = try await outputFolderStore.withAccess(to: outputFolderURL) {
+                [sessionDeletionService] in
+                try await sessionDeletionService.delete(
+                    plan,
+                    includingExportedMarkdown: true
+                )
+            }
+        } else {
+            report = try await sessionDeletionService.delete(
+                plan,
+                includingExportedMarkdown: includingExportedMarkdown
+            )
+        }
+
+        lastSessionDeletionWarnings = report.warnings
+        await forgetDeletedSession(plan, report: report)
+    }
+
+    /// Drops every in-memory reference to a recording whose folder is gone.
+    /// A stale reference outlives the files: a finished job keeps the menu bar
+    /// asking for attention, a recovery candidate keeps demanding an action on
+    /// a directory that no longer exists.
+    private func forgetDeletedSession(
+        _ plan: SessionDeletionPlan,
+        report: SessionDeletionReport
+    ) async {
+        let id = plan.sessionID
+        await processingQueue.forget(sessionID: id)
+        processingJobs.removeAll { $0.metadata.id == id }
+        if lastCompletedSession?.metadata.id == id { lastCompletedSession = nil }
+        if recordingsNavigationRequest?.sessionID == id { recordingsNavigationRequest = nil }
+        if report.trashedMarkdown, lastMarkdownURL == plan.exportedMarkdownURL {
+            lastMarkdownURL = nil
+        }
+        removeRecoveryCandidate(id: id)
+        recoveryIssues.removeAll { $0.id == id }
         await refreshRecordingAudioCleanupPlan()
     }
 
