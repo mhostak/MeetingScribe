@@ -107,6 +107,23 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         droppedBufferCount += max(0, count)
     }
 
+    /// Records why capture failed, keeping the first reason given.
+    ///
+    /// A failure cascades: the write that ran out of disk space is followed by
+    /// buffers that find no writer, and by a stop that reports the stream was
+    /// never running. Those later reasons describe the wreckage, not the
+    /// cause, and they arrive within milliseconds. Only the first one is
+    /// worth showing the user or writing into the session manifest.
+    ///
+    /// An empty or whitespace-only reason is not a description of anything and
+    /// is ignored, so it cannot claim the slot a real one needs.
+    mutating func registerFailureReason(_ reason: String) {
+        guard failureReason == nil else { return }
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        failureReason = trimmed
+    }
+
     func recentLiveAudioLevels(
         at date: Date = Date(),
         staleAfter: TimeInterval = 1,

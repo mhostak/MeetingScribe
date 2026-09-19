@@ -450,7 +450,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             state.startupVerificationInProgress = false
             state.configurationChangePendingDuringStartup = false
             state.configurationRecoveryScheduled = false
-            state.diagnostics.failureReason = error.localizedDescription
+            state.diagnostics.registerFailureReason(error.localizedDescription)
             finishWriter()
             state.isCapturing = false
             state.captureGeneration = nil
@@ -492,9 +492,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         do {
             try writer.finish()
         } catch {
-            if state.diagnostics.failureReason == nil {
-                state.diagnostics.failureReason = error.localizedDescription
-            }
+            state.diagnostics.registerFailureReason(error.localizedDescription)
         }
         state.writer = nil
     }
@@ -521,7 +519,9 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             frameCapacity: Self.tapFrameCapacity,
             count: Self.tapBufferPoolSize
         ) else {
-            state.diagnostics.failureReason = "Could not allocate microphone capture buffers."
+            state.diagnostics.registerFailureReason(
+                "Could not allocate microphone capture buffers."
+            )
             return
         }
         state.bufferPools.append(pool)
@@ -680,7 +680,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 audioLevel: result.audioLevel
             )
         } catch {
-            state.diagnostics.failureReason = error.localizedDescription
+            state.diagnostics.registerFailureReason(error.localizedDescription)
             finishWriter()
             state.isCapturing = false
             state.configurationRecoveryScheduled = false

@@ -165,4 +165,44 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
 
         XCTAssertTrue(SystemAudioCapture.startError(for: streamFailure) as NSError === streamFailure)
     }
+
+    func testFirstFailureReasonSurvivesTheFailuresItCauses() {
+        var diagnostics = AudioCaptureDiagnostics(fileName: "system-16k.wav", startedAt: Date())
+
+        diagnostics.registerFailureReason("No space left on device")
+        // What a caller sees after the first failure: no writer, then a stop
+        // that reports capture was never running. Both arrive within
+        // milliseconds and neither describes the cause.
+        diagnostics.registerFailureReason(
+            AudioCaptureServiceError.notCapturing.localizedDescription
+        )
+        diagnostics.registerFailureReason("The stream stopped.")
+
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+        XCTAssertEqual(diagnostics.health(), .failed)
+        XCTAssertEqual(diagnostics.sessionMetadata.failureReason, "No space left on device")
+    }
+
+    func testAnEmptyFailureReasonDoesNotClaimTheSlot() {
+        var diagnostics = AudioCaptureDiagnostics()
+
+        diagnostics.registerFailureReason("   \n ")
+        XCTAssertNil(diagnostics.failureReason)
+
+        diagnostics.registerFailureReason("  No space left on device  ")
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+    }
+
+    func testClearingLetsARecoveredTrackReportItsNextFailure() {
+        // The microphone clears the reason once buffers flow again after a
+        // route change, so keeping the first reason must not make a recovered
+        // track permanently unable to report a new failure.
+        var diagnostics = AudioCaptureDiagnostics()
+
+        diagnostics.registerFailureReason("The audio engine stopped.")
+        diagnostics.failureReason = nil
+        diagnostics.registerFailureReason("No space left on device")
+
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+    }
 }

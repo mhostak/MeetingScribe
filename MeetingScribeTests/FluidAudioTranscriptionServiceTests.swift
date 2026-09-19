@@ -256,6 +256,116 @@ final class FluidAudioTranscriptionServiceTests: XCTestCase {
         } catch is CancellationError {}
     }
 
+    func testWorkerFailureReasonReachesTheParentInsteadOfAnExitCode() async throws {
+        // A corrupted model bundle loads as a Core ML failure inside the
+        // worker. Before the failure file the parent could only report "exit
+        // code 1", which reads the same as a missing bundle although the user
+        // has to do something different about it.
+        let fixture = try makeWorkerFixture(script: """
+        #!/bin/sh
+        printf '%s' '{"schemaVersion":1,"description":"The transcription model bundle Parakeet TDT 0.6B v3 could not be loaded."}' > "$7"
+        exit 1
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let runner = FluidAudioASRWorkerProcessRunner(executableURL: { fixture.executable })
+
+        do {
+            _ = try await runner.transcribe(
+                audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
+                modelBundleURL: URL(fileURLWithPath: "/tmp/model"),
+                language: .automatic,
+                configuration: .current
+            )
+            XCTFail("Expected the failing worker to throw.")
+        } catch let error as FluidAudioASRWorkerError {
+            XCTAssertEqual(
+                error.errorDescription,
+                "The transcription model bundle Parakeet TDT 0.6B v3 could not be loaded."
+            )
+            guard case let .workerFailed(exitCode, reason) = error else {
+                return XCTFail("Expected a workerFailed error, got \(error).")
+            }
+            XCTAssertEqual(exitCode, 1)
+            XCTAssertNotNil(reason)
+        }
+    }
+
+    func testWorkerThatReportsNothingUsableStillFailsWithItsExitCode() async throws {
+        // A worker killed outright, or one that writes something unreadable,
+        // leaves the exit code as the only fact available. That must remain a
+        // plain failure rather than becoming a decoding error of its own.
+        for script in ["exit 3", "printf 'not json' > \"$7\"\nexit 3"] {
+            let fixture = try makeWorkerFixture(script: "#!/bin/sh\n\(script)\n")
+            defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+            let runner = FluidAudioASRWorkerProcessRunner(executableURL: { fixture.executable })
+
+            do {
+                _ = try await runner.transcribe(
+                    audioURL: URL(fileURLWithPath: "/tmp/audio.wav"),
+                    modelBundleURL: URL(fileURLWithPath: "/tmp/model"),
+                    language: .automatic,
+                    configuration: .current
+                )
+                XCTFail("Expected the failing worker to throw.")
+            } catch let error as FluidAudioASRWorkerError {
+                XCTAssertEqual(
+                    error.errorDescription,
+                    "The transcription worker stopped with exit code 3."
+                )
+            }
+        }
+    }
+
+    func testWorkerWritesWhyItRejectedARequest() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "MeetingScribe-ASRWorkerReport-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let failureURL = directory.appendingPathComponent("failure.json")
+
+        let status = await FluidAudioASRWorker.runIfRequested(arguments: [
+            FluidAudioASRWorker.argument,
+            "--request", directory.appendingPathComponent("missing.json").path,
+            "--response", directory.appendingPathComponent("response.json").path,
+            "--failure", failureURL.path,
+        ])
+
+        XCTAssertEqual(status, 64)
+        let data = try XCTUnwrap(try? Data(contentsOf: failureURL))
+        let failure = try JSONDecoder().decode(FluidAudioASRWorkerFailure.self, from: data)
+        XCTAssertEqual(failure.schemaVersion, FluidAudioASRWorkerFailure.schemaVersion)
+        XCTAssertFalse(failure.description.isEmpty)
+        XCTAssertLessThanOrEqual(
+            failure.description.count,
+            FluidAudioASRWorkerFailure.maximumDescriptionLength
+        )
+    }
+
+    func testWorkerStillRunsForAParentThatPassesNoFailurePath() async {
+        // The installed app and the worker are the same executable, so an
+        // older parent must not make the worker reject its own request shape.
+        let status = await FluidAudioASRWorker.runIfRequested(arguments: [
+            FluidAudioASRWorker.argument,
+            "--request", "/nonexistent/request.json",
+            "--response", "/nonexistent/response.json",
+        ])
+
+        XCTAssertEqual(status, 64)
+    }
+
+    func testAnOverlongWorkerFailureDescriptionIsBounded() {
+        let failure = FluidAudioASRWorkerFailure(description: String(repeating: "x", count: 5_000))
+
+        XCTAssertEqual(
+            failure.description.count,
+            FluidAudioASRWorkerFailure.maximumDescriptionLength
+        )
+    }
+
     func testLegacySegmentJSONWithoutWordsStillDecodes() throws {
         let data = Data(#"""
         {
