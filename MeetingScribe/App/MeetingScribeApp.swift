@@ -343,6 +343,11 @@ final class AppWindowCoordinator: NSObject, ObservableObject, NSApplicationDeleg
 
     private func closeOnboarding() {
         onboardingWindow?.orderOut(nil)
+        // Closing the setup window used to leave its ten-second capture
+        // running with nothing on screen owning it; it stopped only when the
+        // timeout fired. `stopOnboardingTest` coalesces with the Stop button
+        // and with that timeout, so calling it here cannot stop twice.
+        Task { @MainActor in await appState.stopOnboardingTest() }
     }
 
     private func openCalendarPicker() {

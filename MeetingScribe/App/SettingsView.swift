@@ -6,6 +6,8 @@ struct SettingsView: View {
     @ObservedObject private var fluidAudioModelState: FluidAudioModelState
     @State private var pendingAudioRetentionPolicy: AudioRetentionPolicy?
     @State private var isShowingLegacyModelDeletionWarning = false
+    @State private var pendingAnalysisSave: Task<Void, Never>?
+    @State private var pendingApplicationSave: Task<Void, Never>?
 
     init(appState: AppState) {
         self.appState = appState
@@ -47,6 +49,7 @@ struct SettingsView: View {
         .padding(20)
         .frame(width: 680, height: 500)
         .environment(\.locale, appState.selectedAppLanguage.locale)
+        .onDisappear { flushPendingSettingsSaves() }
         .confirmationDialog(
             "Enable automatic recording audio deletion?",
             isPresented: Binding(
@@ -263,7 +266,7 @@ struct SettingsView: View {
                     TextField("Model identifier", text: $appState.customAnalysisModel)
                         .disabled(!appState.aiAnalysisEnabled)
                         .onChange(of: appState.customAnalysisModel) {
-                            appState.persistAnalysisSettings()
+                            persistAnalysisSettingsSoon()
                         }
                 }
 
@@ -289,7 +292,7 @@ struct SettingsView: View {
                     .frame(minHeight: 260)
                     .disabled(!appState.aiAnalysisEnabled)
                     .onChange(of: appState.analysisPrompt) {
-                        appState.persistAnalysisSettings()
+                        persistAnalysisSettingsSoon()
                     }
 
                 HStack {
@@ -332,7 +335,9 @@ struct SettingsView: View {
 
             Section("Document") {
                 TextField("File name template", text: $appState.markdownFileNameTemplate)
-                    .onChange(of: appState.markdownFileNameTemplate) { persistApplicationSettings() }
+                    .onChange(of: appState.markdownFileNameTemplate) {
+                        persistApplicationSettingsSoon()
+                    }
 
                 Text("Available tokens: {date}, {time}, {title}, {id}")
                     .font(.caption)
@@ -489,6 +494,48 @@ struct SettingsView: View {
 
     private func persistApplicationSettings() {
         Task { await appState.persistApplicationSettings() }
+    }
+
+    /// A settle delay long enough that typing does not write, short enough
+    /// that nobody notices it.
+    private static let settingsSaveDelay = Duration.milliseconds(500)
+
+    /// Saves a typed setting once the typing stops.
+    ///
+    /// Every keystroke in the prompt editor used to rewrite six defaults
+    /// keys; every keystroke in the file-name template rewrote four, told
+    /// the session manager its storage reserve and re-read the volume's free
+    /// space. None of that is per-character work.
+    private func persistAnalysisSettingsSoon() {
+        pendingAnalysisSave?.cancel()
+        pendingAnalysisSave = Task {
+            try? await Task.sleep(for: Self.settingsSaveDelay)
+            guard !Task.isCancelled else { return }
+            appState.persistAnalysisSettings()
+        }
+    }
+
+    private func persistApplicationSettingsSoon() {
+        pendingApplicationSave?.cancel()
+        pendingApplicationSave = Task {
+            try? await Task.sleep(for: Self.settingsSaveDelay)
+            guard !Task.isCancelled else { return }
+            await appState.persistApplicationSettings()
+        }
+    }
+
+    /// Closing the window mid-word must not lose the word.
+    private func flushPendingSettingsSaves() {
+        if pendingAnalysisSave != nil {
+            pendingAnalysisSave?.cancel()
+            pendingAnalysisSave = nil
+            appState.persistAnalysisSettings()
+        }
+        if pendingApplicationSave != nil {
+            pendingApplicationSave?.cancel()
+            pendingApplicationSave = nil
+            Task { await appState.persistApplicationSettings() }
+        }
     }
 
     @ViewBuilder

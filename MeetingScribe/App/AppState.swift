@@ -21,6 +21,18 @@ struct CaptureMonitoringConfiguration: Sendable {
     var maximumOwnershipRefreshFailures = 3
 }
 
+/// The meeting-notes text, observed only by the editor that shows it.
+///
+/// Held here rather than as an `@Published` property of `AppState` because
+/// every keystroke would otherwise invalidate every view observing the whole
+/// application state: the popover header, the status block, the queue list
+/// and the recovery card all redraw while someone types a note. The same
+/// reasoning keeps live capture diagnostics out of `AppState`.
+@MainActor
+final class MeetingNotesModel: ObservableObject {
+    @Published var draft = ""
+}
+
 @MainActor
 final class CaptureDiagnosticsModel {
     private(set) var snapshot: CaptureSessionDiagnostics
@@ -108,7 +120,14 @@ final class AppState: ObservableObject {
     @Published var customAnalysisModel = ""
     @Published var analysisPrompt = AnalysisPrompt.defaultTemplate
     @Published var meetingTitle = ""
-    @Published var meetingNotesDraft = ""
+    let meetingNotesModel = MeetingNotesModel()
+
+    /// Kept as a property so the many non-view readers of the draft are
+    /// unchanged; the storage is the separately observed model.
+    var meetingNotesDraft: String {
+        get { meetingNotesModel.draft }
+        set { meetingNotesModel.draft = newValue }
+    }
     @Published var automaticallyDeleteSourceCAF = false
     @Published var audioRetentionPolicy: AudioRetentionPolicy = .keepForever
     @Published var selectedAppLanguage: AppLanguage = .system
@@ -175,6 +194,7 @@ final class AppState: ObservableObject {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var resourceMemoryPressure: ProcessingResourceSnapshot.MemoryPressure = .normal
     private var resourceGovernor = ProcessingResourceGovernor()
+    private var resourceGovernorReserveBytes: Int64?
     private var observedDroppedBuffers = 0
 
     private func startResourceMonitoring() {
@@ -182,6 +202,7 @@ final class AppState: ObservableObject {
         resourceGovernor = ProcessingResourceGovernor(
             limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
         )
+        resourceGovernorReserveBytes = minimumStorageBytes
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
         // The handler reads the source through this property, so assigning it
         // after `resume()` made the first event fall back to `.normal`.
@@ -200,9 +221,27 @@ final class AppState: ObservableObject {
         resourceMonitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.updateResourcePolicy()
-                do { try await Task.sleep(for: .seconds(1)) } catch { break }
+                guard let interval = self?.resourcePollInterval else { break }
+                do { try await Task.sleep(for: interval) } catch { break }
             }
         }
+    }
+
+    /// How often the governor re-reads the machine's state.
+    ///
+    /// Each tick asks for the volume's free space, which means a
+    /// `createDirectory` and a capacity read, plus a `sysctl`. That is the
+    /// right price while a recording or a queued job could be affected by
+    /// the answer, and pure overhead on an idle menu-bar application that
+    /// may sit untouched all day. Memory pressure still arrives by
+    /// notification either way, so backing off only delays noticing a
+    /// storage or thermal change while nothing is running.
+    private var resourcePollInterval: Duration {
+        let isBusy = status != .idle
+            || hasPendingProcessing
+            || processingQueueStatus.isWorking
+            || processingQueueStatus.isPaused
+        return isBusy ? .seconds(1) : .seconds(15)
     }
 
     /// Memory-pressure notifications only fire on transitions. A missed return to
@@ -223,8 +262,16 @@ final class AppState: ObservableObject {
     }
 
     /// Applies the user's capture reserve to background work when the setting changes.
+    ///
+    /// Only when it actually changed. The governor carries the hysteresis
+    /// that keeps a queue paused for storage from resuming before free space
+    /// climbs back past the higher resume threshold, and that state lives in
+    /// the value — so rebuilding it on every write of an unrelated setting
+    /// re-enabled exactly the oscillation it exists to prevent.
     func refreshProcessingResourceLimits() {
         guard resourceMonitoringEnabled else { return }
+        guard resourceGovernorReserveBytes != minimumStorageBytes else { return }
+        resourceGovernorReserveBytes = minimumStorageBytes
         resourceGovernor = ProcessingResourceGovernor(
             limits: .backgroundReserve(captureMinimumBytes: minimumStorageBytes)
         )
@@ -414,9 +461,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func beginProcessingHandoff() {
-        processingHandoffCount += 1
-    }
 
     private func acceptProcessingHandoff(_ session: RecordingSession) async {
         defer {
@@ -565,14 +609,44 @@ final class AppState: ObservableObject {
         )
         defer { isPreparingStorage = false }
 
+        // Preferences live in UserDefaults and in the stores, not on the
+        // recordings volume, so they are applied before anything that can
+        // fail. A storage error used to return before this point and leave
+        // the application running with none of them: no output folder, the
+        // default languages, AI analysis off and retention at keep-forever —
+        // with nothing on screen saying the settings had not been read.
+        await loadPersistedSettings()
+
         do {
             try await sessionManager.prepareStorage()
             try await fluidAudioModelManager.prepareStorage()
         } catch {
+            // `hasPreparedStorage` stays false on purpose. A transient
+            // failure on the recordings volume must not be permanent for the
+            // lifetime of the process, and `reset()` retries.
             setFailure(error)
             return
         }
 
+        await refreshFluidAudioModelStatuses()
+        refreshLegacyModelCleanupReport()
+        await observeProcessingQueue()
+        do { try await processingQueue.restore() }
+        catch { lastError = localized(error) }
+        await refreshRecoveryCandidates()
+        hasPreparedStorage = true
+        await runAutomaticRecordingAudioCleanup()
+        if OnboardingStore.detectsExistingInstallation(defaults: notificationDefaults)
+            || hadRecordingRootBeforePreparation
+            || hasExistingRecordingSessions() {
+            onboardingStore.markExistingInstallation()
+            onboardingState = onboardingStore.state
+        }
+        isApplicationPrepared = true
+    }
+
+    /// Applies everything persisted outside the recordings volume.
+    private func loadPersistedSettings() async {
         notificationsEnabled = notificationDefaults.bool(forKey: "processingNotificationsEnabled")
 
         outputFolderURL = outputFolderStore.restoreFolder()
@@ -600,22 +674,6 @@ final class AppState: ObservableObject {
         } else {
             setAnalysisToolStatus(.unknown)
         }
-
-        await refreshFluidAudioModelStatuses()
-        refreshLegacyModelCleanupReport()
-        await observeProcessingQueue()
-        do { try await processingQueue.restore() }
-        catch { lastError = localized(error) }
-        await refreshRecoveryCandidates()
-        hasPreparedStorage = true
-        await runAutomaticRecordingAudioCleanup()
-        if OnboardingStore.detectsExistingInstallation(defaults: notificationDefaults)
-            || hadRecordingRootBeforePreparation
-            || hasExistingRecordingSessions() {
-            onboardingStore.markExistingInstallation()
-            onboardingState = onboardingStore.state
-        }
-        isApplicationPrepared = true
     }
 
     /// Persists the opt-in and requests permission only when notifications are enabled.
@@ -633,6 +691,11 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .retranscribe, configuration: processingConfiguration
         )
+        // The row's progress indicator and several guards elsewhere read this
+        // and nothing ever set it, so a repeat transcription looked like
+        // nothing was happening while it ran.
+        fluidAudioReprocessingSessionID = session.metadata.id
+        defer { fluidAudioReprocessingSessionID = nil }
         beginProcessingHandoff()
         await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
@@ -651,6 +714,8 @@ final class AppState: ObservableObject {
         let queued = try await sessionManager.queueProcessing(
             sessionID: session.metadata.id, kind: .reanalyze, configuration: configuration
         )
+        aiAnalysisReprocessingSessionID = session.metadata.id
+        defer { aiAnalysisReprocessingSessionID = nil }
         beginProcessingHandoff()
         await acceptProcessingHandoff(queued)
         let result = try await processingQueue.result(for: queued.metadata.processing!.attemptID)
@@ -1156,6 +1221,11 @@ final class AppState: ObservableObject {
 
     func recoverSession(_ candidate: SessionRecoveryCandidate) async {
         guard canEnqueueProcessing(sessionID: candidate.id) else { return }
+        // Nothing set this, so the "Recover and process" button never
+        // disabled itself and a second click could queue the same recovery
+        // while the first was still being handed over.
+        isRecoveringSession = true
+        defer { isRecoveringSession = false }
         do {
             let queued = try await sessionManager.queueProcessing(
                 sessionID: candidate.id, kind: .recovery, configuration: processingConfiguration
@@ -1231,6 +1301,16 @@ final class AppState: ObservableObject {
             storageCheckFailureCount = 0
         } catch {
             setFailure(error)
+            return
+        }
+
+        // Preparation is the one startup step that can fail and leave the
+        // application usable but without its recordings directory, its
+        // restored queue or its recovery scan. Clearing the failure is the
+        // moment to try it again; a volume that was busy at launch is
+        // usually available by now.
+        if !hasPreparedStorage {
+            Task { await prepareStorage() }
         }
     }
 
@@ -2289,6 +2369,23 @@ final class AppState: ObservableObject {
     private func transition(to nextStatus: AppStatus) throws {
         try stateMachine.transition(to: nextStatus)
         status = stateMachine.status
+        kickResourcePolicy()
+    }
+
+    /// Re-reads the resource policy now instead of at the next poll.
+    ///
+    /// The poll backs off while nothing is running, so the transition *into*
+    /// running has to announce itself. Without this, starting a recording
+    /// could leave a background transcription competing with it for up to a
+    /// full idle interval.
+    private func beginProcessingHandoff() {
+        processingHandoffCount += 1
+        kickResourcePolicy()
+    }
+
+    private func kickResourcePolicy() {
+        guard resourceMonitoringEnabled, resourceMonitorTask != nil else { return }
+        Task { [weak self] in await self?.updateResourcePolicy() }
     }
 
     private func setFailure(_ error: Error) {
