@@ -1,12 +1,46 @@
 # MeetingScribe project instructions
 
+These instructions bind every coding agent working in this repository. Most of
+them are about the project — signing, installation, the two test suites, Git —
+and read the same whoever is following them.
+
+Two sections are about one agent's own tooling and say so in their first line:
+*BlueCode coding delegation* needs the local `xclaude` wrapper. An agent
+without that tool does not substitute another one and does not skip the
+surrounding rules; it implements the work directly and says that it did.
+
+Where a rule below names Codex, read it as "the agent doing this work". The
+requirement is the same for all of them.
+
+## BlueCode coding delegation
+
+*Applies to an agent that has the `xclaude` wrapper available. An agent without
+it implements the work itself and reports that it did; it must not silently
+route the task to another provider.*
+
+Delegate implementation work to BlueCode through the existing local wrapper:
+`bash /Users/martin_hostak/.local/bin/xclaude -p '<task>' --model DeepSeek-V4-Flash --output-format text`.
+Use `GLM-5.3` for complex debugging or refactoring when available. The orchestrating
+agent defines bounded tasks, reviews diffs, and independently checks relevant tests.
+Each task must include scope, acceptance criteria, verification commands, and the
+applicable project instructions, including signing and installation requirements.
+Use isolated worktrees for concurrent implementation tasks. Preserve existing user
+changes. Do not delegate an unspecified feature just to exercise the connection.
+
+Use normal permission controls; do not enable `XCLAUDE_BYPASS` or permission-bypass
+flags. Never include credentials in prompts or logs. Keep the existing wrapper's
+gateway authentication; do not change the global Codex provider configuration.
+If BlueCode is unavailable, report the blocker instead of silently switching the
+implementation to another provider. Delegation itself does not authorize pushing,
+deploying, or unrelated changes.
+
 ## Runnable local macOS builds
 
-When the user asks Codex to build or run MeetingScribe locally, produce a properly signed app. An unsigned build is acceptable only for CI-style compile validation, never as the build handed to or launched for the user.
+When the user asks the agent to build or run MeetingScribe locally, produce a properly signed app. An unsigned build is acceptable only for CI-style compile validation, never as the build handed to or launched for the user.
 
 1. Build the requested commit (normally current `origin/main`) in a clean checkout or isolated worktree.
 2. Before building, verify that the certificate fingerprint and Team ID configured in the unversioned `Config/Signing.local.xcconfig` are available. If the configured identity is unavailable, stop and report the blocker; do not silently use another identity. Initialize that file from `Config/Signing.local.xcconfig.example`; do not put personal signing values in a versioned file.
-   Run the identity lookup, signed build, and every `codesign` trust check outside the workspace sandbox. The sandbox cannot access the login Keychain on this machine and produces the false result `CSSMERR_TP_NOT_TRUSTED` for an otherwise valid bundle. A sandboxed identity or trust failure is not evidence of a broken certificate chain; repeat the same check with escalated execution before reporting a blocker.
+   Run the identity lookup, signed build, and every `codesign` trust check outside any workspace sandbox. The sandbox cannot access the login Keychain on this machine and produces the false result `CSSMERR_TP_NOT_TRUSTED` for an otherwise valid bundle. A sandboxed identity or trust failure is not evidence of a broken certificate chain; repeat the same check with escalated execution before reporting a blocker.
 3. Use manual signing. `Config/Signing.xcconfig` supplies the shared settings and the local override supplies the developer-specific identity:
 
    ```sh
@@ -30,7 +64,7 @@ When the user asks Codex to build or run MeetingScribe locally, produce a proper
 
 ## After updating `main`
 
-Whenever Codex pushes or otherwise lands a new MeetingScribe version on the Git remote's `main` branch, treat installation and launch as part of the same workflow; do not consider the update complete until all of the following steps succeed:
+Whenever the agent pushes or otherwise lands a new MeetingScribe version on the Git remote's `main` branch, treat installation and launch as part of the same workflow; do not consider the update complete until all of the following steps succeed:
 
 1. Confirm the exact commit now at `origin/main` and build that commit in a clean checkout or isolated worktree using the signing requirements above.
 2. Pass every signing and certificate check above before installing the app.
