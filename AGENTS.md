@@ -12,6 +12,11 @@ surrounding rules; it implements the work directly and says that it did.
 Where a rule below names Codex, read it as "the agent doing this work". The
 requirement is the same for all of them.
 
+The repository lives at `/Users/martin_hostak/Dev/projects/MeetingScribe` on
+this machine, deliberately outside the iCloud-synchronised `~/Documents`.
+[docs/repository-location.md](docs/repository-location.md) records why, what is
+bound to that path, and what to update when it changes.
+
 ## BlueCode coding delegation
 
 *Applies to an agent that has the `xclaude` wrapper available. An agent without
@@ -87,18 +92,27 @@ other. It has happened: a test-host guard keyed off `XCTestConfigurationFilePath
 Xcode and failed under `swift test`, which sets none of those variables. Run both before pushing a
 branch for review.
 
-Running `swift test` from a checkout under `~/Documents` may fail while signing the test bundle:
+A checkout inside a folder synchronised by iCloud Drive — `~/Documents` and `~/Desktop`
+are synchronised when "Desktop & Documents Folders" is on — makes `swift test` fail
+intermittently while signing the test bundle:
 
 ```
 MeetingScribeTests.xctest: resource fork, Finder information, or similar detritus not allowed
 error: CodeSign ... failed with a nonzero exit code
 ```
 
-Build outside the checkout instead, which avoids it reliably:
+The sync engine writes Finder metadata onto build products and leaves `Nazov 2.swift`
+conflict copies inside `.build/checkouts`, which breaks a plain `swift test` as well.
+The repository therefore lives at `~/Dev/projects/MeetingScribe`, outside any
+synchronised folder; see [docs/repository-location.md](docs/repository-location.md)
+before moving it anywhere else.
+
+Using a scratch path outside the checkout avoids the signing failure even in a
+synchronised folder, and is still the safer habit:
 
 ```sh
 swift test --scratch-path /private/tmp/MeetingScribe-spm
 ```
 
-`xattr -cr .build` sometimes clears the failure for one run, but it comes back on the next relink.
-The daemon and CI both build elsewhere and are unaffected.
+`xattr -cr .build` clears the failure for one run at best. The daemon and CI both build
+elsewhere and were never affected.

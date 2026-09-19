@@ -28,15 +28,23 @@ in `Config/Signing.local.xcconfig` is available for codesigning.
 
 ### Why an app bundle and Full Disk Access
 
-When the repository lives under a TCC-protected directory such as `~/Documents`, A
-LaunchAgent has its own TCC identity, so `python3 .../assistant_build_daemon.py`
-as an agent cannot even open the script:
+A LaunchAgent has its own TCC identity. When the repository lived under a
+TCC-protected directory such as `~/Documents`, that identity could not even open
+the script:
 
 ```
 python3: can't open file '.../assistant_build_daemon.py': [Errno 1] Operation not permitted
 ```
 
-It works from Terminal because Terminal has access to Documents. Granting Full
+Since the move to `~/Dev/projects/MeetingScribe` that particular reason no
+longer applies: the new location is not TCC-protected. The bundle stays because
+the daemon also replaces `/Applications/MeetingScribe.app` and reads the login
+Keychain, and because a named bundle keeps the grant attached to this daemon
+rather than to every python process. If you move the repository again, re-run
+the installer from the new location — the grant follows the bundle, not the
+repository.
+
+It worked from Terminal because Terminal has access to Documents. Granting Full
 Disk Access to `/usr/bin/python3` directly would hand that access to every
 python process on the machine, so the installer builds a dedicated bundle
 instead:
