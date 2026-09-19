@@ -1,7 +1,9 @@
 # MeetingScribe — pokyny pre Claude
 
 Lokálna macOS aplikácia (menu-bar) na nahrávanie schôdzok a lokálny prepis.
-Repozitár: `/Users/martin_hostak/Documents/MeetingScribe`.
+Repozitár: `/Users/martin_hostak/Dev/projects/MeetingScribe`.
+Zámerne **mimo** `~/Documents`, ktorý synchronizuje iCloud Drive — dôvody a
+postup pri zmene umiestnenia sú v [docs/repository-location.md](docs/repository-location.md).
 
 `AGENTS.md` je záväzný aj pre Claude. Tento súbor ho **dopĺňa**, neruší ani
 neduplikuje. Pri konflikte platí `AGENTS.md`.

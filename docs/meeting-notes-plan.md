@@ -393,6 +393,11 @@ a porovnať vloženú značku s `captureStarted` v `processing.log`.
 
 ### Prostredie: `~/Documents` je synchronizovaný iCloudom
 
+**Vyriešené 2026-09-19 presunom repozitára** do `~/Dev/projects/MeetingScribe`,
+mimo synchronizovaný priečinok. Podrobnosti v
+[docs/repository-location.md](repository-location.md). Nasledujúci popis je
+záznam pôvodnej diagnostiky.
+
 Potvrdené počas overovania, `brctl status` ukázal build artefakty v stave `needs-sync-up`. Repozitár
 leží v synchronizovanom priečinku a nesie gigabajty odvodených dát, takže sync engine ich neustále
 nahráva. Následky, na ktoré sa pri tejto práci narazilo:
