@@ -498,6 +498,49 @@ final class CLIAnalysisProviderTests: XCTestCase {
         )
     }
 
+    func testStdoutArrivingInManyPiecesIsReassembledInOrder() async throws {
+        // The captured output used to be read by two readers at once: a
+        // readability handler that had been cleared but was still running,
+        // and a `readDataToEndOfFile()` on the same descriptor. Both appended
+        // under the buffer's lock, so nothing was corrupted — but the order
+        // was the scheduler's choice. It showed up as a rare CI failure on
+        // `--version`, whose fourteen bytes only occasionally split across
+        // two reads.
+        //
+        // This writes the version in many small pieces with pauses between
+        // them, so it is split every time rather than once in a hundred runs.
+        let expected = (0..<40).map { "part\($0)" }.joined(separator: "-")
+        let fixture = try makeExecutableFixture(script: """
+        #!/bin/sh
+        /bin/cat > /dev/null
+        if [ "$1" = "--version" ]; then
+          i=0
+          while [ "$i" -lt 40 ]; do
+            if [ "$i" -gt 0 ]; then printf -- '-'; fi
+            printf 'part%s' "$i"
+            i=$((i + 1))
+            sleep 0.01
+          done
+          exit 0
+        fi
+        exit 1
+        """)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let provider = CLIAnalysisProvider(
+            tool: .codex,
+            executableURL: fixture.executable,
+            runner: AnalysisProcessRunner(),
+            requestTimeout: .seconds(60)
+        )
+
+        // Repeated because an ordering race does not have to lose every time.
+        for attempt in 1...5 {
+            let version = try await provider.toolVersion()
+            XCTAssertEqual(version, expected, "attempt \(attempt)")
+        }
+    }
+
     private func makeExecutableFixture(
         script: String
     ) throws -> (directory: URL, executable: URL) {
