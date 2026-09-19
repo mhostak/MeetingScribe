@@ -612,6 +612,150 @@ final class MarkdownRendererTests: XCTestCase {
         )
     }
 
+    func testATitleQuotingAReservedMarkerSurvivesReanalysisIntact() throws {
+        // Pasting an earlier MeetingScribe note into a Calendar invitation is
+        // enough to reach this: the title and the description are written into
+        // the frontmatter verbatim, so a marker in either used to appear
+        // before the real one and swallow the frontmatter on re-analysis.
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "Planning \(MarkdownRenderer.analysisStartMarker)",
+            status: .recorded,
+            createdAt: startedAt,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            outputLanguage: .english,
+            calendarEvent: CalendarEventSnapshot(
+                source: .appleCalendar,
+                title: "Planning",
+                startsAt: startedAt,
+                endsAt: endedAt,
+                selectedAt: startedAt,
+                participants: [],
+                shareParticipantNamesWithAnalysis: false,
+                eventDescription: "Agenda \(MarkdownRenderer.analysisEndMarker)"
+            )
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: [])
+        )
+
+        // Exactly one of each marker, and the user's words are still readable.
+        for marker in MarkdownRenderer.reservedMarkers where marker.contains("ai-analysis") {
+            XCTAssertEqual(markdown.components(separatedBy: marker).count - 1, 1, marker)
+        }
+        XCTAssertTrue(markdown.contains("[meetingscribe:ai-analysis:start]"))
+        XCTAssertTrue(markdown.contains("[meetingscribe:ai-analysis:end]"))
+
+        let analysis = AIAnalysisArtifact(
+            markdown: "## Summary\n\nUpdated analysis.",
+            tool: .codex,
+            model: "gpt-test",
+            toolVersion: "codex-test",
+            prompt: "Test prompt",
+            generatedAt: startedAt
+        )
+        let updated = try MarkdownAnalysisUpdater(timeZone: utc).updating(markdown, with: analysis)
+
+        XCTAssertTrue(updated.hasPrefix("---\ntype: meeting\n"))
+        XCTAssertTrue(updated.contains("recording_id: \"recording-1\""))
+        XCTAssertTrue(updated.contains("duration_minutes: 54"))
+        XCTAssertTrue(updated.contains("# Planning"))
+        XCTAssertTrue(updated.contains("## Summary\n\nUpdated analysis."))
+    }
+
+    func testUpdaterIgnoresAMarkerLeftInTheFrontmatterOfAnOlderNote() throws {
+        // Notes written before the renderer neutralized markers still exist on
+        // disk, and a note can be hand-edited at any time.
+        let original = """
+        ---
+        type: meeting
+        title: "Planning <!-- meetingscribe:ai-analysis:start -->"
+        recording_id: "recording-1"
+        ---
+
+        # Planning
+
+        <!-- meetingscribe:ai-analysis:start -->
+        <!-- AI analysis has not been created. -->
+        <!-- meetingscribe:ai-analysis:end -->
+
+        ## Transcript
+
+        Original transcript text.
+        """
+        let analysis = AIAnalysisArtifact(
+            markdown: "## Summary\n\nUpdated analysis.",
+            tool: .codex,
+            model: nil,
+            toolVersion: "codex-test",
+            prompt: "Test prompt",
+            generatedAt: startedAt
+        )
+
+        let updated = try MarkdownAnalysisUpdater(timeZone: utc).updating(original, with: analysis)
+
+        XCTAssertTrue(updated.contains("recording_id: \"recording-1\""))
+        XCTAssertTrue(updated.contains("# Planning"))
+        XCTAssertTrue(updated.contains("Original transcript text."))
+        XCTAssertTrue(updated.contains("## Summary\n\nUpdated analysis."))
+        XCTAssertFalse(updated.contains("AI analysis has not been created"))
+        // The quoted marker is left exactly where the author put it.
+        XCTAssertTrue(
+            updated.contains("title: \"Planning <!-- meetingscribe:ai-analysis:start -->\"")
+        )
+    }
+
+    func testADocumentWithNoAnalysisBlockIsStillRejected() {
+        let analysis = AIAnalysisArtifact(
+            markdown: "## Summary",
+            tool: .codex,
+            model: nil,
+            toolVersion: "codex-test",
+            prompt: "Test prompt",
+            generatedAt: startedAt
+        )
+        let updater = MarkdownAnalysisUpdater(timeZone: utc)
+
+        // No frontmatter, no markers.
+        XCTAssertThrowsError(try updater.updating("# Planning\n", with: analysis))
+        // Frontmatter that is never closed.
+        XCTAssertThrowsError(try updater.updating("---\ntitle: \"x\"\n", with: analysis))
+        // A start marker with no end marker after it.
+        XCTAssertThrowsError(
+            try updater.updating(
+                "---\ntitle: \"x\"\n---\n\n\(MarkdownRenderer.analysisStartMarker)\n",
+                with: analysis
+            )
+        )
+    }
+
+    func testReservedMarkersInNotesCannotCloseTheNotesBlockEarly() {
+        let session = SessionMetadata(
+            id: "recording-1",
+            title: "Planning",
+            status: .recorded,
+            createdAt: startedAt,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            outputLanguage: .english
+        )
+
+        let markdown = MarkdownRenderer(timeZone: utc).render(
+            session: session,
+            transcript: makeTranscript(segments: []),
+            notes: "Decide \(MarkdownRenderer.userNotesEndMarker) later"
+        )
+
+        XCTAssertEqual(
+            markdown.components(separatedBy: MarkdownRenderer.userNotesEndMarker).count - 1,
+            1
+        )
+        XCTAssertTrue(markdown.contains("Decide [meetingscribe:user-notes:end] later"))
+    }
+
     private func makeTranscript(segments: [TranscriptSegment]) -> MergedTranscript {
         MergedTranscript(
             sessionID: "recording-1",

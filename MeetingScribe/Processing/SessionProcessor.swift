@@ -351,11 +351,17 @@ actor SessionProcessor: SessionProcessing {
         let recoveredArtifacts = await processingFiles.loadRecoveredArtifacts(
             from: context.session
         )
-        let canReuseTranscript = recoveredArtifacts != nil
-        let shouldReuseTranscript = canReuseTranscript && (
-            context.kind == .recovery
-                || context.session.metadata.transcription?.status == .completed
-        )
+        // A transcript on disk that decodes and carries this recording's id is
+        // proof the ASR stage already finished for this session, whatever the
+        // manifest managed to record before the process went away.
+        //
+        // Requiring the job to be a recovery on top of that meant a first
+        // attempt killed between writing transcript.json and persisting the
+        // checkpoint that mentions it came back as `.initial` and re-ran the
+        // whole transcription — the one stage that costs minutes per meeting —
+        // with a perfectly good result sitting beside it. A retranscribe job
+        // asks for new ASR explicitly and never reaches this method.
+        let shouldReuseTranscript = recoveredArtifacts != nil
 
         let transcription: TranscriptionStepResult
         if shouldReuseTranscript, let recoveredArtifacts {

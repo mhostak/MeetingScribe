@@ -237,6 +237,11 @@ enum AnalysisPrompt {
 
     static let maximumUserNotesCharacters = 20_000
 
+    /// Enough for a detailed agenda. The description is context for the
+    /// transcript, not a substitute for it, so it does not get to consume the
+    /// request budget the transcript needs.
+    static let maximumEventDescriptionCharacters = 4_000
+
     static func render(
         template: String,
         session: SessionMetadata,
@@ -267,6 +272,24 @@ enum AnalysisPrompt {
             + "the full notes are exported to Markdown]"
     }
 
+    /// Bounds a Calendar description the same way user notes are bounded.
+    ///
+    /// The description is copied from an invitation and can be any length —
+    /// mail threads and boilerplate footers end up in there. It is prepended
+    /// to *every* transcript chunk, so an unbounded one shrinks the room left
+    /// for transcript in each request: past roughly forty thousand characters
+    /// a one-hour meeting is split into hundreds of requests, each with its
+    /// own ten-minute timeout, and past the whole budget the analysis cannot
+    /// start at all. The full text is still exported to the Markdown
+    /// frontmatter.
+    static func truncateEventDescription(_ description: String) -> String {
+        guard description.count > maximumEventDescriptionCharacters else { return description }
+        let remainingCharacters = description.count - maximumEventDescriptionCharacters
+        return String(description.prefix(maximumEventDescriptionCharacters))
+            + "\n[event description truncated: \(remainingCharacters) more characters; "
+            + "the full description is exported to Markdown]"
+    }
+
     static func userNotesSection(for notes: String?) -> String? {
         guard let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
@@ -291,12 +314,9 @@ enum AnalysisPrompt {
 
 enum AnalysisMarkdownSchema {
     static let maximumMarkdownBytes = 1_000_000
-    static let reservedMarkers = [
-        "<!-- meetingscribe:ai-analysis:start -->",
-        "<!-- meetingscribe:ai-analysis:end -->",
-        "<!-- meetingscribe:user-notes:start -->",
-        "<!-- meetingscribe:user-notes:end -->",
-    ]
+    /// The renderer owns these. Repeating the literals here once meant two
+    /// lists that had to agree, with nothing to notice if they stopped.
+    static let reservedMarkers = MarkdownRenderer.reservedMarkers
 
     static var schema: [String: Any] {
         [

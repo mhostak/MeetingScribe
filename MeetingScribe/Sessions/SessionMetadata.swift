@@ -98,9 +98,45 @@ struct AudioFinalizationMetadata: Codable, Equatable, Sendable {
     var warnings: [String]
 }
 
+/// Decodes a manifest value written by a build that may not be this one.
+///
+/// A manifest is read by whatever version of MeetingScribe is installed,
+/// which is not always the version that wrote it. Removing an enum case used
+/// to make every older manifest carrying it undecodable *in its entirety*:
+/// the recording could no longer be opened, recovered, reprocessed or
+/// reanalysed, although its audio, transcript and analysis were all intact
+/// on disk. It happened once already — `SessionAnalysisStatus` carried a
+/// `missingAPIKey` case between 2026-07-11 and 2026-08-12.
+///
+/// A value this build does not know now decodes to `unrecognized`. Every
+/// such enum is only ever compared for equality, never switched over
+/// exhaustively, so an unknown value reads as "not completed" — the
+/// conservative answer, and the one that keeps the rest of the manifest
+/// readable.
+///
+/// The original spelling is not preserved: the next manifest write replaces
+/// it with `unrecognized`. That is a deliberate trade. This build cannot act
+/// on a state it does not know, and the alternative on offer was losing the
+/// whole recording.
+extension RawRepresentable where Self: Decodable, RawValue == String {
+    static func decodedFromManifest(
+        _ decoder: any Decoder,
+        fallback: Self
+    ) throws -> Self {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        return Self(rawValue: raw) ?? fallback
+    }
+}
+
 enum AudioSourceCleanupStatus: String, Codable, Equatable, Sendable {
     case completed
     case failed
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct AudioSourceCleanupMetadata: Codable, Equatable, Sendable {
@@ -114,11 +150,23 @@ enum RecordingAudioCleanupStatus: String, Codable, Equatable, Sendable {
     case inProgress
     case purged
     case failed
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 enum RecordingAudioCleanupTrigger: String, Codable, Equatable, Sendable {
     case manual
     case automatic
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct RecordingAudioRetentionMetadata: Codable, Equatable, Sendable {
@@ -159,6 +207,12 @@ enum SessionTranscriptionStatus: String, Codable, Sendable {
     case completed
     case failed
     case modelMissing
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct SessionTranscriptionMetadata: Codable, Equatable, Sendable {
@@ -185,6 +239,12 @@ enum SessionDiarizationStatus: String, Codable, Sendable {
     case failed
     case modelMissing
     case unavailable
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct SessionDiarizationMetadata: Codable, Equatable, Sendable {
@@ -206,6 +266,12 @@ struct SessionDiarizationMetadata: Codable, Equatable, Sendable {
 enum SessionAnalysisStatus: String, Codable, Sendable {
     case completed
     case failed
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct SessionAnalysisConfiguration: Codable, Equatable, Sendable {
@@ -270,6 +336,12 @@ struct SessionAnalysisMetadata: Codable, Equatable, Sendable {
 enum SessionOutputStatus: String, Codable, Sendable {
     case completed
     case failed
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 enum SessionRecoveryStatus: String, Codable, Sendable {
@@ -277,6 +349,12 @@ enum SessionRecoveryStatus: String, Codable, Sendable {
     case completed
     case failed
     case closed
+    /// A value written by a build that knew a case this one does not.
+    case unrecognized
+
+    init(from decoder: any Decoder) throws {
+        self = try Self.decodedFromManifest(decoder, fallback: .unrecognized)
+    }
 }
 
 struct SessionRecoveryMetadata: Codable, Equatable, Sendable {

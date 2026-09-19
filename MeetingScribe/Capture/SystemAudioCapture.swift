@@ -16,7 +16,10 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         label: "com.martinhostak.MeetingScribe.system-audio",
         qos: .userInitiated
     )
-    private var state = State()
+    private let publishedDiagnostics = AudioCaptureDiagnosticsBox()
+    private var state = State() {
+        didSet { publishedDiagnostics.publish(state.diagnostics) }
+    }
 
     func start(outputURL: URL) async throws {
         let reservedStart = callbackQueue.sync {
@@ -79,11 +82,14 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         } catch {
             let startError = Self.startError(for: error)
             callbackQueue.sync {
+                // Recorded before the writer is closed so that a failure to
+                // close an empty file cannot stand in for the reason capture
+                // never started.
+                recordFailureReason(startError.localizedDescription)
                 finishWriter()
                 state.isCapturing = false
                 state.isStarting = false
                 state.stream = nil
-                state.diagnostics.failureReason = startError.localizedDescription
             }
             throw startError
         }
@@ -99,7 +105,7 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         } catch {
             if !Self.isBenignStopError(error) {
                 callbackQueue.sync {
-                    state.diagnostics.failureReason = error.localizedDescription
+                    recordFailureReason(error.localizedDescription)
                 }
             }
         }
@@ -114,7 +120,10 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
     }
 
     func diagnostics() async -> AudioCaptureDiagnostics {
-        callbackQueue.sync { state.diagnostics }
+        // Polled five times a second for the live meter. Entering the
+        // ScreenCaptureKit delivery queue to read it would make the UI wait
+        // behind a disk write, on a cooperative-concurrency thread.
+        publishedDiagnostics.value
     }
 
     private func preferredDisplay(from displays: [SCDisplay]) -> SCDisplay? {
@@ -154,14 +163,17 @@ final class SystemAudioCapture: NSObject, AudioCaptureService, @unchecked Sendab
         return AudioCaptureServiceError.screenRecordingPermissionDenied
     }
 
+    private func recordFailureReason(_ reason: String) {
+        dispatchPrecondition(condition: .onQueue(callbackQueue))
+        state.diagnostics.registerFailureReason(reason)
+    }
+
     private func finishWriter() {
         guard let writer = state.writer else { return }
         do {
             try writer.finish()
         } catch {
-            if state.diagnostics.failureReason == nil {
-                state.diagnostics.failureReason = error.localizedDescription
-            }
+            recordFailureReason(error.localizedDescription)
         }
         state.writer = nil
     }
@@ -192,8 +204,14 @@ extension SystemAudioCapture: SCStreamOutput {
                 audioLevel: result.audioLevel
             )
         } catch {
-            state.diagnostics.failureReason = error.localizedDescription
+            recordFailureReason(error.localizedDescription)
             finishWriter()
+            // ScreenCaptureKit keeps delivering about fifty buffers a second.
+            // Without this the very next one would find no writer, throw
+            // `notCapturing`, and — before this method kept the first reason —
+            // replace the real cause within about twenty milliseconds. The
+            // stream object stays so `stop()` still shuts it down properly.
+            state.isCapturing = false
         }
     }
 }
@@ -203,7 +221,7 @@ extension SystemAudioCapture: SCStreamDelegate {
         callbackQueue.async { [weak self] in
             guard let self else { return }
             if !Self.isBenignStopError(error) {
-                self.state.diagnostics.failureReason = error.localizedDescription
+                self.recordFailureReason(error.localizedDescription)
             }
             self.finishWriter()
             self.state.isCapturing = false

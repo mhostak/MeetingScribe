@@ -279,7 +279,8 @@ struct MeetingAnalyzer: Sendable {
     private func eventDescriptionForAnalysis(from session: SessionMetadata) -> String? {
         let normalized = session.calendarEvent?.eventDescription?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return normalized.isEmpty ? nil : normalized
+        guard !normalized.isEmpty else { return nil }
+        return AnalysisPrompt.truncateEventDescription(normalized)
     }
 
     private func consolidationGroups(

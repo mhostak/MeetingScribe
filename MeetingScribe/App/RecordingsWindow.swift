@@ -211,7 +211,7 @@ private struct RecordingAudioStorageView: View {
                 }
 
                 Label(
-                    "Transcript and Markdown remain available. Repeat transcription and speaker editing will no longer be possible for cleaned recordings.",
+                    "Transcript and Markdown remain available. Repeat transcription will no longer be possible for cleaned recordings.",
                     systemImage: "exclamationmark.triangle.fill"
                 )
                 .font(.caption)

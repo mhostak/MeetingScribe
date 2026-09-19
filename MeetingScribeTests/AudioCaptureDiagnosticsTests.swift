@@ -165,4 +165,82 @@ final class AudioCaptureDiagnosticsTests: XCTestCase {
 
         XCTAssertTrue(SystemAudioCapture.startError(for: streamFailure) as NSError === streamFailure)
     }
+
+    func testDropsAreVisibleBeforeAnyWriteCarriesThemIntoDiagnostics() {
+        // A drop happens exactly when no pooled buffer is free, which is also
+        // when nothing reaches the writer queue. Counting drops separately is
+        // what makes an outage visible while it is happening rather than only
+        // once it ends.
+        let counter = DroppedBufferCounter()
+        counter.increment()
+        counter.increment()
+
+        XCTAssertEqual(counter.pending, 2)
+        XCTAssertEqual(counter.pending, 2, "reading must not consume the count")
+
+        var reported = AudioCaptureDiagnostics.empty
+        reported.registerDroppedBuffers(counter.pending)
+        XCTAssertEqual(reported.droppedBufferCount, 2)
+
+        XCTAssertEqual(counter.take(), 2)
+        XCTAssertEqual(counter.pending, 0, "taking clears it so the next write cannot double count")
+        XCTAssertEqual(counter.take(), 0)
+    }
+
+    func testPublishedDiagnosticsAreReadableWithoutTheCaptureQueue() {
+        let box = AudioCaptureDiagnosticsBox()
+        XCTAssertEqual(box.value, .empty)
+
+        var diagnostics = AudioCaptureDiagnostics(fileName: "system-16k.wav", startedAt: Date())
+        diagnostics.registerBuffer(
+            frameCount: 1_024,
+            sampleRate: 16_000,
+            channelCount: 1,
+            presentationTimestamp: 1
+        )
+        box.publish(diagnostics)
+
+        XCTAssertEqual(box.value.bufferCount, 1)
+        XCTAssertEqual(box.value.fileName, "system-16k.wav")
+    }
+
+    func testFirstFailureReasonSurvivesTheFailuresItCauses() {
+        var diagnostics = AudioCaptureDiagnostics(fileName: "system-16k.wav", startedAt: Date())
+
+        diagnostics.registerFailureReason("No space left on device")
+        // What a caller sees after the first failure: no writer, then a stop
+        // that reports capture was never running. Both arrive within
+        // milliseconds and neither describes the cause.
+        diagnostics.registerFailureReason(
+            AudioCaptureServiceError.notCapturing.localizedDescription
+        )
+        diagnostics.registerFailureReason("The stream stopped.")
+
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+        XCTAssertEqual(diagnostics.health(), .failed)
+        XCTAssertEqual(diagnostics.sessionMetadata.failureReason, "No space left on device")
+    }
+
+    func testAnEmptyFailureReasonDoesNotClaimTheSlot() {
+        var diagnostics = AudioCaptureDiagnostics()
+
+        diagnostics.registerFailureReason("   \n ")
+        XCTAssertNil(diagnostics.failureReason)
+
+        diagnostics.registerFailureReason("  No space left on device  ")
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+    }
+
+    func testClearingLetsARecoveredTrackReportItsNextFailure() {
+        // The microphone clears the reason once buffers flow again after a
+        // route change, so keeping the first reason must not make a recovered
+        // track permanently unable to report a new failure.
+        var diagnostics = AudioCaptureDiagnostics()
+
+        diagnostics.registerFailureReason("The audio engine stopped.")
+        diagnostics.failureReason = nil
+        diagnostics.registerFailureReason("No space left on device")
+
+        XCTAssertEqual(diagnostics.failureReason, "No space left on device")
+    }
 }

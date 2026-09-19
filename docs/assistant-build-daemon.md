@@ -93,15 +93,19 @@ explicit.
   influences the command that runs.
 - **Isolated worktrees.** Every job creates a detached worktree under
   `/private/tmp`. Your checkout and your uncommitted work are never touched. A
-  successful job removes its worktree; a failed one keeps it for inspection.
+  successful job removes its worktree; a job that fails to build, to produce a
+  bundle, or to pass a signing check keeps it for inspection.
 - **`push-branch` never pushes main.** It accepts only a branch matching
   `^codex/[A-Za-z0-9][A-Za-z0-9._/-]*$` and rejects `main`, `master` and `HEAD`
   by name. It never uses `--force`, so the server rejects a non-fast-forward. It
   also refuses to push a commit that has no succeeded `test` result on record —
   the one place in this pipeline that enforces "do not publish what you have not
   verified". Merging into main stays with pull requests, and with you.
-- **`install` only from main.** It refuses a bundle whose commit is neither
-  `main` nor `origin/main`, exactly as `AGENTS.md` authorizes. A one-off
+- **`install` only from `origin/main`.** It refuses a bundle whose commit is not
+  the one currently at `refs/remotes/origin/main`, exactly as `AGENTS.md`
+  authorizes. The local `refs/heads/main` deliberately does not count: it lives
+  in a repository the requester can write, so accepting it would let a branch
+  move stand in for review. A one-off
   exception is yours to grant by creating
   `.claude/build-queue/ALLOW_NONMAIN_INSTALL`. The assistant cannot create that
   file without asking you.
@@ -153,8 +157,9 @@ be guessed at. It reports the job fields (state, stage, failure description) and
 the event log, plus which artifacts exist. Transcript, markdown and audio
 content stay out: meeting content is none of this pipeline's business.
 
-`fetch` exists because `install` may only install `main`/`origin/main`, so a
-stale `origin/main` would make that guard compare against the wrong commit.
+`fetch` exists because `install` may only install the commit at `origin/main`,
+so a stale remote-tracking ref would make that guard compare against the wrong
+commit.
 
 ## Usage
 
@@ -208,16 +213,26 @@ failed tests, compiler errors, bundle path) and `log_tail`.
 Writes are atomic: the client writes `*.json.part` and renames, the daemon
 writes `*.json.tmp` and renames. Neither side ever reads a half-written file.
 
-The daemon re-executes itself when this script changes on disk, between jobs, so
-an edit takes effect without a manual restart. The launcher bundle stays the
-parent, so the TCC identity is unaffected.
+The daemon re-executes itself when this script changes on disk, so an edit takes
+effect without a manual restart. The launcher bundle stays the parent, so the
+TCC identity is unaffected. The check runs only when the queue is empty, not
+after every job, so a continuously busy daemon keeps serving the loaded version
+until it next goes idle.
+
+This is also the widest part of the trust boundary, and it is worth stating
+plainly: whoever can write `scripts/assistant_build_daemon.py` decides what this
+daemon does on the next idle tick. The same is true of the built commit — `test`
+and `build-signed` run `xcodebuild`, which executes that commit's build phases
+and test code on the host. The isolated worktree protects your working copy, not
+your account. Treat the job list as a convenience and an audit trail, not as a
+sandbox around an untrusted requester.
 
 ## Limitations worth knowing
 
 - The mount through which the assistant sees the repository **blocks file
   deletion**. The assistant cannot clean up even its own requests, so archiving
-  and log rotation are the daemon's job. Logs and the archive grow over time;
-  prune them occasionally.
+  is the daemon's job. There is no log rotation: `logs/` and `archive/` grow
+  without bound and are yours to prune occasionally.
 - A successful `test` means "it compiled and the tests passed". It is not proof
   of application behaviour. `AGENTS.md` requires that distinction and the daemon
   preserves it: `data.build_succeeded` and `data.test_succeeded` are separate

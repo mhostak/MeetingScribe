@@ -3,6 +3,9 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var appState: AppState
+    /// Observed separately so typing a note redraws the editor, not the
+    /// whole popover.
+    @ObservedObject private var meetingNotes: MeetingNotesModel
     let openSettingsAction: () -> Void
     let openRecordingsAction: () -> Void
     let openCalendarPickerAction: () -> Void
@@ -20,6 +23,7 @@ struct MenuBarView: View {
         openCalendarPickerAction: @escaping () -> Void = {}
     ) {
         self.appState = appState
+        _meetingNotes = ObservedObject(wrappedValue: appState.meetingNotesModel)
         self.openSettingsAction = openSettingsAction
         self.openRecordingsAction = openRecordingsAction
         self.openCalendarPickerAction = openCalendarPickerAction
@@ -305,13 +309,13 @@ struct MenuBarView: View {
 
             if canShowMeetingNotesEditor {
                 MeetingNotesEditor(
-                    text: $appState.meetingNotesDraft,
+                    text: $meetingNotes.draft,
                     isTimestampVisible: true,
                     saveState: meetingNotesSaveState,
                     insertTimestamp: insertMeetingNotesTimestamp,
                     locale: appState.selectedAppLanguage.locale
                 )
-                .onChange(of: appState.meetingNotesDraft) { _, _ in
+                .onChange(of: meetingNotes.draft) { _, _ in
                     scheduleMeetingNotesSave()
                 }
                 .onDisappear {
@@ -364,7 +368,7 @@ struct MenuBarView: View {
 
             if isMeetingNotesExpanded {
                 MeetingNotesEditor(
-                    text: $appState.meetingNotesDraft,
+                    text: $meetingNotes.draft,
                     isTimestampVisible: false,
                     saveState: nil,
                     insertTimestamp: {},

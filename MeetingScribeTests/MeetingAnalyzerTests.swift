@@ -105,6 +105,65 @@ final class MeetingAnalyzerTests: XCTestCase {
         XCTAssertTrue(requests.allSatisfy { $0.userNotes == nil })
     }
 
+    func testAnOverlongCalendarDescriptionCannotStarveTheTranscript() async throws {
+        // The description is prepended to every transcript chunk, so its
+        // length is subtracted from each request's room for transcript. A
+        // mail thread pasted into an invitation used to be enough to split a
+        // meeting into hundreds of requests, or to leave no room at all and
+        // fail the analysis before it started.
+        let provider = MockAnalysisProvider()
+        let segments = (0..<40).map { index in
+            TranscriptSegment(
+                id: "segment-\(index)",
+                source: .system,
+                speaker: "Other",
+                start: Double(index * 10),
+                end: Double(index * 10 + 5),
+                language: "sk",
+                text: String(repeating: "slovo ", count: 40),
+                confidence: nil
+            )
+        }
+
+        let run = try await MeetingAnalyzer(provider: provider).analyze(
+            session: makeSession(eventDescription: String(repeating: "d", count: 200_000)),
+            transcript: makeTranscript(segments: segments)
+        )
+
+        XCTAssertLessThanOrEqual(run.transcriptChunkCount, 3)
+        let requests = await provider.requests
+        let transcriptRequests = requests.filter { $0.mode == .transcript }
+        XCTAssertFalse(transcriptRequests.isEmpty)
+        for request in transcriptRequests {
+            XCTAssertTrue(
+                request.content.contains("[event description truncated:"),
+                "each chunk carries the bounded description"
+            )
+            XCTAssertLessThan(request.content.count, 45_000)
+        }
+    }
+
+    func testLongCalendarDescriptionIsTruncatedWithMarker() {
+        let description = String(
+            repeating: "d",
+            count: AnalysisPrompt.maximumEventDescriptionCharacters + 12
+        )
+
+        let truncated = AnalysisPrompt.truncateEventDescription(description)
+
+        XCTAssertTrue(truncated.hasPrefix(
+            String(repeating: "d", count: AnalysisPrompt.maximumEventDescriptionCharacters)
+        ))
+        XCTAssertTrue(
+            truncated.hasSuffix(
+                "\n[event description truncated: 12 more characters; "
+                    + "the full description is exported to Markdown]"
+            )
+        )
+        let short = "Agenda: roadmap"
+        XCTAssertEqual(AnalysisPrompt.truncateEventDescription(short), short)
+    }
+
     func testLongUserNotesAreTruncatedWithMarker() {
         let notes = String(repeating: "a", count: AnalysisPrompt.maximumUserNotesCharacters + 7)
         let truncated = AnalysisPrompt.truncateUserNotes(notes)

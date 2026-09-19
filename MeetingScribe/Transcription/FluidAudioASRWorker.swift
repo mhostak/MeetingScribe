@@ -17,10 +17,32 @@ private struct FluidAudioASRWorkerRequest: Codable, Sendable {
     let configuration: FluidAudioTranscriptionConfiguration
 }
 
+/// Why a worker run failed, carried back across the process boundary.
+///
+/// An exit code alone cannot tell a missing model bundle apart from a
+/// corrupted one, and those need different things from the user: install the
+/// model, or repair it. The worker therefore writes the description of the
+/// error it caught, and only that description — it carries engine and model
+/// identifiers, never audio or transcript text.
+struct FluidAudioASRWorkerFailure: Codable, Sendable {
+    static let schemaVersion = 1
+    /// Long enough for a Core ML load failure, short enough that a runaway
+    /// description cannot become the recording's error message.
+    static let maximumDescriptionLength = 600
+
+    let schemaVersion: Int
+    let description: String
+
+    init(description: String) {
+        self.schemaVersion = Self.schemaVersion
+        self.description = String(description.prefix(Self.maximumDescriptionLength))
+    }
+}
+
 enum FluidAudioASRWorkerError: Error, LocalizedError {
     case executableUnavailable
     case workerAlreadyRunning
-    case workerFailed(exitCode: Int32)
+    case workerFailed(exitCode: Int32, reason: String?)
     case invalidWorkerRequest
 
     var errorDescription: String? {
@@ -29,8 +51,11 @@ enum FluidAudioASRWorkerError: Error, LocalizedError {
             return "The transcription worker executable is unavailable."
         case .workerAlreadyRunning:
             return "The transcription worker is already running."
-        case let .workerFailed(exitCode):
-            return "The transcription worker stopped with exit code \(exitCode)."
+        case let .workerFailed(exitCode, reason):
+            guard let reason, !reason.isEmpty else {
+                return "The transcription worker stopped with exit code \(exitCode)."
+            }
+            return reason
         case .invalidWorkerRequest:
             return "The transcription worker received an invalid request."
         }
@@ -113,6 +138,7 @@ actor FluidAudioASRWorkerProcessRunner: FluidAudioASRWorkerRunning {
         )
         let requestURL = directory.appendingPathComponent("request.json")
         let responseURL = directory.appendingPathComponent("response.json")
+        let failureURL = directory.appendingPathComponent("failure.json")
         defer { try? FileManager.default.removeItem(at: directory) }
 
         try FileManager.default.createDirectory(
@@ -136,6 +162,7 @@ actor FluidAudioASRWorkerProcessRunner: FluidAudioASRWorkerRunning {
                     FluidAudioASRWorker.argument,
                     "--request", requestURL.path,
                     "--response", responseURL.path,
+                    "--failure", failureURL.path,
                 ]
             )
         } onCancel: {
@@ -143,12 +170,30 @@ actor FluidAudioASRWorkerProcessRunner: FluidAudioASRWorkerRunning {
         }
         try Task.checkCancellation()
         guard exitCode == 0 else {
-            throw FluidAudioASRWorkerError.workerFailed(exitCode: exitCode)
+            throw FluidAudioASRWorkerError.workerFailed(
+                exitCode: exitCode,
+                reason: Self.reportedFailure(at: failureURL)
+            )
         }
         return try JSONDecoder().decode(
             FluidAudioASROutput.self,
             from: Data(contentsOf: responseURL)
         )
+    }
+
+    /// A worker that died before it could write the file, or wrote something
+    /// unreadable, leaves the exit code as the only thing to report. That is
+    /// the same outcome as before this file existed, so a missing or damaged
+    /// report is not itself an error.
+    private static func reportedFailure(at url: URL) -> String? {
+        guard let data = try? Data(contentsOf: url),
+              let failure = try? JSONDecoder().decode(FluidAudioASRWorkerFailure.self, from: data),
+              failure.schemaVersion == FluidAudioASRWorkerFailure.schemaVersion
+        else {
+            return nil
+        }
+        let trimmed = failure.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     func releaseResources() async {
@@ -166,7 +211,7 @@ enum FluidAudioASRWorker {
     static func runIfRequested(arguments: [String] = CommandLine.arguments) async -> Int32? {
         guard let argumentIndex = arguments.firstIndex(of: argument) else { return nil }
         let payload = Array(arguments.dropFirst(argumentIndex + 1))
-        guard payload.count == 4,
+        guard payload.count >= 4,
               payload[0] == "--request",
               payload[2] == "--response" else {
             return 64
@@ -174,6 +219,11 @@ enum FluidAudioASRWorker {
 
         let requestURL = URL(fileURLWithPath: payload[1])
         let responseURL = URL(fileURLWithPath: payload[3])
+        // A parent from an older build does not pass this argument. The worker
+        // stays usable for it and simply reports nothing beyond its exit code.
+        let failureURL: URL? = payload.count >= 6 && payload[4] == "--failure"
+            ? URL(fileURLWithPath: payload[5])
+            : nil
         do {
             let request = try JSONDecoder().decode(
                 FluidAudioASRWorkerRequest.self,
@@ -195,11 +245,27 @@ enum FluidAudioASRWorker {
                 return 0
             } catch {
                 await runner.releaseResources()
+                // Without this the parent could only say "exit code 1", which
+                // cannot distinguish a model that is missing from one that is
+                // corrupted — and those need opposite things from the user.
+                report(error, to: failureURL)
                 return 1
             }
         } catch {
+            report(error, to: failureURL)
             return 64
         }
+    }
+
+    private static func report(_ error: Error, to url: URL?) {
+        guard let url else { return }
+        let failure = FluidAudioASRWorkerFailure(
+            description: (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        )
+        // The worker is already failing; a failure to describe the failure
+        // must not change its exit code.
+        try? JSONEncoder().encode(failure).write(to: url, options: .atomic)
     }
 }
 

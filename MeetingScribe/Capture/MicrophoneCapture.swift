@@ -93,7 +93,6 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     private final class PCMBufferPool: @unchecked Sendable {
         private let lock = NSLock()
         private var available: [AVAudioPCMBuffer]
-        private var droppedBufferCount = 0
 
         init?(
             format: AVAudioFormat,
@@ -123,20 +122,6 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             lock.lock()
             available.append(buffer)
             lock.unlock()
-        }
-
-        func registerDroppedBuffer() {
-            lock.lock()
-            droppedBufferCount += 1
-            lock.unlock()
-        }
-
-        func takeDroppedBufferCount() -> Int {
-            lock.lock()
-            defer { lock.unlock() }
-            let count = droppedBufferCount
-            droppedBufferCount = 0
-            return count
         }
     }
 
@@ -168,7 +153,11 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         qos: .userInitiated
     )
     private let writerQueueKey = DispatchSpecificKey<Void>()
-    private var state = State()
+    private let publishedDiagnostics = AudioCaptureDiagnosticsBox()
+    private let droppedBuffers = DroppedBufferCounter()
+    private var state = State() {
+        didSet { publishedDiagnostics.publish(state.diagnostics) }
+    }
     private var configurationObserver: NSObjectProtocol?
 
     convenience init(
@@ -291,10 +280,14 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
     }
 
     func diagnostics() async -> AudioCaptureDiagnostics {
-        writerQueue.sync {
-            flushDroppedBufferDiagnostics()
-            return state.diagnostics
-        }
+        // Deliberately does not enter the writer queue: this is polled five
+        // times a second for the live meter, and that queue is also writing
+        // audio to disk. Drops not yet folded into the published snapshot are
+        // added here without consuming them, so the next write still records
+        // them exactly once.
+        var snapshot = publishedDiagnostics.value
+        snapshot.registerDroppedBuffers(droppedBuffers.pending)
+        return snapshot
     }
 
     private func startAndVerify(generation: UUID) async throws {
@@ -450,7 +443,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             state.startupVerificationInProgress = false
             state.configurationChangePendingDuringStartup = false
             state.configurationRecoveryScheduled = false
-            state.diagnostics.failureReason = error.localizedDescription
+            state.diagnostics.registerFailureReason(error.localizedDescription)
             finishWriter()
             state.isCapturing = false
             state.captureGeneration = nil
@@ -492,9 +485,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         do {
             try writer.finish()
         } catch {
-            if state.diagnostics.failureReason == nil {
-                state.diagnostics.failureReason = error.localizedDescription
-            }
+            state.diagnostics.registerFailureReason(error.localizedDescription)
         }
         state.writer = nil
     }
@@ -521,14 +512,17 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
             frameCapacity: Self.tapFrameCapacity,
             count: Self.tapBufferPoolSize
         ) else {
-            state.diagnostics.failureReason = "Could not allocate microphone capture buffers."
+            state.diagnostics.registerFailureReason(
+                "Could not allocate microphone capture buffers."
+            )
             return
         }
-        state.bufferPools.append(pool)
+        retirePreviousBufferPools()
+        state.bufferPools = [pool]
         engine.installTap(format: format) { [weak self] buffer, time in
             guard let self else { return }
             guard let copiedBuffer = pool.take() else {
-                pool.registerDroppedBuffer()
+                self.droppedBuffers.increment()
                 return
             }
             guard Self.copy(buffer, into: copiedBuffer) else {
@@ -546,6 +540,33 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 )
             }
         }
+    }
+
+    /// How many tap buffer pools are currently retained.
+    ///
+    /// A test seam. The bound on this list is the whole point of
+    /// `retirePreviousBufferPools` and is otherwise invisible from outside,
+    /// so a regression would show up only as memory a long meeting never
+    /// gives back. No production code reads it.
+    var retainedBufferPoolCount: Int {
+        writerQueue.sync { state.bufferPools.count }
+    }
+
+    /// Collects what the outgoing pools counted and lets them go.
+    ///
+    /// Every engine rebuild installs a fresh tap with a fresh pool. Keeping
+    /// the retired ones meant a meeting with many route changes held eight
+    /// 8 192-frame buffers per reconnect for its whole length, and paid one
+    /// lock acquisition per retired pool on every single buffer written —
+    /// a cost that grew with each reconnect and never came back down.
+    ///
+    /// Callers remove the old tap before installing a new one, so a retired
+    /// pool can register no further drops and its count is final here. The
+    /// buffers still travelling to the writer queue keep their own pool alive
+    /// through the reference they carry.
+    private func retirePreviousBufferPools() {
+        dispatchPrecondition(condition: .onQueue(writerQueue))
+        state.bufferPools.removeAll()
     }
 
     private func scheduleConfigurationRecovery() {
@@ -648,8 +669,9 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
         guard recoveryConfiguration.shouldRetry(
             after: state.configurationRecoveryAttempts
         ) else {
-            state.diagnostics.failureReason =
+            state.diagnostics.registerFailureReason(
                 "Microphone did not resume after the audio device changed: \(reason)"
+            )
             return
         }
 
@@ -680,7 +702,7 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
                 audioLevel: result.audioLevel
             )
         } catch {
-            state.diagnostics.failureReason = error.localizedDescription
+            state.diagnostics.registerFailureReason(error.localizedDescription)
             finishWriter()
             state.isCapturing = false
             state.configurationRecoveryScheduled = false
@@ -695,9 +717,9 @@ final class MicrophoneCapture: AudioCaptureService, @unchecked Sendable {
 
     private func flushDroppedBufferDiagnostics() {
         dispatchPrecondition(condition: .onQueue(writerQueue))
-        for pool in state.bufferPools {
-            state.diagnostics.registerDroppedBuffers(pool.takeDroppedBufferCount())
-        }
+        let dropped = droppedBuffers.take()
+        guard dropped > 0 else { return }
+        state.diagnostics.registerDroppedBuffers(dropped)
     }
 
     private static func copy(

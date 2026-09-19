@@ -399,6 +399,18 @@ struct SetupTestView: View {
                 Spacer()
             }
 
+            // The test finishes when its queued job does. A queue held for
+            // resources can hold it indefinitely, and an indeterminate
+            // spinner with no explanation is the one thing the queue is
+            // careful not to show anywhere else.
+            if appState.onboardingTestPhase == .processing,
+               let reason = appState.processingPauseReason {
+                Text(verbatim: reason)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             if appState.onboardingTestPhase == .recording {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     if let remaining = appState.onboardingTestRemainingSeconds(at: context.date) {
@@ -423,6 +435,13 @@ struct SetupTestView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // This view also lives in Settings → Readiness, where closing the
+        // window or switching tab takes it away with no other hook. A test
+        // whose controls are gone must not keep recording; the stop
+        // coalesces with the Stop button and with the timeout.
+        .onDisappear {
+            Task { await appState.stopOnboardingTest() }
+        }
     }
 }
 
@@ -464,7 +483,7 @@ private struct OnboardingTestResultView: View {
                 Label("Transcription not verified — model missing", systemImage: "questionmark.circle")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            case .failed:
+            case .failed, .unrecognized:
                 Label("Transcription failed", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)

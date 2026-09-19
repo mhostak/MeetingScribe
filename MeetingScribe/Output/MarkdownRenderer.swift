@@ -6,6 +6,39 @@ struct MarkdownRenderer: Sendable {
     static let userNotesStartMarker = "<!-- meetingscribe:user-notes:start -->"
     static let userNotesEndMarker = "<!-- meetingscribe:user-notes:end -->"
 
+    /// The markers that delimit regions this application owns and rewrites.
+    static let reservedMarkers = [
+        analysisStartMarker,
+        analysisEndMarker,
+        userNotesStartMarker,
+        userNotesEndMarker,
+    ]
+
+    /// Turns a reserved marker inside user-supplied text into ordinary text.
+    ///
+    /// A meeting title, a Calendar description or a note can contain anything,
+    /// including a marker pasted out of an earlier MeetingScribe note. A
+    /// second analysis start marker in the document is not a cosmetic problem:
+    /// it appears before the real one, and re-analysis replaces everything
+    /// between the first start marker and the real end marker — the
+    /// frontmatter and the heading along with it.
+    ///
+    /// The text itself is kept and shown in brackets. It stops being an HTML
+    /// comment, which is the only property that made it dangerous.
+    static func neutralizingReservedMarkers(_ text: String) -> String {
+        guard text.contains("<!--") else { return text }
+        var text = text
+        for marker in reservedMarkers {
+            guard text.contains(marker) else { continue }
+            let inner = marker
+                .dropFirst("<!--".count)
+                .dropLast("-->".count)
+                .trimmingCharacters(in: .whitespaces)
+            text = text.replacingOccurrences(of: marker, with: "[\(inner)]")
+        }
+        return text
+    }
+
     private let timeZone: TimeZone
 
     init(timeZone: TimeZone = .current) {
@@ -35,10 +68,11 @@ struct MarkdownRenderer: Sendable {
             uniqueValues(snapshot.participants.map(\.displayName))
         } ?? uniqueValues(renderedSegments.map { vocabulary.sourceLabel(for: $0.source) })
 
+        let safeTitle = Self.neutralizingReservedMarkers(session.title)
         var lines = [
             "---",
             "type: meeting",
-            "title: \(yamlQuoted(session.title))",
+            "title: \(yamlQuoted(safeTitle))",
             "date: \(dateString(startedAt))",
             "started: \(timeString(startedAt))",
             "ended: \(timeString(endedAt))",
@@ -47,7 +81,10 @@ struct MarkdownRenderer: Sendable {
         appendYAMLList(name: "languages", values: languages, to: &lines)
         appendYAMLList(name: "participants", values: participants, to: &lines)
         if let eventDescription = session.calendarEvent?.eventDescription {
-            lines.append("calendar_description: \(yamlQuoted(eventDescription))")
+            lines.append(
+                "calendar_description: "
+                    + yamlQuoted(Self.neutralizingReservedMarkers(eventDescription))
+            )
         }
         appendYAMLList(name: "tags", values: ["meeting"], to: &lines)
         lines.append("recording_id: \(yamlQuoted(session.id))")
@@ -60,12 +97,18 @@ struct MarkdownRenderer: Sendable {
         lines.append(contentsOf: [
             "---",
             "",
-            "# \(markdownHeading(session.title))",
+            "# \(markdownHeading(safeTitle))",
             "",
             Self.analysisStartMarker,
         ])
         if let analysis {
-            lines.append(analysis.markdown.trimmingCharacters(in: .whitespacesAndNewlines))
+            // Current analyses are rejected at the schema if they contain a
+            // reserved marker, but an `analysis.json` written by an older
+            // build is replayed unchanged during recovery.
+            lines.append(
+                Self.neutralizingReservedMarkers(analysis.markdown)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
         } else {
             lines.append("<!-- \(vocabulary.analysisUnavailable) -->")
         }
@@ -74,7 +117,7 @@ struct MarkdownRenderer: Sendable {
             lines.append(contentsOf: [
                 Self.userNotesStartMarker,
                 "## \(vocabulary.userNotes)",
-                notes,
+                Self.neutralizingReservedMarkers(notes),
                 Self.userNotesEndMarker,
                 "",
             ])
@@ -247,7 +290,17 @@ struct MarkdownAnalysisUpdater: Sendable {
     }
 
     func updating(_ markdown: String, with analysis: AIAnalysisArtifact) throws -> String {
-        guard let startRange = markdown.range(of: MarkdownRenderer.analysisStartMarker),
+        // Search the body only. The frontmatter carries the meeting title and
+        // the Calendar description verbatim, and a marker quoted inside one of
+        // them would otherwise be found first — making the replacement below
+        // delete the frontmatter and the heading on its way to the real end
+        // marker. The renderer neutralizes such markers as it writes; this
+        // covers documents written before it did, and hand-edited ones.
+        let searchStart = Self.bodyStart(of: markdown)
+        guard let startRange = markdown.range(
+                  of: MarkdownRenderer.analysisStartMarker,
+                  range: searchStart..<markdown.endIndex
+              ),
               let endRange = markdown.range(
                   of: MarkdownRenderer.analysisEndMarker,
                   range: startRange.upperBound..<markdown.endIndex
@@ -280,6 +333,26 @@ struct MarkdownAnalysisUpdater: Sendable {
             lines.insert(analysisLine, at: frontmatterEnd)
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// The first index after the YAML frontmatter, or the start of the
+    /// document when there is no frontmatter to skip.
+    ///
+    /// A document whose frontmatter is never closed has no body, and the
+    /// caller's own `---` check rejects it a moment later. Returning the start
+    /// of the document in that case keeps this a pure positioning helper that
+    /// cannot reject anything on its own.
+    private static func bodyStart(of markdown: String) -> String.Index {
+        let delimiter = "---\n"
+        guard markdown.hasPrefix(delimiter) else { return markdown.startIndex }
+        let afterOpening = markdown.index(markdown.startIndex, offsetBy: delimiter.count)
+        guard let closing = markdown.range(
+            of: "\n---\n",
+            range: markdown.index(before: afterOpening)..<markdown.endIndex
+        ) else {
+            return markdown.startIndex
+        }
+        return closing.upperBound
     }
 }
 

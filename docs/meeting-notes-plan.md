@@ -1,7 +1,7 @@
 # Zápisník počas meetingu a zlúčenie poznámok do analýzy (A1)
 
 Návrh a zadanie pre BlueCode, 18. 9. 2026. Návrh **schválený** používateľom 18. 9. 2026.
-Stav implementácie: **implementované na vetve `codex/meeting-notes`**, nezmergované a nepushnuté.
+Stav implementácie: **zmergované do `main`** (pull request #28, commit `c906a8f`).
 Overenie a rozdelenie práce sú v sekcii „Stav delegovania“ nižšie.
 
 Zdroj: `docs/competitive-research-2026-09.md`, nápad A1 (P0, poradie 2) a sekcia 2.1

@@ -107,6 +107,23 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
         droppedBufferCount += max(0, count)
     }
 
+    /// Records why capture failed, keeping the first reason given.
+    ///
+    /// A failure cascades: the write that ran out of disk space is followed by
+    /// buffers that find no writer, and by a stop that reports the stream was
+    /// never running. Those later reasons describe the wreckage, not the
+    /// cause, and they arrive within milliseconds. Only the first one is
+    /// worth showing the user or writing into the session manifest.
+    ///
+    /// An empty or whitespace-only reason is not a description of anything and
+    /// is ignored, so it cannot claim the slot a real one needs.
+    mutating func registerFailureReason(_ reason: String) {
+        guard failureReason == nil else { return }
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        failureReason = trimmed
+    }
+
     func recentLiveAudioLevels(
         at date: Date = Date(),
         staleAfter: TimeInterval = 1,
@@ -135,6 +152,63 @@ struct AudioCaptureDiagnostics: Codable, Equatable, Sendable {
     }
 
     private static let liveLevelHistoryLimit = 64
+}
+
+/// The latest diagnostics, readable without entering the capture queue.
+///
+/// The live meter samples diagnostics five times a second. Reading them with
+/// `DispatchQueue.sync` onto the queue that also writes audio to disk makes
+/// the UI poll wait behind a write, and blocks a cooperative-concurrency
+/// thread while it waits. Publishing a copy under a short lock costs the
+/// capture queue one uncontended lock per buffer and lets every reader take
+/// the value immediately.
+final class AudioCaptureDiagnosticsBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var diagnostics = AudioCaptureDiagnostics.empty
+
+    var value: AudioCaptureDiagnostics {
+        lock.lock()
+        defer { lock.unlock() }
+        return diagnostics
+    }
+
+    func publish(_ diagnostics: AudioCaptureDiagnostics) {
+        lock.lock()
+        self.diagnostics = diagnostics
+        lock.unlock()
+    }
+}
+
+/// Buffers the tap had to drop, counted where the tap runs.
+///
+/// A drop happens precisely when no pooled buffer is free, which is also when
+/// nothing reaches the writer queue — so the count cannot be kept in the
+/// capture state without a write to carry it there. Counting it separately
+/// means a reader can see drops during an outage instead of after it.
+final class DroppedBufferCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+
+    /// The current count, left in place for the next `take()`.
+    var pending: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func take() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let taken = count
+        count = 0
+        return taken
+    }
 }
 
 struct CaptureSessionDiagnostics: Codable, Equatable, Sendable {

@@ -720,6 +720,46 @@ final class AppStateResilienceTests: XCTestCase {
             .appendingPathComponent("Models/FluidAudio/.staging", isDirectory: true).path))
     }
 
+    func testUnreachableStorageStillLoadsSettingsAndCanBePreparedAgain() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let applicationSettings = ApplicationSettingsStore(defaults: fixture.defaults)
+        applicationSettings.setOutputLanguage(.czech)
+        applicationSettings.setMarkdownFileNameTemplate("{id}-{title}")
+
+        // A regular file where a directory has to go: createDirectory fails
+        // exactly as it would on a volume that is busy or read-only.
+        let blocker = fixture.root.appendingPathComponent("blocked")
+        try Data("not a directory".utf8).write(to: blocker)
+        let recordingsRoot = blocker.appendingPathComponent("Recordings", isDirectory: true)
+
+        let appState = makeAppState(
+            sessionManager: makeSessionManager(root: recordingsRoot),
+            fluidAudioModelManager: ResilienceFluidAudioModelManager(
+                modelsRoot: fixture.root.appendingPathComponent("Models", isDirectory: true)
+            ),
+            defaults: fixture.defaults
+        )
+
+        await appState.prepareStorage()
+
+        XCTAssertEqual(appState.status, .failed, "the failure is reported, not swallowed")
+        XCTAssertFalse(appState.isApplicationPrepared)
+        // The settings live in UserDefaults, not on that volume, so losing
+        // the volume must not mean losing them.
+        XCTAssertEqual(appState.selectedOutputLanguage, .czech)
+        XCTAssertEqual(appState.markdownFileNameTemplate, "{id}-{title}")
+
+        // The volume comes back. Clearing the failure must not leave the
+        // application permanently unprepared for the rest of the process.
+        try FileManager.default.removeItem(at: blocker)
+        appState.reset()
+        try await waitUntil { appState.isApplicationPrepared }
+
+        XCTAssertEqual(appState.status, .idle)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recordingsRoot.path))
+    }
+
     func testDisabledAnalysisDoesNotLaunchAnyExternalCommand() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
